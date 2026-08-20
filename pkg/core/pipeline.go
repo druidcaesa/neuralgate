@@ -17,6 +17,7 @@ package core
 import (
 	"net/http"
 
+	"github.com/druidcaesa/neuralgate/pkg/adapter"
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
 )
 
@@ -28,15 +29,17 @@ type Pipeline struct {
 	storage     plugin.StoragePlugin
 	rateLimiter plugin.RateLimitPlugin
 	auditor     plugin.AuditPipeline
+	registry    *adapter.AdapterRegistry
 	middlewares []Middleware
 }
 
 // NewPipeline 创建管道
-func NewPipeline(storage plugin.StoragePlugin, rateLimiter plugin.RateLimitPlugin, auditor plugin.AuditPipeline) *Pipeline {
+func NewPipeline(storage plugin.StoragePlugin, rateLimiter plugin.RateLimitPlugin, auditor plugin.AuditPipeline, registry *adapter.AdapterRegistry) *Pipeline {
 	return &Pipeline{
 		storage:     storage,
 		rateLimiter: rateLimiter,
 		auditor:     auditor,
+		registry:    registry,
 	}
 }
 
@@ -61,7 +64,7 @@ func (p *Pipeline) fixedChain() []Middleware {
 	return []Middleware{
 		AuthMiddleware(p.storage),
 		RateLimitMiddleware(p.rateLimiter),
-		RouteMatchMiddleware(p.storage),
+		RouteMatchMiddleware(p.storage, p.registry),
 	}
 }
 

@@ -26,11 +26,12 @@ import (
 )
 
 func TestProxyCoreSkeletonResponse(t *testing.T) {
-	pipeline := NewPipeline(newTestStorage(), oss.NewMemRateLimiter(), nil)
+	pipeline := NewPipeline(newTestStorage(), oss.NewMemRateLimiter(), nil, adapter.NewAdapterRegistry())
 	registry := adapter.NewAdapterRegistry()
 	proxy := NewProxyCore(pipeline, registry)
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/v1/chat/completions", nil)
+	// GET 请求经路由中间件直接放行(无 body 解析),抵达代理骨架
+	req := httptest.NewRequest("GET", "/v1/chat/completions", nil)
 	req.Header.Set("Authorization", "Bearer ng-goodkey")
 	proxy.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusServiceUnavailable {
@@ -52,7 +53,7 @@ func TestProxyCoreSkeletonResponse(t *testing.T) {
 }
 
 func TestProxyCoreHealthz(t *testing.T) {
-	pipeline := NewPipeline(newTestStorage(), oss.NewMemRateLimiter(), nil)
+	pipeline := NewPipeline(newTestStorage(), oss.NewMemRateLimiter(), nil, adapter.NewAdapterRegistry())
 	registry := adapter.NewAdapterRegistry()
 	proxy := NewProxyCore(pipeline, registry)
 	rec := httptest.NewRecorder()

@@ -15,16 +15,85 @@
 package core
 
 import (
+	"bytes"
+	"encoding/json"
+	"io"
 	"net/http"
 
+	"github.com/druidcaesa/neuralgate/pkg/adapter"
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
 )
 
-// RouteMatchMiddleware 路由匹配中间件（当前直接放行）
-func RouteMatchMiddleware(storage plugin.StoragePlugin) Middleware {
+// RouteMatchMiddleware 路由匹配中间件:解析 model 字段 → 查模型配置 → 校验权限 → 写 RequestContext
+func RouteMatchMiddleware(storage plugin.StoragePlugin, registry *adapter.AdapterRegistry) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			next.ServeHTTP(w, r)
+			rc, ok := RequestContextFrom(r.Context())
+			if !ok {
+				writeOpenAIError(w, http.StatusInternalServerError, "api_error", "internal_error", "internal error")
+				return
+			}
+
+			// GET 请求(如 /v1/models)无 body,直接放行,不做模型解析
+			if r.Method == http.MethodGet {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// 读取请求体(上限 1MB),缓存后恢复
+			body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+			if err != nil {
+				writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "bad_request", "failed to read request body")
+				return
+			}
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			rc.RequestBody = body
+
+			// 解析 model 字段(chat/completions 与 embeddings 都含 model)
+			var reqBody struct {
+				Model string `json:"model"`
+			}
+			if err := json.Unmarshal(body, &reqBody); err != nil {
+				writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "bad_request", "invalid JSON body")
+				return
+			}
+			if reqBody.Model == "" {
+				writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "bad_request", "model field is required")
+				return
+			}
+
+			// 查模型配置
+			config, err := storage.GetModelConfig(reqBody.Model)
+			if err != nil || config == nil || !config.Enabled {
+				writeOpenAIError(w, http.StatusNotFound, "invalid_request_error", "model_not_found", "model not found: "+reqBody.Model)
+				return
+			}
+			rc.ModelConfig = config
+
+			// Key 模型权限校验(allowed_models 非空且不含 → 403)
+			if key, err := storage.GetAPIKeyByID(rc.APIKeyID); err == nil && len(key.AllowedModels) > 0 {
+				allowed := false
+				for _, m := range key.AllowedModels {
+					if m == config.ModelName {
+						allowed = true
+						break
+					}
+				}
+				if !allowed {
+					writeOpenAIError(w, http.StatusForbidden, "invalid_request_error", "model_access_denied", "model not allowed for this API key")
+					return
+				}
+			}
+
+			// 获取适配器
+			adpt, err := registry.Get(config.Provider)
+			if err != nil {
+				writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "unsupported_model", "unsupported provider: "+config.Provider)
+				return
+			}
+			rc.Adapter = adpt
+
+			next.ServeHTTP(w, r.WithContext(WithRequestContext(r.Context(), rc)))
 		})
 	}
 }
