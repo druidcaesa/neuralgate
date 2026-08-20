@@ -76,14 +76,13 @@ func (a *SimpleAuditor) SubmitSSEChunk(requestID string, chunk *plugin.SSEChunk)
 	return nil
 }
 
-// Finalize 标记请求结束，组装完整日志并落库
+// Finalize 标记请求结束，组装完整日志并落库;pending 缺失时忽略(断连竞态:已由 MarkDisconnect 落库)
 func (a *SimpleAuditor) Finalize(requestID string, meta *plugin.AuditMeta) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	log, ok := a.pending[requestID]
 	if !ok {
-		log = &plugin.AuditLog{ID: requestID, RequestID: requestID}
-		a.pending[requestID] = log
+		return nil
 	}
 	log.ResponseStatus = meta.ResponseStatus
 	log.PromptTokens = meta.PromptTokens
