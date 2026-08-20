@@ -65,10 +65,13 @@ func AuthMiddleware(storage plugin.StoragePlugin) Middleware {
 			rc.APIKeyID = key.ID
 			rc.TenantID = key.TenantID
 
-			// 状态校验
+			// 状态校验(与下方 ExpiresAt 时间检查互为补充,两者都拒)
 			switch key.Status {
 			case plugin.APIKeyStatusDisabled:
 				writeOpenAIError(w, http.StatusUnauthorized, "invalid_request_error", "api_key_disabled", "API key is disabled")
+				return
+			case plugin.APIKeyStatusExpired:
+				writeOpenAIError(w, http.StatusUnauthorized, "invalid_request_error", "api_key_expired", "API key has expired")
 				return
 			}
 			if key.ExpiresAt != nil && time.Now().After(*key.ExpiresAt) {

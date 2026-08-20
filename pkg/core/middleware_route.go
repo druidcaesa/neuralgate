@@ -40,11 +40,18 @@ func RouteMatchMiddleware(storage plugin.StoragePlugin, registry *adapter.Adapte
 				return
 			}
 
-			// 读取请求体(上限 1MB),缓存后恢复
+			// 读取请求体(上限 1MB),缓存后恢复;超限显式 413(避免静默截断丢数据)
 			body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 			if err != nil {
 				writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "bad_request", "failed to read request body")
 				return
+			}
+			if len(body) >= 1<<20 {
+				extra, _ := io.ReadAll(io.LimitReader(r.Body, 1))
+				if len(extra) > 0 {
+					writeOpenAIError(w, http.StatusRequestEntityTooLarge, "invalid_request_error", "request_too_large", "request body exceeds 1MB limit")
+					return
+				}
 			}
 			r.Body = io.NopCloser(bytes.NewReader(body))
 			rc.RequestBody = body
