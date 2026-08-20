@@ -89,3 +89,102 @@ func TestSQLStorageAPIKeyCRUD(t *testing.T) {
 		t.Fatalf("ListAPIKeys after delete total = %d; want 0", total)
 	}
 }
+
+func TestSQLStorageModelConfigCRUD(t *testing.T) {
+	s := newTestSQLStorage(t)
+	now := time.Now()
+	cfg := &plugin.ModelConfig{
+		ID: "m1", ModelName: "gpt-4", Provider: "openai", ProviderModel: "gpt-4o",
+		BaseURL: "https://api.openai.com", APIKey: "sk-upstream-secret",
+		Timeout: 60, MaxRetries: 2, RetryInterval: 3, Weight: 1, Enabled: true,
+		Tags: map[string]string{"env": "prod"}, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := s.SaveModelConfig(cfg); err != nil {
+		t.Fatalf("SaveModelConfig: %v", err)
+	}
+
+	// 读回后 api_key 已解密还原
+	got, err := s.GetModelConfig("gpt-4")
+	if err != nil || got.APIKey != "sk-upstream-secret" {
+		t.Fatalf("GetModelConfig = %v, %v", got, err)
+	}
+	if got.Tags["env"] != "prod" {
+		t.Fatalf("Tags mismatch: %v", got.Tags)
+	}
+	// 按 ID 查
+	byID, err := s.GetModelConfigByID("m1")
+	if err != nil || byID.ModelName != "gpt-4" {
+		t.Fatalf("GetModelConfigByID = %v, %v", byID, err)
+	}
+	// 列表
+	if _, total, err := s.ListModelConfigs(1, 10); err != nil || total != 1 {
+		t.Fatalf("ListModelConfigs total = %d, err %v", total, err)
+	}
+	// 删除
+	if err := s.DeleteModelConfig("m1"); err != nil {
+		t.Fatalf("DeleteModelConfig: %v", err)
+	}
+	if _, err := s.GetModelConfig("gpt-4"); err != ErrNotFound {
+		t.Fatalf("GetModelConfig after delete err = %v; want ErrNotFound", err)
+	}
+}
+
+func TestSQLStorageAuditLogCRUD(t *testing.T) {
+	s := newTestSQLStorage(t)
+	now := time.Now()
+	log := &plugin.AuditLog{
+		ID: "a1", RequestID: "r1", TenantID: "t1", APIKeyID: "k1",
+		ModelName: "gpt-4", Provider: "openai", RequestMethod: "POST",
+		RequestPath: "/v1/chat/completions", RequestHeaders: map[string]string{"Content-Type": "application/json"},
+		RequestBody: `{"model":"gpt-4"}`, ResponseStatus: 200, ResponseBody: `{"choices":[]}`,
+		SSEChunks: []plugin.SSEChunk{{Index: 0, Data: `{"choices":[]}`, Timestamp: now}},
+		PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15, Duration: 120,
+		ClientIP: "127.0.0.1", IsStream: true, CreatedAt: now,
+	}
+	if err := s.SaveAuditLog(log); err != nil {
+		t.Fatalf("SaveAuditLog: %v", err)
+	}
+	// 批量
+	if err := s.BatchSaveAuditLogs([]*plugin.AuditLog{
+		{ID: "a2", RequestID: "r2", ModelName: "qwen", CreatedAt: now},
+	}); err != nil {
+		t.Fatalf("BatchSaveAuditLogs: %v", err)
+	}
+
+	// 按 RequestID 精查
+	logs, total, err := s.QueryAuditLogs(plugin.AuditLogFilter{RequestID: "r1"}, 1, 10)
+	if err != nil || total != 1 {
+		t.Fatalf("Query by requestID = %d, %v", total, err)
+	}
+	if logs[0].SSEChunks[0].Data != `{"choices":[]}` {
+		t.Fatalf("SSEChunks roundtrip mismatch: %+v", logs[0].SSEChunks)
+	}
+	if logs[0].RequestHeaders["Content-Type"] != "application/json" {
+		t.Fatalf("headers roundtrip mismatch: %v", logs[0].RequestHeaders)
+	}
+
+	// 组合过滤: 租户 + 模型 + 状态 + 流式 + 关键词
+	f := plugin.AuditLogFilter{TenantID: "t1", ModelName: "gpt-4", Status: 200, IsStream: boolPtr(true), Keyword: "choices"}
+	if _, total, err := s.QueryAuditLogs(f, 1, 10); err != nil || total != 1 {
+		t.Fatalf("Query combined = %d, %v", total, err)
+	}
+	// 时间过滤
+	start := now.Add(-time.Hour)
+	end := now.Add(time.Hour)
+	f2 := plugin.AuditLogFilter{StartTime: &start, EndTime: &end}
+	if _, total, err := s.QueryAuditLogs(f2, 1, 10); err != nil || total != 2 {
+		t.Fatalf("Query time range = %d, %v", total, err)
+	}
+}
+
+func boolPtr(b bool) *bool { return &b }
+
+func TestSQLStoragePingClose(t *testing.T) {
+	s := newTestSQLStorage(t)
+	if err := s.Ping(); err != nil {
+		t.Fatalf("Ping: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
