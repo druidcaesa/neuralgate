@@ -70,7 +70,7 @@ if [ -n "$leftover" ]; then
 fi
 
 # 推送到GitHub同名分支（remote 地址待用户提供后配置）
-git push origin-github "$TEMP_BRANCH":"$CURRENT_BRANCH" --force
+git push https://github.com/druidcaesa/neuralgate.git "$TEMP_BRANCH":"$CURRENT_BRANCH" --force
 
 # 清理由 EXIT trap 统一执行（回切原分支 + 删除 temp 分支），此处仅保留成功提示
 echo "GitHub OSS repo pushed to branch [$CURRENT_BRANCH]: [$TIMESTAMP] $COMMIT_MSG (Enterprise code excluded)"
