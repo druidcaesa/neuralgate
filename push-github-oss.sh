@@ -63,7 +63,7 @@ git commit -m "[$TIMESTAMP] $COMMIT_MSG"
 # 都中止推送。允许列表即上方"OSS 发布包含的内容"列表；未来新增目录若未显式加入
 # 允许列表即被拦截（enterprise/docs/Makefile/README 等由上方 git rm 从 index 移除）。
 # 清理统一由 EXIT trap 执行，此处仅 exit 1
-ALLOWED_PATHS='^(pkg/core/|pkg/adapter/|pkg/plugin/interface.go$|pkg/plugin/oss/|pkg/admin/|pkg/config/|cmd/|webui/|config.yaml$|go.mod$|go.sum$)'
+ALLOWED_PATHS='^(pkg/core/|pkg/adapter/|pkg/plugin/interface.go$|pkg/plugin/oss/|pkg/admin/|pkg/config/|cmd/|webui/|config.yaml$|go.mod$|go.sum$|LICENSE$|NOTICE$)'
 leftover=$(git ls-tree -r --name-only HEAD | grep -Ev "$ALLOWED_PATHS" || true)
 if [ -n "$leftover" ]; then
   echo "错误: 以下路径不在 OSS 允许列表中，已中止推送:"
