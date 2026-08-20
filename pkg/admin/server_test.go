@@ -133,6 +133,40 @@ func TestAdminAPIKeyCRUD(t *testing.T) {
 	}
 }
 
+// TestAdminAPIKeyDefaultQuota 创建 Key 不传 quota 时应默认 -1(无限,PRD 3.2)
+func TestAdminAPIKeyDefaultQuota(t *testing.T) {
+	s := oss.NewMemStorage()
+	router := NewAdminServer(s, nil, "oss").Router()
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/api-keys",
+		strings.NewReader(`{"name":"默认额度Key"}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("create status = %d; body=%s", w.Code, w.Body.String())
+	}
+	var created struct {
+		Data struct {
+			ID    string `json:"id"`
+			Quota int64  `json:"quota"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.Data.Quota != -1 {
+		t.Fatalf("response quota = %d; want -1", created.Data.Quota)
+	}
+	key, err := s.GetAPIKeyByID(created.Data.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if key.Quota != -1 {
+		t.Fatalf("stored quota = %d; want -1", key.Quota)
+	}
+}
+
 func TestAdminModelConfigCRUD(t *testing.T) {
 	s := oss.NewMemStorage()
 	router := NewAdminServer(s, nil, "oss").Router()

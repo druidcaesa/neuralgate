@@ -9,6 +9,9 @@ license/
 # 本地配置（含密钥）
 config.local.yaml
 
+# 默认 SQLite 数据库文件
+neuralgate.db
+
 # Go 构建与测试产物
 *.test
 *.out
