@@ -21,5 +21,5 @@ fi
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 git add -A
 git commit -m "[$TIMESTAMP] $COMMIT_MSG"
-git push origin-private "$CURRENT_BRANCH"
+git push git@codeup.aliyun.com:661f776a552587f8fbe64a3c/neuralgate.git "$CURRENT_BRANCH"
 echo "Private repo pushed to branch [$CURRENT_BRANCH]: [$TIMESTAMP] $COMMIT_MSG"
