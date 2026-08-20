@@ -331,8 +331,6 @@ neuralgate/
 ├── config.yaml                         # 配置文件模板
 ├── go.mod
 ├── go.sum
-├── push-private.sh                     # 推送到私有仓库脚本
-├── push-github-oss.sh                  # 推送到 GitHub（过滤 enterprise）脚本
 └── README.md
 ```
 
@@ -376,34 +374,6 @@ neuralgate/
 
 ---
 
-## 双仓库 Git 管理
-
-项目采用双仓库策略：私有仓库保存全量代码（含 enterprise），GitHub 仓库仅保存开源代码。
-
-### 远端配置
-
-```bash
-# 私有仓库（全量代码）
-git remote add origin-private git@your-gitlab.com:team/ai-gateway.git
-
-# GitHub 开源仓库（过滤 enterprise）
-git remote add origin-github git@github.com:your-org/neuralgate.git
-```
-
-### 推送脚本
-
-```bash
-# 全量推送到私有仓库
-./push-private.sh "feat: 新增达梦存储适配器"
-
-# 过滤 enterprise 后推送到 GitHub
-./push-github-oss.sh "fix: 修复 SSE 流式分片丢失问题"
-```
-
-推送脚本会自动检测当前分支，推送到同名远程分支，无需手动指定分支名。
-
----
-
 ## 关键依赖
 
 | 依赖 | 用途 | 版本 |
@@ -417,25 +387,6 @@ git remote add origin-github git@github.com:your-org/neuralgate.git
 | github.com/redis/go-redis/v9 | Redis 客户端 (Enterprise) | v9.5+ |
 
 Enterprise 额外依赖（仅 `enterprise` BuildTag 编译时引入）：达梦数据库驱动、人大金仓驱动、Kafka Go 客户端。
-
----
-
-## 开发计划
-
-| 阶段 | 内容 | 预估工时 | 依赖 |
-|------|------|----------|------|
-| Phase 1 | 初始化项目：go mod init、目录结构、git 双远端配置 | 0.5天 | 无 |
-| Phase 2 | 全部插件接口定义：interface.go、工厂 BuildTag 逻辑 | 1天 | Phase 1 |
-| Phase 3 | OSS 插件实现：MySQL/SQLite 存储、简单审计、内存限流 | 3天 | Phase 2 |
-| Phase 4 | 内核实现：Pipeline 中间件链、Proxy 代理、SSE 劫持 | 4天 | Phase 3 |
-| Phase 5 | 模型适配器：OpenAI、通义、智谱、DeepSeek | 2天 | Phase 4 |
-| Phase 6 | Gin 管理后台：API Key 管理、模型配置、审计查询 | 3天 | Phase 4 |
-| Phase 7 | Enterprise 插件：流式审计、SHA256、达梦/金仓、PII、SIEM、授权 | 5天 | Phase 4 |
-| Phase 8 | 双编译脚本调试、版本隔离验证 | 1天 | Phase 3+7 |
-| Phase 9 | 集成测试、性能压测、Docker 化 | 2天 | Phase 8 |
-| Phase 10 | GitHub 开源发布、文档完善 | 1天 | Phase 9 |
-
-**总计**: 约 22.5 人天
 
 ---
 
