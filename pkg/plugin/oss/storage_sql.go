@@ -165,6 +165,18 @@ func (s *SQLStorage) UpdateAPIKeyQuota(keyID string, usedQuota int64) error {
 	return err
 }
 
+// IncrementAPIKeyUsage 原子累加已用额度(SQL 层 used_quota = used_quota + ? 单语句,并发安全)
+func (s *SQLStorage) IncrementAPIKeyUsage(keyID string, delta int64) error {
+	res, err := s.db.Exec("UPDATE api_keys SET used_quota = used_quota + ? WHERE id = ? AND deleted = 0", delta, keyID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (s *SQLStorage) ListAPIKeys(tenantID string, page, size int) ([]*plugin.APIKey, int64, error) {
 	page, size = normalizePage(page, size)
 	where := "deleted = 0"

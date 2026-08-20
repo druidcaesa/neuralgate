@@ -124,6 +124,40 @@ func TestSQLStorageAPIKeyCRUD(t *testing.T) {
 	}
 }
 
+func TestSQLStorageIncrementAPIKeyUsage(t *testing.T) {
+	s := newTestSQLStorage(t)
+	now := time.Now()
+	key := &plugin.APIKey{
+		ID: "k1", KeyHash: "hash-1", KeyPrefix: "ng-abcdef12",
+		TenantID: "t1", Name: "测试Key", Status: plugin.APIKeyStatusActive,
+		Quota: -1, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := s.SaveAPIKey(key); err != nil {
+		t.Fatalf("SaveAPIKey: %v", err)
+	}
+	if err := s.IncrementAPIKeyUsage("k1", 100); err != nil {
+		t.Fatalf("IncrementAPIKeyUsage(k1,100): %v", err)
+	}
+	if err := s.IncrementAPIKeyUsage("k1", 50); err != nil {
+		t.Fatalf("IncrementAPIKeyUsage(k1,50): %v", err)
+	}
+	got, err := s.GetAPIKeyByID("k1")
+	if err != nil || got.UsedQuota != 150 {
+		t.Fatalf("UsedQuota = %d, %v; want 150", got.UsedQuota, err)
+	}
+	// 不存在 key → ErrNotFound
+	if err := s.IncrementAPIKeyUsage("nope", 1); err != ErrNotFound {
+		t.Fatalf("IncrementAPIKeyUsage(nope) err = %v; want ErrNotFound", err)
+	}
+	// 软删除后同样查不到
+	if err := s.DeleteAPIKey("k1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.IncrementAPIKeyUsage("k1", 1); err != ErrNotFound {
+		t.Fatalf("IncrementAPIKeyUsage(deleted) err = %v; want ErrNotFound", err)
+	}
+}
+
 func TestSQLStorageModelConfigCRUD(t *testing.T) {
 	s := newTestSQLStorage(t)
 	now := time.Now()
