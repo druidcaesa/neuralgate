@@ -53,6 +53,8 @@ git rm -r --cached --ignore-unmatch \
   README.md \
   .gitignore \
   push-private.sh \
+  .codegraph \
+  .superpowers \
   push-github-oss.sh
 
 git commit -m "[$TIMESTAMP] $COMMIT_MSG"
