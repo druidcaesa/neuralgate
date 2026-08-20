@@ -26,11 +26,12 @@ import (
 )
 
 func TestProxyCoreSkeletonResponse(t *testing.T) {
-	pipeline := NewPipeline(oss.NewMemStorage(), oss.NewMemRateLimiter(), nil)
+	pipeline := NewPipeline(newTestStorage(), oss.NewMemRateLimiter(), nil)
 	registry := adapter.NewAdapterRegistry()
 	proxy := NewProxyCore(pipeline, registry)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/v1/chat/completions", nil)
+	req.Header.Set("Authorization", "Bearer ng-goodkey")
 	proxy.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("status = %d, want 503", rec.Code)
@@ -51,11 +52,12 @@ func TestProxyCoreSkeletonResponse(t *testing.T) {
 }
 
 func TestProxyCoreHealthz(t *testing.T) {
-	pipeline := NewPipeline(oss.NewMemStorage(), oss.NewMemRateLimiter(), nil)
+	pipeline := NewPipeline(newTestStorage(), oss.NewMemRateLimiter(), nil)
 	registry := adapter.NewAdapterRegistry()
 	proxy := NewProxyCore(pipeline, registry)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/healthz", nil)
+	req.Header.Set("Authorization", "Bearer ng-goodkey")
 	proxy.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
