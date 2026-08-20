@@ -14,10 +14,7 @@
 
 package oss
 
-import (
-	"database/sql"
-	"fmt"
-)
+import "database/sql"
 
 // sqliteCreateTables 建 SQLite 表(与 storage_sql.go 中 CRUD 列完全对应)
 func sqliteCreateTables(db *sql.DB) error {
@@ -91,11 +88,4 @@ func sqliteCreateTables(db *sql.DB) error {
 		}
 	}
 	return nil
-}
-
-// mysqlCreateTables 建 MySQL 表。
-// 临时版本(任务 4):占位实现,保证 Init 可编译;任务 6 将实现完整建表与 UPSERT 方言。
-func mysqlCreateTables(db *sql.DB) error {
-	_ = db
-	return fmt.Errorf("mysqlCreateTables: not implemented until task 6")
 }

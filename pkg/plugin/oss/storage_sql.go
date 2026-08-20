@@ -28,8 +28,12 @@ import (
 // SQLStorage 共享 SQL 存储实现(MySQL/SQLite 共用 CRUD 逻辑)
 type SQLStorage struct {
 	db         *sql.DB
+	driver     string // mysql / sqlite,记录以区分 UPSERT 等 SQL 方言
 	encryptKey string
 }
+
+// isMySQL 判断当前驱动是否为 MySQL(用于 UPSERT 等方言分支)
+func (s *SQLStorage) isMySQL() bool { return s.driver == "mysql" }
 
 // NewSQLStorage 创建 SQL 存储(不含连接,连接由 Init 建立)
 func NewSQLStorage() *SQLStorage { return &SQLStorage{} }
@@ -50,11 +54,20 @@ func (s *SQLStorage) Init(config map[string]interface{}) error {
 		_ = db.Close()
 		return fmt.Errorf("ping %s: %w", driver, err)
 	}
+	s.driver = driver
 	s.db = db
 	if driver == "mysql" {
-		return mysqlCreateTables(db)
+		err = mysqlCreateTables(db)
+	} else {
+		err = sqliteCreateTables(db)
 	}
-	return sqliteCreateTables(db)
+	if err != nil {
+		_ = db.Close()
+		s.driver = ""
+		s.db = nil
+		return fmt.Errorf("create tables: %w", err)
+	}
+	return nil
 }
 
 // ===== 时间与 JSON 转换 =====
@@ -131,13 +144,17 @@ func (s *SQLStorage) SaveAPIKey(key *plugin.APIKey) error {
 	expiresAt := timePtrToMS(key.ExpiresAt)
 	created := timeToMS(key.CreatedAt)
 	updated := timeToMS(key.UpdatedAt)
+	// UPSERT 冲突更新子句:MySQL 用 VALUES(col),SQLite 用 excluded.col;
+	// 更新列与 INSERT 列(除 id/created_at)对应,deleted 随重新保存恢复为 0。
+	upsert := ""
+	if s.isMySQL() {
+		upsert = " ON DUPLICATE KEY UPDATE key_hash=VALUES(key_hash), key_prefix=VALUES(key_prefix), tenant_id=VALUES(tenant_id), name=VALUES(name), status=VALUES(status), quota=VALUES(quota), used_quota=VALUES(used_quota), rate_limit=VALUES(rate_limit), allowed_models=VALUES(allowed_models), expires_at=VALUES(expires_at), updated_at=VALUES(updated_at), created_by=VALUES(created_by), deleted=VALUES(deleted)"
+	} else {
+		upsert = " ON CONFLICT(id) DO UPDATE SET key_hash=excluded.key_hash, key_prefix=excluded.key_prefix, tenant_id=excluded.tenant_id, name=excluded.name, status=excluded.status, quota=excluded.quota, used_quota=excluded.used_quota, rate_limit=excluded.rate_limit, allowed_models=excluded.allowed_models, expires_at=excluded.expires_at, updated_at=excluded.updated_at, created_by=excluded.created_by, deleted=excluded.deleted"
+	}
 	_, err := s.db.Exec(
 		`INSERT INTO api_keys (id, key_hash, key_prefix, tenant_id, name, status, quota, used_quota, rate_limit, allowed_models, expires_at, created_at, updated_at, created_by, deleted)
-		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
-		 ON CONFLICT(id) DO UPDATE SET key_hash=excluded.key_hash, key_prefix=excluded.key_prefix, tenant_id=excluded.tenant_id,
-		   name=excluded.name, status=excluded.status, quota=excluded.quota, used_quota=excluded.used_quota,
-		   rate_limit=excluded.rate_limit, allowed_models=excluded.allowed_models, expires_at=excluded.expires_at,
-		   updated_at=excluded.updated_at, created_by=excluded.created_by`,
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`+upsert,
 		key.ID, key.KeyHash, key.KeyPrefix, key.TenantID, key.Name, string(key.Status),
 		key.Quota, key.UsedQuota, key.RateLimit, allowed, expiresAt, created, updated, key.CreatedBy)
 	return err
@@ -240,14 +257,17 @@ func (s *SQLStorage) SaveModelConfig(config *plugin.ModelConfig) error {
 	}
 	created := timeToMS(config.CreatedAt)
 	updated := timeToMS(config.UpdatedAt)
+	// UPSERT 冲突更新子句:MySQL 用 VALUES(col),SQLite 用 excluded.col;
+	// 更新列与 INSERT 列(除 id/created_at)对应。
+	upsert := ""
+	if s.isMySQL() {
+		upsert = " ON DUPLICATE KEY UPDATE model_name=VALUES(model_name), provider=VALUES(provider), provider_model=VALUES(provider_model), base_url=VALUES(base_url), api_key=VALUES(api_key), encrypted=VALUES(encrypted), timeout=VALUES(timeout), max_retries=VALUES(max_retries), retry_interval=VALUES(retry_interval), weight=VALUES(weight), enabled=VALUES(enabled), tags=VALUES(tags), updated_at=VALUES(updated_at)"
+	} else {
+		upsert = " ON CONFLICT(id) DO UPDATE SET model_name=excluded.model_name, provider=excluded.provider, provider_model=excluded.provider_model, base_url=excluded.base_url, api_key=excluded.api_key, encrypted=excluded.encrypted, timeout=excluded.timeout, max_retries=excluded.max_retries, retry_interval=excluded.retry_interval, weight=excluded.weight, enabled=excluded.enabled, tags=excluded.tags, updated_at=excluded.updated_at"
+	}
 	_, err = s.db.Exec(
 		`INSERT INTO model_configs (id, model_name, provider, provider_model, base_url, api_key, encrypted, timeout, max_retries, retry_interval, weight, enabled, tags, created_at, updated_at)
-		 VALUES (?,?,?,?,?,?,1,?,?,?,?,?,?,?,?)
-		 ON CONFLICT(id) DO UPDATE SET model_name=excluded.model_name, provider=excluded.provider,
-		   provider_model=excluded.provider_model, base_url=excluded.base_url, api_key=excluded.api_key,
-		   encrypted=excluded.encrypted, timeout=excluded.timeout, max_retries=excluded.max_retries,
-		   retry_interval=excluded.retry_interval, weight=excluded.weight, enabled=excluded.enabled,
-		   tags=excluded.tags, updated_at=excluded.updated_at`,
+		 VALUES (?,?,?,?,?,?,1,?,?,?,?,?,?,?,?)`+upsert,
 		config.ID, config.ModelName, config.Provider, config.ProviderModel, config.BaseURL,
 		encrypted, config.Timeout, config.MaxRetries, config.RetryInterval, config.Weight,
 		config.Enabled, marshalJSON(config.Tags), created, updated)
