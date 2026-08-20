@@ -17,11 +17,12 @@ package core
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/druidcaesa/neuralgate/pkg/adapter"
 )
 
-// ProxyCore 代理内核层：当前所有 /v1/* 请求返回 OpenAI 格式占位错误（503 service_unavailable）
+// ProxyCore 代理内核层：端点分类 → 本地响应或核心代理转发
 type ProxyCore struct {
 	pipeline *Pipeline
 	registry *adapter.AdapterRegistry
@@ -37,14 +38,84 @@ func (p *ProxyCore) Handler() http.Handler {
 	return p.pipeline.Build(http.HandlerFunc(p.proxyHandler))
 }
 
-// proxyHandler 代理处理入口（当前返回占位错误）
+// proxyHandler 代理处理入口：端点分类
 func (p *ProxyCore) proxyHandler(w http.ResponseWriter, r *http.Request) {
-	// 健康检查路由：/healthz 不经过模型代理链路，直接返回 200
+	// 健康检查
 	if r.URL.Path == "/healthz" {
 		writeHealthz(w)
 		return
 	}
-	writeOpenAIError(w, http.StatusServiceUnavailable, "api_error", "service_unavailable", "service not initialized")
+	rc, ok := RequestContextFrom(r.Context())
+	if !ok {
+		writeOpenAIError(w, http.StatusInternalServerError, "api_error", "internal_error", "internal error")
+		return
+	}
+
+	switch {
+	case r.URL.Path == "/v1/models":
+		p.handleModelsList(w, rc)
+	case strings.HasPrefix(r.URL.Path, "/v1/models/"):
+		p.handleModelDetail(w, r, rc)
+	case r.URL.Path == "/v1/chat/completions" || r.URL.Path == "/v1/embeddings":
+		p.handleProxy(w, r, rc)
+	default:
+		// 透传端点（completions/moderations/images/audio/files 等）
+		p.handlePassThrough(w, r, rc)
+	}
+}
+
+// handleModelsList GET /v1/models：返回启用模型列表（本地响应）
+func (p *ProxyCore) handleModelsList(w http.ResponseWriter, rc *RequestContext) {
+	models, _, err := p.pipeline.storage.ListModelConfigs(1, 1000)
+	if err != nil {
+		writeOpenAIError(w, http.StatusInternalServerError, "api_error", "internal_error", "failed to list models")
+		return
+	}
+	type modelItem struct {
+		ID      string `json:"id"`
+		Object  string `json:"object"`
+		Created int64  `json:"created"`
+		OwnedBy string `json:"owned_by"`
+	}
+	data := make([]modelItem, 0, len(models))
+	for _, m := range models {
+		if !m.Enabled {
+			continue
+		}
+		data = append(data, modelItem{
+			ID:      m.ModelName,
+			Object:  "model",
+			Created: m.CreatedAt.Unix(),
+			OwnedBy: "neuralgate",
+		})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"object": "list", "data": data})
+}
+
+// handleModelDetail GET /v1/models/{model}
+func (p *ProxyCore) handleModelDetail(w http.ResponseWriter, r *http.Request, rc *RequestContext) {
+	name := strings.TrimPrefix(r.URL.Path, "/v1/models/")
+	config, err := p.pipeline.storage.GetModelConfig(name)
+	if err != nil || !config.Enabled {
+		writeOpenAIError(w, http.StatusNotFound, "invalid_request_error", "model_not_found", "model not found: "+name)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"id": config.ModelName, "object": "model",
+		"created": config.CreatedAt.Unix(), "owned_by": "neuralgate",
+	})
+}
+
+// handleProxy 核心代理（chat/completions、embeddings）：当前为占位实现，转发逻辑后续补齐
+func (p *ProxyCore) handleProxy(w http.ResponseWriter, r *http.Request, rc *RequestContext) {
+	writeOpenAIError(w, http.StatusServiceUnavailable, "api_error", "service_unavailable", "proxy not implemented yet")
+}
+
+// handlePassThrough 透传端点：当前为占位实现，转发逻辑后续补齐
+func (p *ProxyCore) handlePassThrough(w http.ResponseWriter, r *http.Request, rc *RequestContext) {
+	writeOpenAIError(w, http.StatusServiceUnavailable, "api_error", "service_unavailable", "proxy not implemented yet")
 }
 
 // writeHealthz 健康检查响应体

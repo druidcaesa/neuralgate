@@ -56,6 +56,7 @@ func routeTestStorage() *oss.MemStorage {
 	_ = s.SaveAPIKey(&plugin.APIKey{
 		ID: "k2", KeyHash: hashKey("ng-open"), KeyPrefix: "ng-open",
 		Name: "open", Status: plugin.APIKeyStatusActive, AllowedModels: nil,
+		Quota: -1, // 无额度限制,否则 Quota 默认 0 会被鉴权中间件判为 quota_exceeded(429)
 		CreatedAt: now, UpdatedAt: now,
 	})
 	return s
