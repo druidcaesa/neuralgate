@@ -4,7 +4,7 @@ set -euo pipefail
 # 用法: ./push-private.sh "本次提交说明"
 # 示例: ./push-private.sh "feat: 新增达梦存储适配器"
 
-COMMIT_MSG="$1"
+COMMIT_MSG="${1:-}"
 if [ -z "$COMMIT_MSG" ]; then
   echo "用法: ./push-private.sh \"提交说明\""
   echo "示例: ./push-private.sh \"feat: 新增达梦存储适配器\""
