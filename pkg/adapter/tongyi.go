@@ -94,6 +94,25 @@ func toDashMessages(msgs []Message) []dashScopeMessage {
 				}
 			}
 			content = sb.String()
+		case []interface{}:
+			// 内核经 json.Unmarshal 构造的 UnifiedRequest,content 为 []interface{}(元素为 map)
+			var sb bytes.Buffer
+			for _, item := range c {
+				mm, ok := item.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				if text, ok := mm["text"].(string); ok {
+					sb.WriteString(text)
+					continue
+				}
+				if t, _ := mm["type"].(string); t == "image_url" || mm["image_url"] != nil {
+					sb.WriteString("[image]")
+				} else if t == "input_audio" || mm["input_audio"] != nil {
+					sb.WriteString("[audio]")
+				}
+			}
+			content = sb.String()
 		}
 		out = append(out, dashScopeMessage{Role: m.Role, Content: content})
 	}
@@ -104,7 +123,8 @@ func toDashMessages(msgs []Message) []dashScopeMessage {
 type dashScopeResponse struct {
 	Output struct {
 		Choices []struct {
-			Message dashScopeMessage `json:"message"`
+			Message      dashScopeMessage `json:"message"`
+			FinishReason string           `json:"finish_reason"`
 		} `json:"choices"`
 		Usage struct {
 			InputTokens  int `json:"input_tokens"`
@@ -135,7 +155,7 @@ func (a *TongyiAdapter) TransformResponse(resp *http.Response) (*UnifiedResponse
 		ur.Choices = append(ur.Choices, Choice{
 			Index:        i,
 			Message:      Message{Role: c.Message.Role, Content: c.Message.Content},
-			FinishReason: "stop",
+			FinishReason: c.FinishReason,
 		})
 	}
 	ur.Usage = &TokenUsage{

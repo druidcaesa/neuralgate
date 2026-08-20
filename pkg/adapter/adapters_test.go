@@ -140,6 +140,34 @@ func TestTongyiTransformResponse(t *testing.T) {
 	}
 }
 
+func TestTongyiTransformResponseFinishReason(t *testing.T) {
+	// DashScope 非流式响应透传 finish_reason,不硬编码 "stop"
+	a := NewTongyiAdapter()
+	body := `{"output":{"choices":[{"message":{"role":"assistant","content":"截断了"},"finish_reason":"length"}],
+	  "usage":{"input_tokens":5,"output_tokens":3,"total_tokens":8}},"request_id":"r1"}`
+	resp := &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body))}
+	ur, err := a.TransformResponse(resp)
+	if err != nil {
+		t.Fatalf("TransformResponse: %v", err)
+	}
+	if ur.Choices[0].FinishReason != "length" {
+		t.Fatalf("finish_reason = %q; want length", ur.Choices[0].FinishReason)
+	}
+}
+
+func TestTongyiToDashMessagesInterfaceContent(t *testing.T) {
+	// 内核经 json.Unmarshal 构造的 UnifiedRequest:content 为 []interface{}(元素为 map)
+	content := []interface{}{
+		map[string]interface{}{"type": "text", "text": "hi"},
+		map[string]interface{}{"type": "image_url", "image_url": map[string]interface{}{"url": "x"}},
+		map[string]interface{}{"type": "input_audio", "input_audio": map[string]interface{}{"data": "y"}},
+	}
+	msgs := toDashMessages([]Message{{Role: "user", Content: content}})
+	if len(msgs) != 1 || msgs[0].Content != "hi[image][audio]" {
+		t.Fatalf("toDashMessages content = %q; want hi[image][audio]", msgs[0].Content)
+	}
+}
+
 func TestZhipuTransformRequest(t *testing.T) {
 	a := NewZhipuAdapter()
 	req := &UnifiedRequest{Model: "glm-4", Messages: []Message{{Role: "user", Content: "hi"}}}
@@ -172,6 +200,19 @@ func TestZhipuTransformResponse(t *testing.T) {
 	}
 	if ur.Usage.TotalTokens != 6 {
 		t.Fatalf("usage = %+v", ur.Usage)
+	}
+}
+
+func TestZhipuToZhipuMessagesInterfaceContent(t *testing.T) {
+	// 内核经 json.Unmarshal 构造的 UnifiedRequest:content 为 []interface{}(元素为 map)
+	content := []interface{}{
+		map[string]interface{}{"type": "text", "text": "hi"},
+		map[string]interface{}{"type": "image_url", "image_url": map[string]interface{}{"url": "x"}},
+		map[string]interface{}{"type": "input_audio", "input_audio": map[string]interface{}{"data": "y"}},
+	}
+	msgs := toZhipuMessages([]Message{{Role: "user", Content: content}})
+	if len(msgs) != 1 || msgs[0].Content != "hi[image][audio]" {
+		t.Fatalf("toZhipuMessages content = %q; want hi[image][audio]", msgs[0].Content)
 	}
 }
 
