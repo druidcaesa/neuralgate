@@ -142,6 +142,7 @@ func TestDefaultsFullyApplied(t *testing.T) {
 		// Storage
 		{"Storage.Driver", cfg.Storage.Driver, d.Storage.Driver},
 		{"Storage.DSN", cfg.Storage.DSN, d.Storage.DSN},
+		{"Storage.EncryptKey", cfg.Storage.EncryptKey, d.Storage.EncryptKey},
 		{"Storage.MaxOpenConns", cfg.Storage.MaxOpenConns, d.Storage.MaxOpenConns},
 		{"Storage.MaxIdleConns", cfg.Storage.MaxIdleConns, d.Storage.MaxIdleConns},
 		// Audit
