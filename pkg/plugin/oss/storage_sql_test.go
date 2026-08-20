@@ -20,8 +20,6 @@ import (
 	"time"
 
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
-	_ "github.com/go-sql-driver/mysql"
-	_ "modernc.org/sqlite"
 )
 
 // TestSQLiteCreateTables SQLite 三表建表后均应存在

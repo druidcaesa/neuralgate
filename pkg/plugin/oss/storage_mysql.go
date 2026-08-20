@@ -14,7 +14,11 @@
 
 package oss
 
-import "database/sql"
+import (
+	"database/sql"
+
+	_ "github.com/go-sql-driver/mysql" // 注册 mysql 驱动(驱动名 "mysql")
+)
 
 // mysqlCreateTables MySQL 建表(与 storage_sql.go 中 CRUD 列完全对应)
 func mysqlCreateTables(db *sql.DB) error {
