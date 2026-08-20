@@ -108,7 +108,7 @@ func main() {
 	registry.Register(adapter.NewDeepSeekAdapter())
 
 	// 6. 初始化代理内核
-	pipeline := core.NewPipeline(storage, rateLimiter, auditor)
+	pipeline := core.NewPipeline(storage, rateLimiter, auditor, registry)
 	proxyCore := core.NewProxyCore(pipeline, registry)
 	acceptor := core.NewAcceptor(proxyCore.Handler())
 

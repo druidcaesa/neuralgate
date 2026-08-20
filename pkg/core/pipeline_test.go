@@ -19,6 +19,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/druidcaesa/neuralgate/pkg/adapter"
 	"github.com/druidcaesa/neuralgate/pkg/plugin/oss"
 )
 
@@ -33,7 +34,7 @@ func TestPipelineOrder(t *testing.T) {
 			})
 		}
 	}
-	p := NewPipeline(newTestStorage(), oss.NewMemRateLimiter(), nil)
+	p := NewPipeline(newTestStorage(), oss.NewMemRateLimiter(), nil, adapter.NewAdapterRegistry())
 	p.Use(record("m1"))
 	p.Use(record("m2"))
 	handler := p.Apply(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -54,7 +55,7 @@ func TestPipelineOrder(t *testing.T) {
 }
 
 func TestCustomMiddlewareRunsAfterAuth(t *testing.T) {
-	p := NewPipeline(newTestStorage(), oss.NewMemRateLimiter(), nil)
+	p := NewPipeline(newTestStorage(), oss.NewMemRateLimiter(), nil, adapter.NewAdapterRegistry())
 	var sawRC *RequestContext
 	p.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -80,7 +81,7 @@ func TestCustomMiddlewareRunsAfterAuth(t *testing.T) {
 }
 
 func TestAuthMiddlewareCreatesRequestContext(t *testing.T) {
-	p := NewPipeline(newTestStorage(), oss.NewMemRateLimiter(), nil)
+	p := NewPipeline(newTestStorage(), oss.NewMemRateLimiter(), nil, adapter.NewAdapterRegistry())
 	var gotRC *RequestContext
 	p.Use(AuthMiddleware(p.storage))
 	handler := p.Apply(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -112,12 +113,13 @@ func TestAuthMiddlewareCreatesRequestContext(t *testing.T) {
 }
 
 func TestRateLimitAndRouteMiddlewaresPassThrough(t *testing.T) {
-	p := NewPipeline(newTestStorage(), oss.NewMemRateLimiter(), nil)
+	p := NewPipeline(newTestStorage(), oss.NewMemRateLimiter(), nil, adapter.NewAdapterRegistry())
 	hit := false
 	handler := p.Build(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hit = true
 	}))
-	req := httptest.NewRequest("POST", "/v1/chat/completions", nil)
+	// GET 请求经路由中间件直接放行(无 body 解析),抵达末端 handler
+	req := httptest.NewRequest("GET", "/v1/models", nil)
 	req.Header.Set("Authorization", "Bearer ng-goodkey")
 	handler.ServeHTTP(httptest.NewRecorder(), req)
 	if !hit {
