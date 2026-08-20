@@ -15,6 +15,7 @@
 package core
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -186,6 +187,12 @@ func (p *ProxyCore) handleProxy(w http.ResponseWriter, r *http.Request, rc *Requ
 		return
 	}
 
+	// 3.5 流式响应:劫持 SSE
+	if resp.StatusCode == http.StatusOK && isStreamRequest(r) {
+		p.handleStreaming(w, r, rc, resp, cfg, adpt)
+		return
+	}
+
 	// 4. 非流式响应
 	// Token 用量:adapter 内部读取并恢复 body,须在 io.ReadAll 之前调用
 	prompt, completion, total := adpt.ParseTokenUsage(resp)
@@ -223,6 +230,57 @@ func isStreamRequest(r *http.Request) bool {
 	}
 	_ = json.Unmarshal(rcBody(r), &body)
 	return body.Stream
+}
+
+// handleStreaming 流式转发:劫持分片写客户端 + 投递审计 + Finalize
+func (p *ProxyCore) handleStreaming(w http.ResponseWriter, r *http.Request, rc *RequestContext, upstreamResp *http.Response, cfg *plugin.ModelConfig, adpt adapter.ModelAdapter) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	done := make(chan struct{})
+	defer close(done)
+	disconnect := NewDisconnectHandler(p.pipeline.auditor)
+	go disconnect.Watch(r.Context(), rc.RequestID, done)
+
+	scanner := bufio.NewScanner(upstreamResp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	rc.ResponseStatus = http.StatusOK
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		// 写客户端
+		if _, err := w.Write([]byte(line + "\n")); err != nil {
+			break // 客户端断开
+		}
+		// 捕获分片(行级):data: 前缀,payload 非空即捕获(含 [DONE],保证审计完整)
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "data:") {
+			payload := strings.TrimSpace(strings.TrimPrefix(trimmed, "data:"))
+			if payload != "" {
+				chunk := plugin.SSEChunk{
+					Index:     len(rc.SSEChunks),
+					Data:      payload,
+					Timestamp: time.Now(),
+					EventType: "data",
+				}
+				rc.SSEChunks = append(rc.SSEChunks, chunk)
+				if p.pipeline.auditor != nil {
+					_ = p.pipeline.auditor.SubmitSSEChunk(rc.RequestID, &chunk)
+				}
+				// 解析 usage(末尾含 usage 分片 total>0 时生效;[DONE] 解析为 0 自动跳过)
+				if prompt, completion, total := adpt.ParseStreamUsage([]byte(payload)); total > 0 {
+					rc.PromptTokens, rc.CompletionTokens, rc.TotalTokens = prompt, completion, total
+				}
+			}
+		}
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+	}
+	rc.EndTime = time.Now()
+	p.updateQuota(rc)
+	p.finalizeAudit(rc, rc.PromptTokens, rc.CompletionTokens, rc.TotalTokens)
 }
 
 // buildNativeRequest 原生透传:仅替换 model 字段,raw body 原样转发

@@ -30,10 +30,13 @@ func NewDisconnectHandler(auditor plugin.AuditPipeline) *DisconnectHandler {
 	return &DisconnectHandler{auditor: auditor}
 }
 
-// Watch 监听请求上下文取消信号，断开后标记审计日志
-func (h *DisconnectHandler) Watch(ctx context.Context, requestID string) {
-	<-ctx.Done()
-	if h.auditor != nil {
-		_ = h.auditor.MarkDisconnect(requestID, "client_disconnected")
+// Watch 监听请求取消;done 通道在流正常结束时关闭(防止正常结束误标断连)
+func (h *DisconnectHandler) Watch(ctx context.Context, requestID string, done <-chan struct{}) {
+	select {
+	case <-ctx.Done():
+		if h.auditor != nil {
+			_ = h.auditor.MarkDisconnect(requestID, "client_disconnected")
+		}
+	case <-done:
 	}
 }
