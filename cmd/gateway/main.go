@@ -113,7 +113,7 @@ func main() {
 	acceptor := core.NewAcceptor(proxyCore.Handler())
 
 	// 7. 初始化管理后台
-	adminServer := admin.NewAdminServer(storage, logger)
+	adminServer := admin.NewAdminServer(storage, logger, edition)
 
 	// 8. 启动双服务（并发）
 	proxyServer := &http.Server{
