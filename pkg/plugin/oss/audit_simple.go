@@ -38,19 +38,17 @@ func NewSimpleAuditor(storage plugin.StoragePlugin) *SimpleAuditor {
 // Init 初始化审计管道
 func (a *SimpleAuditor) Init(config plugin.AuditConfig) error { return nil }
 
-// Submit 提交审计事件（当前仅处理请求开始事件）
+// Submit 提交审计事件;Data 可携带 *AuditLog 作为基础元数据(请求开始事件)
 func (a *SimpleAuditor) Submit(event *plugin.AuditEvent) error {
-	if event.EventType != plugin.AuditEventRequestStart {
-		return nil
-	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if _, ok := a.pending[event.RequestID]; !ok {
-		a.pending[event.RequestID] = &plugin.AuditLog{
-			ID:        event.RequestID,
-			RequestID: event.RequestID,
-			CreatedAt: event.Timestamp,
+	log, ok := a.pending[event.RequestID]
+	if !ok {
+		log = &plugin.AuditLog{ID: event.RequestID, RequestID: event.RequestID, CreatedAt: event.Timestamp}
+		if base, isLog := event.Data.(*plugin.AuditLog); isLog && base != nil {
+			log = base
 		}
+		a.pending[event.RequestID] = log
 	}
 	return nil
 }
