@@ -9,7 +9,7 @@
 **技术栈：** Go 1.26（net/http、gin-gonic/gin、gopkg.in/yaml.v3、go.uber.org/zap、google/uuid）
 
 **依据规格：** `docs/superpowers/specs/2026-08-20-neuralgate-skeleton-design.md`
-**依据设计文档：** `NeuralGate_技术架构详细设计.md`（V1.0）
+**依据设计文档：** `../../NeuralGate_技术架构详细设计.md`（V1.0）
 
 ---
 
@@ -647,7 +647,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 
 - [ ] **步骤 1：创建契约文件（照设计文档原样搬入）**
 
-将 `NeuralGate_技术架构详细设计.md` 以下代码块原样复制到 `pkg/plugin/interface.go`（`package plugin`，无 BuildTag）：
+将 `../../NeuralGate_技术架构详细设计.md` 以下代码块原样复制到 `pkg/plugin/interface.go`（`package plugin`，无 BuildTag）：
 
 | 文档章节 | 内容 | 包含类型 |
 |----------|------|----------|
@@ -709,7 +709,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 
 - [ ] **步骤 1：创建契约文件（照设计文档原样搬入）**
 
-将 `NeuralGate_技术架构详细设计.md` 第 4.7 节代码块（ModelAdapter 接口 + UnifiedRequest 系列全部数据结构，含 Message/ContentPart/Tool/ToolCall/ResponseFormat/UnifiedResponse/SSE 结构）原样复制到 `pkg/adapter/interface.go`（`package adapter`），并将 `ModelAdapter` 接口替换为 8.3 节增强版（含 `SupportsNativeProxy()`、`TransformRequest(req *UnifiedRequest, rawBody []byte)`、`ParseStreamUsage(chunk []byte)`）。
+将 `../../NeuralGate_技术架构详细设计.md` 第 4.7 节代码块（ModelAdapter 接口 + UnifiedRequest 系列全部数据结构，含 Message/ContentPart/Tool/ToolCall/ResponseFormat/UnifiedResponse/SSE 结构）原样复制到 `pkg/adapter/interface.go`（`package adapter`），并将 `ModelAdapter` 接口替换为 8.3 节增强版（含 `SupportsNativeProxy()`、`TransformRequest(req *UnifiedRequest, rawBody []byte)`、`ParseStreamUsage(chunk []byte)`）。
 
 文件应包含类型：ModelAdapter、UnifiedRequest、Message、ContentPart、ImageURLPart、AudioPart、Tool、ToolFunction、ToolCall、ToolCallFunction、ResponseFormat、ResponseJSONSchema、StreamOptions、UnifiedResponse、Choice、TokenUsage、LogprobsResult、LogprobContent、LogprobTokenAlt、UnifiedSSEChunk、SSEChoice。
 
