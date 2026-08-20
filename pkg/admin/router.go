@@ -20,7 +20,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// registerRoutes 注册路由（健康检查 + API 占位组）
+// registerRoutes 注册路由
 func (s *AdminServer) registerRoutes(r *gin.Engine) {
 	r.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
@@ -30,5 +30,26 @@ func (s *AdminServer) registerRoutes(r *gin.Engine) {
 		api.GET("/ping", func(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"message": "pong"})
 		})
+
+		// API Key 管理
+		api.POST("/api-keys", s.createAPIKey)
+		api.GET("/api-keys", s.listAPIKeys)
+		api.PATCH("/api-keys/:id", s.updateAPIKey)
+		api.DELETE("/api-keys/:id", s.deleteAPIKey)
+
+		// 模型配置
+		api.POST("/models", s.createModelConfig)
+		api.GET("/models", s.listModelConfigs)
+		api.PUT("/models/:id", s.updateModelConfig)
+		api.DELETE("/models/:id", s.deleteModelConfig)
+		api.POST("/models/:id/test", s.testModelConfig)
+
+		// 审计日志
+		api.GET("/audit-logs", s.queryAuditLogs)
+		api.GET("/audit-logs/export", s.exportAuditLogs)
+		api.GET("/audit-logs/:id", s.getAuditLog)
+
+		// 系统信息
+		api.GET("/system", s.systemInfo)
 	}
 }
