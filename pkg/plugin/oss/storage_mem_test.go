@@ -137,3 +137,45 @@ func TestPingAndClose(t *testing.T) {
 		t.Errorf("Close() error = %v", err)
 	}
 }
+
+func TestMemStorageGetAPIKeyByID(t *testing.T) {
+	s := NewMemStorage()
+	key := &plugin.APIKey{ID: "k1", KeyHash: "h1", Name: "test"}
+	if err := s.SaveAPIKey(key); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetAPIKeyByID("k1")
+	if err != nil || got.ID != "k1" {
+		t.Fatalf("GetAPIKeyByID(k1) = %v, %v; want k1, nil", got, err)
+	}
+	if _, err := s.GetAPIKeyByID("nope"); err != ErrNotFound {
+		t.Fatalf("GetAPIKeyByID(nope) err = %v; want ErrNotFound", err)
+	}
+}
+
+func TestMemStorageGetModelConfigByID(t *testing.T) {
+	s := NewMemStorage()
+	cfg := &plugin.ModelConfig{ID: "m1", ModelName: "gpt-4"}
+	if err := s.SaveModelConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetModelConfigByID("m1")
+	if err != nil || got.ModelName != "gpt-4" {
+		t.Fatalf("GetModelConfigByID(m1) = %v, %v", got, err)
+	}
+	if _, err := s.GetModelConfigByID("nope"); err != ErrNotFound {
+		t.Fatalf("GetModelConfigByID(nope) err = %v; want ErrNotFound", err)
+	}
+}
+
+func TestMemStorageQueryAuditLogsByRequestID(t *testing.T) {
+	s := NewMemStorage()
+	l1 := &plugin.AuditLog{ID: "a1", RequestID: "r1", ModelName: "gpt-4"}
+	if err := s.SaveAuditLog(l1); err != nil {
+		t.Fatal(err)
+	}
+	logs, total, err := s.QueryAuditLogs(plugin.AuditLogFilter{RequestID: "r1"}, 1, 10)
+	if err != nil || total != 1 || logs[0].ID != "a1" {
+		t.Fatalf("QueryAuditLogs by requestID = %v,%d,%v", logs, total, err)
+	}
+}

@@ -169,6 +169,7 @@ type StoragePlugin interface {
 
 	// API Key 管理
 	GetAPIKey(keyHash string) (*APIKey, error)
+	GetAPIKeyByID(id string) (*APIKey, error) // 按主键查询(管理后台用)
 	SaveAPIKey(key *APIKey) error
 	UpdateAPIKeyQuota(keyID string, usedQuota int64) error
 	ListAPIKeys(tenantID string, page, size int) ([]*APIKey, int64, error)
@@ -176,6 +177,7 @@ type StoragePlugin interface {
 
 	// 模型配置管理
 	GetModelConfig(modelName string) (*ModelConfig, error)
+	GetModelConfigByID(id string) (*ModelConfig, error) // 按主键查询(管理后台用)
 	ListModelConfigs(page, size int) ([]*ModelConfig, int64, error)
 	SaveModelConfig(config *ModelConfig) error
 	DeleteModelConfig(id string) error
@@ -195,6 +197,7 @@ type AuditLogFilter struct {
 	TenantID  string
 	APIKeyID  string
 	ModelName string
+	RequestID string // 按请求 ID 精查(审计详情)
 	StartTime *time.Time
 	EndTime   *time.Time
 	Status    int    // 响应状态码过滤
