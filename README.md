@@ -331,8 +331,6 @@ neuralgate/
 ├── config.yaml                         # Config template
 ├── go.mod
 ├── go.sum
-├── push-private.sh                     # Push to private repo script
-├── push-github-oss.sh                  # Push to GitHub (filters enterprise) script
 └── README.md
 ```
 
@@ -376,34 +374,6 @@ neuralgate/
 
 ---
 
-## Dual-Repository Git Management
-
-The project uses a dual-repo strategy: a private repo holds the full source (including enterprise), while the GitHub repo only holds open-source code.
-
-### Remote Setup
-
-```bash
-# Private repo (full source)
-git remote add origin-private git@your-gitlab.com:team/ai-gateway.git
-
-# GitHub open-source repo (enterprise filtered)
-git remote add origin-github git@github.com:your-org/neuralgate.git
-```
-
-### Push Scripts
-
-```bash
-# Push full source to private repo
-./push-private.sh "feat: add DM storage adapter"
-
-# Push filtered (no enterprise) to GitHub
-./push-github-oss.sh "fix: fix SSE chunk loss issue"
-```
-
-Push scripts auto-detect the current branch and push to the same remote branch name — no manual branch specification needed.
-
----
-
 ## Key Dependencies
 
 | Dependency | Purpose | Version |
@@ -417,25 +387,6 @@ Push scripts auto-detect the current branch and push to the same remote branch n
 | github.com/redis/go-redis/v9 | Redis client (Enterprise) | v9.5+ |
 
 Enterprise additional dependencies (only included with `enterprise` BuildTag): DM database driver, Kingbase driver, Kafka Go client.
-
----
-
-## Development Roadmap
-
-| Phase | Content | Est. Effort | Depends On |
-|-------|---------|-------------|------------|
-| Phase 1 | Project init: go mod, directory structure, git dual-remote | 0.5d | — |
-| Phase 2 | All plugin interface definitions: interface.go, factory BuildTag | 1d | Phase 1 |
-| Phase 3 | OSS plugin impl: MySQL/SQLite storage, simple audit, in-memory rate limit | 3d | Phase 2 |
-| Phase 4 | Core impl: Pipeline middleware chain, Proxy, SSE hijacking | 4d | Phase 3 |
-| Phase 5 | Model adapters: OpenAI, Tongyi, Zhipu, DeepSeek | 2d | Phase 4 |
-| Phase 6 | Gin admin backend: API Key mgmt, model config, audit query | 3d | Phase 4 |
-| Phase 7 | Enterprise plugins: streaming audit, SHA256, DM/Kingbase, PII, SIEM, license | 5d | Phase 4 |
-| Phase 8 | Dual-build script debugging, edition isolation verification | 1d | Phase 3+7 |
-| Phase 9 | Integration testing, perf benchmarking, Dockerization | 2d | Phase 8 |
-| Phase 10 | GitHub open-source release, documentation | 1d | Phase 9 |
-
-**Total**: ~22.5 person-days
 
 ---
 
