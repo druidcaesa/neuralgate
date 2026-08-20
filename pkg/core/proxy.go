@@ -21,9 +21,7 @@ import (
 	"github.com/druidcaesa/neuralgate/pkg/adapter"
 )
 
-// ProxyCore 代理内核层（照设计文档 2.3）
-// 骨架期：所有 /v1/* 请求返回 OpenAI 格式占位错误（503 service_unavailable）；
-// Phase 4 接入 ReverseProxy 转发、SSE 劫持、断连补全
+// ProxyCore 代理内核层：当前所有 /v1/* 请求返回 OpenAI 格式占位错误（503 service_unavailable）
 type ProxyCore struct {
 	pipeline *Pipeline
 	registry *adapter.AdapterRegistry
@@ -39,9 +37,9 @@ func (p *ProxyCore) Handler() http.Handler {
 	return p.pipeline.Build(http.HandlerFunc(p.proxyHandler))
 }
 
-// proxyHandler 代理处理入口（骨架期占位）
+// proxyHandler 代理处理入口（当前返回占位错误）
 func (p *ProxyCore) proxyHandler(w http.ResponseWriter, r *http.Request) {
-	// 健康检查路由：/healthz 不经过模型代理链路，直接返回 200（照验收标准）
+	// 健康检查路由：/healthz 不经过模型代理链路，直接返回 200
 	if r.URL.Path == "/healthz" {
 		writeHealthz(w)
 		return
@@ -56,7 +54,7 @@ func writeHealthz(w http.ResponseWriter) {
 	_, _ = w.Write([]byte(`{"status":"ok"}`))
 }
 
-// openAIErrorBody OpenAI 错误响应体（照设计文档 8.7 格式契约）
+// openAIErrorBody OpenAI 错误响应体
 type openAIErrorBody struct {
 	Error openAIError `json:"error"`
 }

@@ -13,10 +13,7 @@
 // limitations under the License.
 
 // Package plugin 插件契约层：存储、审计、限流、导出、授权等插件接口与核心数据结构定义。
-//
-// 类型定义照搬自《NeuralGate 技术架构详细设计文档》第 3 节（核心数据结构，3.2–3.7）
-// 与第 4 节（核心接口定义，4.1–4.6）。3.1 的 RequestContext 定义在 pkg/core/context.go。
-// TenantStatus/UserStatus 为设计文档 3.5 引用但遗漏的类型，在此补全。
+// RequestContext 定义在 pkg/core/context.go。
 package plugin
 
 import "time"

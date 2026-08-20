@@ -22,7 +22,7 @@ import (
 // ErrAdapterNotFound 适配器未注册
 var ErrAdapterNotFound = errors.New("adapter not found")
 
-// AdapterRegistry 模型适配器注册中心（照设计文档 8.1）
+// AdapterRegistry 模型适配器注册中心
 type AdapterRegistry struct {
 	adapters map[string]ModelAdapter // provider -> adapter
 	mu       sync.RWMutex

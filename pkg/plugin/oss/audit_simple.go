@@ -20,8 +20,7 @@ import (
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
 )
 
-// SimpleAuditor 简单同步审计（OSS 版，照设计文档 6.3）
-// 分片与元数据在请求结束时同步组装落库
+// SimpleAuditor 简单同步审计：分片与元数据在请求结束时同步组装落库
 type SimpleAuditor struct {
 	storage plugin.StoragePlugin
 	mu      sync.Mutex
@@ -39,7 +38,7 @@ func NewSimpleAuditor(storage plugin.StoragePlugin) *SimpleAuditor {
 // Init 初始化审计管道
 func (a *SimpleAuditor) Init(config plugin.AuditConfig) error { return nil }
 
-// Submit 提交审计事件（骨架期仅处理请求开始事件）
+// Submit 提交审计事件（当前仅处理请求开始事件）
 func (a *SimpleAuditor) Submit(event *plugin.AuditEvent) error {
 	if event.EventType != plugin.AuditEventRequestStart {
 		return nil

@@ -29,7 +29,7 @@ func (a *OpenAIAdapter) Name() string { return "openai" }
 
 func (a *OpenAIAdapter) SupportsNativeProxy() bool { return true }
 
-// 以下转换方法为骨架期 stub，Phase 5 填充实现
+// 以下转换方法当前未实现
 func (a *OpenAIAdapter) TransformRequest(req *UnifiedRequest, rawBody []byte) (*http.Request, error) {
 	return nil, errors.New("not implemented")
 }

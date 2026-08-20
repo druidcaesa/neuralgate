@@ -20,8 +20,7 @@ import (
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
 )
 
-// StreamReassembler 分片重组器（照设计文档 2.3）
-// 骨架期 stub，Phase 4 实现：分片拼接生成完整应答
+// StreamReassembler 分片重组器：将分片列表拼接为完整应答（当前未实现）
 type StreamReassembler struct{}
 
 // NewStreamReassembler 创建重组器

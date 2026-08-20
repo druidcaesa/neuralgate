@@ -20,8 +20,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// AdminServer 管理后台（Gin，照设计文档 1.1）
-// 低并发短连接：CRUD 接口、配置管理、日志查询、授权校验
+// AdminServer 管理后台（Gin）：低并发短连接，提供 CRUD 接口、配置管理、日志查询、授权校验
 type AdminServer struct {
 	storage plugin.StoragePlugin
 	logger  *zap.Logger

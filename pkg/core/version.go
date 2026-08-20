@@ -14,7 +14,7 @@
 
 package core
 
-// VersionInfo 版本信息（照设计文档 7.3）
+// VersionInfo 版本信息
 type VersionInfo struct {
 	Version   string   // 版本号
 	BuildTime string   // 编译时间

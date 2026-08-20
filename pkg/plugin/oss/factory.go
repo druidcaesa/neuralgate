@@ -16,7 +16,7 @@ package oss
 
 import "github.com/druidcaesa/neuralgate/pkg/plugin"
 
-// ossFactory OSS 工厂（照设计文档 6.2：仅注册 OSS 实现）
+// ossFactory OSS 工厂：仅注册 OSS 实现
 type ossFactory struct {
 	storage plugin.StoragePlugin
 }
@@ -26,7 +26,7 @@ func NewPluginFactory() plugin.PluginFactory {
 	return &ossFactory{}
 }
 
-// CreateStorage 创建内存存储（骨架期；Phase 3 按 config.driver 分发 mysql/sqlite）
+// CreateStorage 创建内存存储
 func (f *ossFactory) CreateStorage() plugin.StoragePlugin {
 	if f.storage == nil {
 		f.storage = NewMemStorage()

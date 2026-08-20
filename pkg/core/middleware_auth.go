@@ -23,8 +23,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// AuthMiddleware 鉴权中间件（骨架期：提取 Bearer API Key 写入 RequestContext 后放行；
-// Phase 4 调用 storage.GetAPIKey 校验并返回 401）
+// AuthMiddleware 鉴权中间件：提取 Bearer API Key 写入 RequestContext 后放行（当前不校验）
 func AuthMiddleware(storage plugin.StoragePlugin) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
