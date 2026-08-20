@@ -2506,6 +2506,8 @@ func AuthMiddleware(storage plugin.StoragePlugin) Middleware {
 				RequestPath:    r.URL.Path,
 				RequestHeaders: headerMap(r.Header),
 			}
+			// 脱敏:移除 Authorization 头,避免 API Key 明文进入审计日志(PRD 5.4)
+			delete(rc.RequestHeaders, "Authorization")
 
 			// 提取 Bearer Key
 			auth := r.Header.Get("Authorization")
