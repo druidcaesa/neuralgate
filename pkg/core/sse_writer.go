@@ -25,8 +25,7 @@ import (
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
 )
 
-// SSEResponseWriter 劫持 SSE 流量（照设计文档 5.2 结构）
-// 骨架期：原样写入客户端；分片解析与审计投递 Phase 4/7 填充
+// SSEResponseWriter 劫持 SSE 流量：原样写入客户端，预留分片解析与审计投递
 type SSEResponseWriter struct {
 	http.ResponseWriter // 嵌入原始 Writer
 	requestID           string
@@ -46,7 +45,7 @@ func NewSSEResponseWriter(w http.ResponseWriter, requestID string, auditor plugi
 	}
 }
 
-// Write 写入原始 Writer（推送客户端）；骨架期不做分片解析与审计投递
+// Write 写入原始 Writer（推送客户端），暂不做分片解析与审计投递
 func (w *SSEResponseWriter) Write(data []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()

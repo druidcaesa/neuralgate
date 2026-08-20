@@ -88,8 +88,7 @@ func main() {
 	}
 	logger.Info("插件工厂初始化完成", zap.String("storage_driver", cfg.Storage.Driver))
 
-	// 4. 从存储加载模型配置（骨架期：内存存储返回空表，仅打印数量；
-	//    路由表与热更新 Phase 4/6）
+	// 4. 从存储加载模型配置（内存存储返回空表，仅打印数量）
 	models, total, err := storage.ListModelConfigs(1, 100)
 	if err != nil {
 		logger.Warn("加载模型配置失败", zap.Error(err))
@@ -120,7 +119,7 @@ func main() {
 		WriteTimeout:   cfg.Server.WriteTimeout,
 		IdleTimeout:    cfg.Server.IdleTimeout,
 		MaxHeaderBytes: cfg.Server.MaxHeaderBytes,
-		// ConnState 回调：追踪连接状态（Phase 4 接入 ConnectionManager）
+		// ConnState 回调：追踪连接状态（当前为空实现）
 		ConnState: func(c net.Conn, state http.ConnState) {},
 	}
 	adminHTTPServer := &http.Server{

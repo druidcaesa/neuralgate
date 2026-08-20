@@ -26,7 +26,7 @@ import (
 // ErrNotFound 记录不存在
 var ErrNotFound = errors.New("record not found")
 
-// MemStorage 内存存储实现（骨架期使用，Phase 3 替换为 MySQL/SQLite）
+// MemStorage 内存存储实现
 type MemStorage struct {
 	mu           sync.RWMutex
 	apiKeys      map[string]*plugin.APIKey      // keyHash -> key
@@ -86,14 +86,8 @@ func (s *MemStorage) ListAPIKeys(tenantID string, page, size int) ([]*plugin.API
 	}
 	sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
 	page, size = normalizePage(page, size)
-	start := (page - 1) * size
-	if start > len(all) {
-		start = len(all)
-	}
-	end := start + size
-	if end > len(all) {
-		end = len(all)
-	}
+	start := min((page-1)*size, len(all))
+	end := min(start+size, len(all))
 	return all[start:end], int64(len(all)), nil
 }
 

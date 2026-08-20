@@ -29,7 +29,7 @@ func (a *DeepSeekAdapter) Name() string { return "deepseek" }
 
 func (a *DeepSeekAdapter) SupportsNativeProxy() bool { return true }
 
-// 以下转换方法为骨架期 stub，Phase 5 填充实现
+// 以下转换方法当前未实现
 func (a *DeepSeekAdapter) TransformRequest(req *UnifiedRequest, rawBody []byte) (*http.Request, error) {
 	return nil, errors.New("not implemented")
 }

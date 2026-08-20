@@ -25,7 +25,7 @@ type windowEntry struct {
 	windowStart time.Time
 }
 
-// MemRateLimiter 内存限流（固定窗口，骨架期最简实现；令牌桶 Phase 4 精细化）
+// MemRateLimiter 内存限流（固定窗口实现）
 type MemRateLimiter struct {
 	mu         sync.Mutex
 	windows    map[string]*windowEntry

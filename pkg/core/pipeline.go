@@ -20,7 +20,7 @@ import (
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
 )
 
-// Middleware 管道中间件（照设计文档 2.2）
+// Middleware 管道中间件
 type Middleware func(next http.Handler) http.Handler
 
 // Pipeline 管道中间件层：按固定顺序执行预处理链路
@@ -56,8 +56,7 @@ func (p *Pipeline) Apply(handler http.Handler) http.Handler {
 	return h
 }
 
-// fixedChain 固定顺序中间件链（照设计文档 2.2，不可调换）：
-// 鉴权 → 限流 → 路由匹配（协议转换与前置钩子 Phase 4 接入）
+// fixedChain 固定顺序中间件链（不可调换）：鉴权 → 限流 → 路由匹配
 func (p *Pipeline) fixedChain() []Middleware {
 	return []Middleware{
 		AuthMiddleware(p.storage),

@@ -24,9 +24,9 @@ import (
 // ErrBufferClosed 环形队列已关闭
 var ErrBufferClosed = errors.New("ring buffer closed")
 
-// RingBuffer 环形队列（照设计文档 5.3）
-// 固定大小内存预分配；队列满时阻塞写入方，队列空时阻塞消费方；
-// 支持优雅关闭：Shutdown 后不再接收新数据，flush 剩余数据
+// RingBuffer 环形队列：固定大小内存预分配；
+// 队列满时阻塞写入方，队列空时阻塞消费方；
+// 支持优雅关闭：Close 后不再接收新数据，剩余数据仍可取出
 type RingBuffer struct {
 	buf           []*plugin.AuditEvent
 	size          int
@@ -37,7 +37,7 @@ type RingBuffer struct {
 	notFull       *sync.Cond
 	notEmpty      *sync.Cond
 	closed        bool
-	overflowCount int64 // 溢出计数（保留字段，Phase 7 使用）
+	overflowCount int64 // 溢出计数（当前恒为 0，预留）
 }
 
 // NewRingBuffer 创建环形队列；size 必须为正数，否则 panic
@@ -103,7 +103,7 @@ func (rb *RingBuffer) Close() error {
 	return nil
 }
 
-// OverflowCount 返回溢出计数（骨架期恒为 0）
+// OverflowCount 返回溢出计数（当前恒为 0）
 func (rb *RingBuffer) OverflowCount() int64 {
 	rb.mu.Lock()
 	defer rb.mu.Unlock()

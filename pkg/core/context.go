@@ -22,7 +22,7 @@ import (
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
 )
 
-// RequestContext 贯穿整个请求生命周期的上下文（照设计文档 3.1）
+// RequestContext 贯穿整个请求生命周期的上下文
 type RequestContext struct {
 	RequestID        string               // 全局唯一请求ID
 	TenantID         string               // 租户ID
