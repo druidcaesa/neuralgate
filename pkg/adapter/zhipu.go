@@ -86,6 +86,23 @@ func toZhipuMessages(msgs []Message) []zhipuMessage {
 					content += "[audio]"
 				}
 			}
+		case []interface{}:
+			// 内核经 json.Unmarshal 构造的 UnifiedRequest,content 为 []interface{}(元素为 map)
+			for _, item := range c {
+				mm, ok := item.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				if text, ok := mm["text"].(string); ok {
+					content += text
+					continue
+				}
+				if t, _ := mm["type"].(string); t == "image_url" || mm["image_url"] != nil {
+					content += "[image]"
+				} else if t == "input_audio" || mm["input_audio"] != nil {
+					content += "[audio]"
+				}
+			}
 		}
 		out = append(out, zhipuMessage{Role: m.Role, Content: content})
 	}
