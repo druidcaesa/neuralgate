@@ -88,23 +88,31 @@ func (s *AdminServer) getAuditLog(c *gin.Context) {
 	OK(c, resp)
 }
 
-// exportAuditLogs GET /api/audit-logs/export?format=csv|json
+// exportAuditLogs GET /api/audit-logs/export?format=csv|json:全量导出(翻页拉取,不受单页 100 条上限截断)
 func (s *AdminServer) exportAuditLogs(c *gin.Context) {
 	format := c.DefaultQuery("format", "json")
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	size, _ := strconv.Atoi(c.DefaultQuery("size", "1000"))
 	filter := plugin.AuditLogFilter{Keyword: c.Query("keyword")}
-	logs, _, err := s.storage.QueryAuditLogs(filter, page, size)
-	if err != nil {
-		Error(c, http.StatusInternalServerError, 500, "failed to export audit logs")
-		return
+	var all []*plugin.AuditLog
+	page := 1
+	const pageSize = 100
+	for {
+		logs, total, err := s.storage.QueryAuditLogs(filter, page, pageSize)
+		if err != nil {
+			Error(c, http.StatusInternalServerError, 500, "failed to export audit logs")
+			return
+		}
+		all = append(all, logs...)
+		if int64(page*pageSize) >= total {
+			break
+		}
+		page++
 	}
 	if format == "csv" {
 		c.Header("Content-Type", "text/csv")
 		c.Header("Content-Disposition", "attachment; filename=audit-logs.csv")
 		cw := csv.NewWriter(c.Writer)
 		_ = cw.Write([]string{"id", "request_id", "tenant_id", "model_name", "response_status", "total_tokens", "duration_ms", "is_stream", "created_at"})
-		for _, l := range logs {
+		for _, l := range all {
 			_ = cw.Write([]string{
 				l.ID, l.RequestID, l.TenantID, l.ModelName,
 				strconv.Itoa(l.ResponseStatus), strconv.Itoa(l.TotalTokens),
@@ -115,7 +123,7 @@ func (s *AdminServer) exportAuditLogs(c *gin.Context) {
 		cw.Flush()
 		return
 	}
-	OK(c, gin.H{"items": logs})
+	OK(c, gin.H{"items": all})
 }
 
 func parseInt(v string) int {

@@ -139,6 +139,11 @@ func (s *AdminServer) updateModelConfig(c *gin.Context) {
 		return
 	}
 	req.normalize()
+	// 名称唯一校验(排除自身)
+	if existingConfig, err := s.storage.GetModelConfig(req.Name); err == nil && existingConfig.ID != id {
+		Error(c, http.StatusConflict, 409, "模型名称已存在")
+		return
+	}
 	existing.ModelName = req.Name
 	existing.Provider = req.Provider
 	existing.ProviderModel = req.ProviderModel

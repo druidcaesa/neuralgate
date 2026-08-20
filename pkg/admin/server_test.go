@@ -16,6 +16,7 @@ package admin
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -94,9 +95,16 @@ func TestAdminAPIKeyCRUD(t *testing.T) {
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), created.Data.ID) {
 		t.Fatalf("list status=%d body=%s", w.Code, w.Body.String())
 	}
-	// 列表不返回明文 key_hash
-	if strings.Contains(w.Body.String(), "hash-") {
-		t.Fatalf("list leaks key hash: %s", w.Body.String())
+	// 列表不泄露明文与哈希,Key 脱敏
+	listBody := w.Body.String()
+	if strings.Contains(listBody, created.Data.Key) {
+		t.Fatalf("list leaks plaintext key: %s", listBody)
+	}
+	if strings.Contains(listBody, created.Data.KeyHash) {
+		t.Fatalf("list leaks key hash: %s", listBody)
+	}
+	if !strings.Contains(listBody, "****") {
+		t.Fatalf("list key not masked: %s", listBody)
 	}
 
 	// 禁用
@@ -163,6 +171,81 @@ func TestAdminModelConfigCRUD(t *testing.T) {
 	// 列表不回显上游 api_key
 	if strings.Contains(w.Body.String(), "sk-test") {
 		t.Fatalf("list leaks api_key: %s", w.Body.String())
+	}
+}
+
+func TestAdminModelConfigRenameConflict(t *testing.T) {
+	s := oss.NewMemStorage()
+	router := NewAdminServer(s, nil, "oss").Router()
+	postModel := func(name string) (string, string) {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/models",
+			strings.NewReader(`{"name":"`+name+`","provider":"openai","provider_model":"x","base_url":"https://x","api_key":"y"}`))
+		req.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("create %s status = %d; body=%s", name, w.Code, w.Body.String())
+		}
+		var created struct {
+			Data struct {
+				ID string `json:"id"`
+			} `json:"data"`
+		}
+		_ = json.Unmarshal(w.Body.Bytes(), &created)
+		return created.Data.ID, w.Body.String()
+	}
+
+	// 创建 A、B
+	_, _ = postModel("model-a")
+	idB, _ := postModel("model-b")
+
+	// PUT B 改名为 A 的名称 → 409,且不覆盖 A
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/models/"+idB,
+		strings.NewReader(`{"name":"model-a","provider":"openai","provider_model":"x","base_url":"https://x","api_key":"y"}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("rename conflict status = %d; want 409", w.Code)
+	}
+	// B 应保持原名(未被覆盖)
+	cfg, err := s.GetModelConfigByID(idB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ModelName != "model-b" {
+		t.Fatalf("B renamed to %q; want model-b", cfg.ModelName)
+	}
+}
+
+func TestAdminAuditExportAll(t *testing.T) {
+	s := oss.NewMemStorage()
+	now := time.Now()
+	for i := 0; i < 120; i++ {
+		_ = s.SaveAuditLog(&plugin.AuditLog{
+			ID: fmt.Sprintf("id-%03d", i), RequestID: fmt.Sprintf("req-%03d", i),
+			ModelName: "gpt-4", ResponseStatus: 200, TotalTokens: 15,
+			CreatedAt: now.Add(time.Duration(i) * time.Second),
+		})
+	}
+	router := NewAdminServer(s, nil, "oss").Router()
+
+	// JSON 导出应拉全量(>100 条不受单页上限截断)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/audit-logs/export?format=json", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("export status=%d body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Data struct {
+			Items []*plugin.AuditLog `json:"items"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Data.Items) != 120 {
+		t.Fatalf("export items = %d; want 120(翻页全量)", len(resp.Data.Items))
 	}
 }
 
