@@ -31,7 +31,7 @@ import (
 type apiKeyCreateRequest struct {
 	Name          string     `json:"name" binding:"required,min=1,max=64"`
 	TenantID      string     `json:"tenant_id"`
-	Quota         int64      `json:"quota"`      // -1 为无限
+	Quota         *int64     `json:"quota"`      // 未传=无限(-1),显式 0=立即用尽
 	RateLimit     int        `json:"rate_limit"` // 1-10000,默认 10
 	AllowedModels []string   `json:"allowed_models"`
 	ExpiresAt     *time.Time `json:"expires_at"`
@@ -67,6 +67,11 @@ func (s *AdminServer) createAPIKey(c *gin.Context) {
 	sum := sha256.Sum256([]byte(rawKey))
 
 	now := time.Now()
+	// PRD 3.2:quota 未传默认 -1(无限);显式传 0 表示立即用尽
+	quota := int64(-1)
+	if req.Quota != nil {
+		quota = *req.Quota
+	}
 	key := &plugin.APIKey{
 		ID:            uuid.NewString(),
 		KeyHash:       hex.EncodeToString(sum[:]),
@@ -74,7 +79,7 @@ func (s *AdminServer) createAPIKey(c *gin.Context) {
 		TenantID:      req.TenantID,
 		Name:          req.Name,
 		Status:        plugin.APIKeyStatusActive,
-		Quota:         req.Quota,
+		Quota:         quota,
 		RateLimit:     req.RateLimit,
 		AllowedModels: req.AllowedModels,
 		ExpiresAt:     req.ExpiresAt,
