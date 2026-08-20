@@ -154,6 +154,9 @@ func (p *ProxyCore) handleProxy(w http.ResponseWriter, r *http.Request, rc *Requ
 		outbound, err = p.buildConvertedRequest(r, upstreamURL, cfg, adpt)
 	}
 	if err != nil {
+		rc.ResponseStatus = http.StatusBadRequest
+		rc.EndTime = time.Now()
+		p.finalizeAudit(rc, 0, 0, 0)
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "bad_request", err.Error())
 		return
 	}
@@ -161,6 +164,9 @@ func (p *ProxyCore) handleProxy(w http.ResponseWriter, r *http.Request, rc *Requ
 	// 2. 转发(重试)
 	resp, err := p.doWithRetry(outbound, cfg)
 	if err != nil {
+		rc.ResponseStatus = http.StatusGatewayTimeout
+		rc.EndTime = time.Now()
+		p.finalizeAudit(rc, 0, 0, 0)
 		writeOpenAIError(w, http.StatusGatewayTimeout, "api_error", "upstream_timeout", "upstream timeout or unreachable: "+err.Error())
 		return
 	}
@@ -187,6 +193,9 @@ func (p *ProxyCore) handleProxy(w http.ResponseWriter, r *http.Request, rc *Requ
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
+		rc.ResponseStatus = http.StatusBadGateway
+		rc.EndTime = time.Now()
+		p.finalizeAudit(rc, 0, 0, 0)
 		writeOpenAIError(w, http.StatusBadGateway, "api_error", "upstream_error", "failed to read upstream response")
 		return
 	}
@@ -328,13 +337,14 @@ func (p *ProxyCore) doWithRetry(req *http.Request, cfg *plugin.ModelConfig) (*ht
 	return nil, lastErr
 }
 
-// updateQuota 回补 API Key 已用额度
+// updateQuota 原子回补 API Key 已用额度(quota>=0 时)
+// quota 条件判断用 Get(低频配置,窗口可接受),used_quota 累加用原子方法避免并发丢量
 func (p *ProxyCore) updateQuota(rc *RequestContext) {
 	if rc.APIKeyID == "" {
 		return
 	}
 	if key, err := p.pipeline.storage.GetAPIKeyByID(rc.APIKeyID); err == nil && key.Quota >= 0 {
-		_ = p.pipeline.storage.UpdateAPIKeyQuota(key.ID, key.UsedQuota+int64(rc.TotalTokens))
+		_ = p.pipeline.storage.IncrementAPIKeyUsage(key.ID, int64(rc.TotalTokens))
 	}
 }
 

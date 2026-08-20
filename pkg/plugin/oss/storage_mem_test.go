@@ -15,6 +15,7 @@
 package oss
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -135,6 +136,53 @@ func TestPingAndClose(t *testing.T) {
 	}
 	if err := s.Close(); err != nil {
 		t.Errorf("Close() error = %v", err)
+	}
+}
+
+func TestMemStorageIncrementAPIKeyUsage(t *testing.T) {
+	s := NewMemStorage()
+	key := &plugin.APIKey{ID: "k1", KeyHash: "h1", Name: "test"}
+	if err := s.SaveAPIKey(key); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.IncrementAPIKeyUsage("k1", 100); err != nil {
+		t.Fatalf("IncrementAPIKeyUsage(k1,100) error = %v", err)
+	}
+	if err := s.IncrementAPIKeyUsage("k1", 50); err != nil {
+		t.Fatalf("IncrementAPIKeyUsage(k1,50) error = %v", err)
+	}
+	got, err := s.GetAPIKeyByID("k1")
+	if err != nil || got.UsedQuota != 150 {
+		t.Fatalf("UsedQuota = %d, %v; want 150", got.UsedQuota, err)
+	}
+	// 不存在 key → ErrNotFound
+	if err := s.IncrementAPIKeyUsage("nope", 1); err != ErrNotFound {
+		t.Fatalf("IncrementAPIKeyUsage(nope) err = %v; want ErrNotFound", err)
+	}
+}
+
+func TestMemStorageIncrementAPIKeyUsageConcurrent(t *testing.T) {
+	// N 个 goroutine 各累加 1,最终 UsedQuota == N(验证原子性,无丢量)
+	s := NewMemStorage()
+	key := &plugin.APIKey{ID: "k1", KeyHash: "h1", Name: "test"}
+	if err := s.SaveAPIKey(key); err != nil {
+		t.Fatal(err)
+	}
+	const n = 100
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := s.IncrementAPIKeyUsage("k1", 1); err != nil {
+				t.Errorf("IncrementAPIKeyUsage: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	got, err := s.GetAPIKeyByID("k1")
+	if err != nil || got.UsedQuota != n {
+		t.Fatalf("UsedQuota = %d, %v; want %d", got.UsedQuota, err, n)
 	}
 }
 

@@ -392,4 +392,103 @@ func TestProxyUpstreamError(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "upstream_error") {
 		t.Fatalf("body = %s; want upstream_error", rec.Body.String())
 	}
+	// 错误路径审计仍应落库(记录上游状态码)
+	logs, total, err := storage.QueryAuditLogs(plugin.AuditLogFilter{}, 1, 10)
+	if err != nil || total != 1 {
+		t.Fatalf("audit total = %d, err %v; want 1", total, err)
+	}
+	if logs[0].ResponseStatus != http.StatusInternalServerError {
+		t.Fatalf("audit status = %d; want 500 (upstream code)", logs[0].ResponseStatus)
+	}
+	if logs[0].RequestBody == "" {
+		t.Fatalf("audit RequestBody empty; want original body preserved")
+	}
+}
+
+func TestProxyUpstreamTimeoutAudited(t *testing.T) {
+	// 上游超时/不可达 → 504;审计记录必须落库且 ResponseStatus=504
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(3 * time.Second)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	storage := oss.NewMemStorage()
+	now := time.Now()
+	_ = storage.SaveModelConfig(&plugin.ModelConfig{
+		ID: "m1", ModelName: "gpt-4", Provider: "openai", ProviderModel: "gpt-4o",
+		BaseURL: upstream.URL, APIKey: "sk", Enabled: true,
+		Timeout: 1, MaxRetries: 0, CreatedAt: now, UpdatedAt: now,
+	})
+	_ = storage.SaveAPIKey(&plugin.APIKey{
+		ID: "k1", KeyHash: hashKey("ng-test"), KeyPrefix: "ng-test", Name: "t",
+		Status: plugin.APIKeyStatusActive, Quota: -1, CreatedAt: now, UpdatedAt: now,
+	})
+	registry := adapter.NewAdapterRegistry()
+	registry.Register(adapter.NewOpenAIAdapter())
+	limiter := oss.NewMemRateLimiter()
+	_ = limiter.Init(map[string]interface{}{"default_rps": 100, "default_tpm": 100000})
+	auditor := oss.NewSimpleAuditor(storage)
+	pc := NewProxyCore(NewPipeline(storage, limiter, auditor, registry), registry)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
+		strings.NewReader(`{"model":"gpt-4","messages":[{"role":"user","content":"x"}]}`))
+	req.Header.Set("Authorization", "Bearer ng-test")
+	rec := httptest.NewRecorder()
+	pc.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusGatewayTimeout {
+		t.Fatalf("status = %d; want 504, body=%s", rec.Code, rec.Body.String())
+	}
+	logs, total, err := storage.QueryAuditLogs(plugin.AuditLogFilter{}, 1, 10)
+	if err != nil || total != 1 {
+		t.Fatalf("audit total = %d, err %v; want 1", total, err)
+	}
+	if logs[0].ResponseStatus != http.StatusGatewayTimeout {
+		t.Fatalf("audit status = %d; want 504", logs[0].ResponseStatus)
+	}
+}
+
+func TestProxyUpstreamTruncatedBodyAudited(t *testing.T) {
+	// 上游响应体截断(Content-Length 与实发不符)→ 读上游失败 → 502;审计记录必须落库且 ResponseStatus=502
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "100")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-1"}`))
+	}))
+	defer upstream.Close()
+
+	storage := oss.NewMemStorage()
+	now := time.Now()
+	_ = storage.SaveModelConfig(&plugin.ModelConfig{
+		ID: "m1", ModelName: "gpt-4", Provider: "openai", ProviderModel: "gpt-4o",
+		BaseURL: upstream.URL, APIKey: "sk", Enabled: true,
+		Timeout: 5, MaxRetries: 0, CreatedAt: now, UpdatedAt: now,
+	})
+	_ = storage.SaveAPIKey(&plugin.APIKey{
+		ID: "k1", KeyHash: hashKey("ng-test"), KeyPrefix: "ng-test", Name: "t",
+		Status: plugin.APIKeyStatusActive, Quota: -1, CreatedAt: now, UpdatedAt: now,
+	})
+	registry := adapter.NewAdapterRegistry()
+	registry.Register(adapter.NewOpenAIAdapter())
+	limiter := oss.NewMemRateLimiter()
+	_ = limiter.Init(map[string]interface{}{"default_rps": 100, "default_tpm": 100000})
+	auditor := oss.NewSimpleAuditor(storage)
+	pc := NewProxyCore(NewPipeline(storage, limiter, auditor, registry), registry)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
+		strings.NewReader(`{"model":"gpt-4","messages":[{"role":"user","content":"x"}]}`))
+	req.Header.Set("Authorization", "Bearer ng-test")
+	rec := httptest.NewRecorder()
+	pc.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d; want 502, body=%s", rec.Code, rec.Body.String())
+	}
+	logs, total, err := storage.QueryAuditLogs(plugin.AuditLogFilter{}, 1, 10)
+	if err != nil || total != 1 {
+		t.Fatalf("audit total = %d, err %v; want 1", total, err)
+	}
+	if logs[0].ResponseStatus != http.StatusBadGateway {
+		t.Fatalf("audit status = %d; want 502", logs[0].ResponseStatus)
+	}
 }

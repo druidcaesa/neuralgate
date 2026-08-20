@@ -174,6 +174,7 @@ type StoragePlugin interface {
 	GetAPIKeyByID(id string) (*APIKey, error) // 按主键查询(管理后台用)
 	SaveAPIKey(key *APIKey) error
 	UpdateAPIKeyQuota(keyID string, usedQuota int64) error
+	IncrementAPIKeyUsage(keyID string, delta int64) error // 原子累加已用额度(并发安全)
 	ListAPIKeys(tenantID string, page, size int) ([]*APIKey, int64, error)
 	DeleteAPIKey(keyID string) error
 
