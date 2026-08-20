@@ -50,7 +50,7 @@ git rm -r --cached --ignore-unmatch \
   docs \
   .claude \
   Makefile \
-  README.md \
+#  README.md \
   .gitignore \
   push-private.sh \
   .codegraph \
