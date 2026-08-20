@@ -15,7 +15,9 @@
 package adapter
 
 import (
-	"errors"
+	"bytes"
+	"encoding/json"
+	"io"
 	"net/http"
 )
 
@@ -29,20 +31,185 @@ func (a *TongyiAdapter) Name() string { return "tongyi" }
 
 func (a *TongyiAdapter) SupportsNativeProxy() bool { return false }
 
+// dashScopeMessage DashScope 消息
+type dashScopeMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+// dashScopeRequest DashScope chat 请求体
+type dashScopeRequest struct {
+	Model      string         `json:"model"`
+	Input      map[string]any `json:"input"`
+	Parameters map[string]any `json:"parameters,omitempty"`
+}
+
+// TransformRequest OpenAI 格式 → DashScope 格式
 func (a *TongyiAdapter) TransformRequest(req *UnifiedRequest, rawBody []byte) (*http.Request, error) {
-	return nil, errors.New("not implemented")
+	dash := dashScopeRequest{
+		Model: req.Model,
+		Input: map[string]any{"messages": toDashMessages(req.Messages)},
+	}
+	params := map[string]any{}
+	if req.Temperature != nil {
+		params["temperature"] = *req.Temperature
+	}
+	if req.TopP != nil {
+		params["top_p"] = *req.TopP
+	}
+	if req.MaxTokens != nil {
+		params["max_tokens"] = *req.MaxTokens
+	}
+	if len(params) > 0 {
+		dash.Parameters = params
+	}
+	body, err := json.Marshal(dash)
+	if err != nil {
+		return nil, err
+	}
+	httpReq, err := http.NewRequest(http.MethodPost, "", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	return httpReq, nil
 }
 
+func toDashMessages(msgs []Message) []dashScopeMessage {
+	out := make([]dashScopeMessage, 0, len(msgs))
+	for _, m := range msgs {
+		content := ""
+		switch c := m.Content.(type) {
+		case string:
+			content = c
+		case []ContentPart:
+			var sb bytes.Buffer
+			for _, p := range c {
+				if p.Type == "text" || p.Text != "" {
+					sb.WriteString(p.Text)
+				} else if p.ImageURL != nil {
+					sb.WriteString("[image]")
+				} else if p.InputAudio != nil {
+					sb.WriteString("[audio]")
+				}
+			}
+			content = sb.String()
+		}
+		out = append(out, dashScopeMessage{Role: m.Role, Content: content})
+	}
+	return out
+}
+
+// dashScopeResponse DashScope 非流式响应体
+type dashScopeResponse struct {
+	Output struct {
+		Choices []struct {
+			Message dashScopeMessage `json:"message"`
+		} `json:"choices"`
+		Usage struct {
+			InputTokens  int `json:"input_tokens"`
+			OutputTokens int `json:"output_tokens"`
+			TotalTokens  int `json:"total_tokens"`
+		} `json:"usage"`
+	} `json:"output"`
+}
+
+// TransformResponse DashScope → OpenAI 格式（非流式）
 func (a *TongyiAdapter) TransformResponse(resp *http.Response) (*UnifiedResponse, error) {
-	return nil, errors.New("not implemented")
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	var ds dashScopeResponse
+	if err := json.Unmarshal(body, &ds); err != nil {
+		return nil, err
+	}
+	ur := &UnifiedResponse{Object: "chat.completion"}
+	// resp.Request 可能为 nil（如测试直接构造），取不到 ID/Model 时留空
+	if resp.Request != nil {
+		ur.ID = "chatcmpl-" + resp.Request.Header.Get("X-Request-Id")
+		ur.Model = resp.Request.Header.Get("X-Model")
+	}
+	for i, c := range ds.Output.Choices {
+		ur.Choices = append(ur.Choices, Choice{
+			Index:        i,
+			Message:      Message{Role: c.Message.Role, Content: c.Message.Content},
+			FinishReason: "stop",
+		})
+	}
+	ur.Usage = &TokenUsage{
+		PromptTokens:     ds.Output.Usage.InputTokens,
+		CompletionTokens: ds.Output.Usage.OutputTokens,
+		TotalTokens:      ds.Output.Usage.TotalTokens,
+	}
+	return ur, nil
 }
 
+// TransformStreamChunk DashScope 流式分片 → OpenAI 格式
 func (a *TongyiAdapter) TransformStreamChunk(chunk []byte) (*UnifiedSSEChunk, error) {
-	return nil, errors.New("not implemented")
+	var ds struct {
+		Output struct {
+			Choices []struct {
+				Delta struct {
+					Content string `json:"content"`
+					Role    string `json:"role"`
+				} `json:"delta"`
+				FinishReason string `json:"finish_reason"`
+			} `json:"choices"`
+		} `json:"output"`
+	}
+	if err := json.Unmarshal(chunk, &ds); err != nil {
+		return nil, err
+	}
+	usc := &UnifiedSSEChunk{Object: "chat.completion.chunk"}
+	for i, c := range ds.Output.Choices {
+		delta := Message{}
+		if c.Delta.Role != "" {
+			delta.Role = c.Delta.Role
+		}
+		if c.Delta.Content != "" {
+			delta.Content = c.Delta.Content
+		}
+		var fr *string
+		if c.FinishReason != "" {
+			fr = &c.FinishReason
+		}
+		usc.Choices = append(usc.Choices, SSEChoice{Index: i, Delta: delta, FinishReason: fr})
+	}
+	return usc, nil
 }
 
-func (a *TongyiAdapter) ParseTokenUsage(resp *http.Response) (int, int, int) { return 0, 0, 0 }
+// ParseTokenUsage 从已读 body 解析 DashScope 用量
+func (a *TongyiAdapter) ParseTokenUsage(resp *http.Response) (int, int, int) {
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, 0, 0
+	}
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	var ds dashScopeResponse
+	if err := json.Unmarshal(body, &ds); err != nil {
+		return 0, 0, 0
+	}
+	return ds.Output.Usage.InputTokens, ds.Output.Usage.OutputTokens, ds.Output.Usage.TotalTokens
+}
 
+// ParseStreamUsage DashScope 流式分片暂无用量，返回 0
 func (a *TongyiAdapter) ParseStreamUsage(chunk []byte) (int, int, int) { return 0, 0, 0 }
 
-func (a *TongyiAdapter) ParseError(resp *http.Response) (int, string) { return 0, "" }
+// ParseError DashScope 错误格式：{"code":"...","message":"..."}
+func (a *TongyiAdapter) ParseError(resp *http.Response) (int, string) {
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, ""
+	}
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	var eb struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(body, &eb); err != nil || eb.Message == "" {
+		return 0, ""
+	}
+	return resp.StatusCode, eb.Message
+}

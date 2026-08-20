@@ -15,6 +15,7 @@
 package adapter
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -88,4 +89,95 @@ func TestDeepSeekParseTokenUsage(t *testing.T) {
 	if p != 2 || c != 1 || total != 3 {
 		t.Fatalf("DeepSeek ParseTokenUsage = %d,%d,%d", p, c, total)
 	}
+}
+
+func TestTongyiTransformRequest(t *testing.T) {
+	a := NewTongyiAdapter()
+	req := &UnifiedRequest{
+		Model: "qwen-max", Messages: []Message{{Role: "user", Content: "你好"}},
+		Temperature: float64Ptr(0.7), Stream: true,
+	}
+	httpReq, err := a.TransformRequest(req, nil)
+	if err != nil {
+		t.Fatalf("TransformRequest: %v", err)
+	}
+	var body map[string]interface{}
+	if err := json.Unmarshal([]byte(mustRead(httpReq.Body)), &body); err != nil {
+		t.Fatalf("body not json: %v", err)
+	}
+	if body["model"] != "qwen-max" {
+		t.Fatalf("model = %v; want qwen-max", body["model"])
+	}
+	input := body["input"].(map[string]interface{})
+	msgs := input["messages"].([]interface{})
+	first := msgs[0].(map[string]interface{})
+	if first["role"] != "user" || first["content"] != "你好" {
+		t.Fatalf("message = %v", first)
+	}
+	params := body["parameters"].(map[string]interface{})
+	if params["temperature"] != 0.7 {
+		t.Fatalf("temperature = %v; want 0.7", params["temperature"])
+	}
+}
+
+func TestTongyiTransformResponse(t *testing.T) {
+	a := NewTongyiAdapter()
+	body := `{"output":{"choices":[{"message":{"role":"assistant","content":"你好，世界"}}],
+	  "usage":{"input_tokens":5,"output_tokens":3,"total_tokens":8}},"request_id":"r1"}`
+	resp := &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body))}
+	ur, err := a.TransformResponse(resp)
+	if err != nil {
+		t.Fatalf("TransformResponse: %v", err)
+	}
+	if len(ur.Choices) != 1 || ur.Choices[0].Message.Content != "你好，世界" {
+		t.Fatalf("choices = %+v", ur.Choices)
+	}
+	if ur.Usage == nil || ur.Usage.PromptTokens != 5 || ur.Usage.CompletionTokens != 3 || ur.Usage.TotalTokens != 8 {
+		t.Fatalf("usage = %+v", ur.Usage)
+	}
+	if ur.Object != "chat.completion" {
+		t.Fatalf("object = %q", ur.Object)
+	}
+}
+
+func TestZhipuTransformRequest(t *testing.T) {
+	a := NewZhipuAdapter()
+	req := &UnifiedRequest{Model: "glm-4", Messages: []Message{{Role: "user", Content: "hi"}}}
+	httpReq, err := a.TransformRequest(req, nil)
+	if err != nil {
+		t.Fatalf("TransformRequest: %v", err)
+	}
+	var body map[string]interface{}
+	_ = json.Unmarshal([]byte(mustRead(httpReq.Body)), &body)
+	if body["model"] != "glm-4" {
+		t.Fatalf("model = %v; want glm-4", body["model"])
+	}
+	msgs := body["messages"].([]interface{})
+	if msgs[0].(map[string]interface{})["role"] != "user" {
+		t.Fatalf("messages = %v", msgs)
+	}
+}
+
+func TestZhipuTransformResponse(t *testing.T) {
+	a := NewZhipuAdapter()
+	body := `{"choices":[{"message":{"role":"assistant","content":"hi there"},"finish_reason":"stop"}],
+	  "usage":{"prompt_tokens":4,"completion_tokens":2,"total_tokens":6}}`
+	resp := &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body))}
+	ur, err := a.TransformResponse(resp)
+	if err != nil {
+		t.Fatalf("TransformResponse: %v", err)
+	}
+	if ur.Choices[0].Message.Content != "hi there" {
+		t.Fatalf("content = %+v", ur.Choices[0].Message)
+	}
+	if ur.Usage.TotalTokens != 6 {
+		t.Fatalf("usage = %+v", ur.Usage)
+	}
+}
+
+func float64Ptr(f float64) *float64 { return &f }
+
+func mustRead(r io.Reader) string {
+	b, _ := io.ReadAll(r)
+	return string(b)
 }
