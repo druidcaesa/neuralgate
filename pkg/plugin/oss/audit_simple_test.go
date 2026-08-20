@@ -65,6 +65,40 @@ func TestMarkDisconnectSavesLog(t *testing.T) {
 	}
 }
 
+func TestFinalizeAfterMarkDisconnectNoDuplicate(t *testing.T) {
+	storage := NewMemStorage()
+	auditor := NewSimpleAuditor(storage)
+	_ = auditor.Submit(&plugin.AuditEvent{RequestID: "r4", EventType: plugin.AuditEventRequestStart})
+	_ = auditor.SubmitSSEChunk("r4", &plugin.SSEChunk{Index: 0, Data: "data: hi"})
+	// 断连路径先落库并删除 pending
+	if err := auditor.MarkDisconnect("r4", "client_disconnected"); err != nil {
+		t.Fatal(err)
+	}
+	// 主循环随后 Finalize:pending 缺失时不得新建空日志(断连竞态双记录修复)
+	if err := auditor.Finalize("r4", &plugin.AuditMeta{ResponseStatus: 200}); err != nil {
+		t.Fatal(err)
+	}
+	logs, total, _ := storage.QueryAuditLogs(plugin.AuditLogFilter{}, 1, 10)
+	if total != 1 {
+		t.Fatalf("total = %d, want 1 (断连竞态不得产生双记录)", total)
+	}
+	if !logs[0].Disconnected || logs[0].DisconnectReason != "client_disconnected" {
+		t.Errorf("log = %+v, want Disconnected=true reason=client_disconnected", logs[0])
+	}
+}
+
+func TestFinalizeUnknownRequestNoCreate(t *testing.T) {
+	storage := NewMemStorage()
+	auditor := NewSimpleAuditor(storage)
+	if err := auditor.Finalize("unknown", &plugin.AuditMeta{ResponseStatus: 200}); err != nil {
+		t.Fatal(err)
+	}
+	_, total, _ := storage.QueryAuditLogs(plugin.AuditLogFilter{}, 1, 10)
+	if total != 0 {
+		t.Errorf("total = %d, want 0 (未知请求不得新建日志)", total)
+	}
+}
+
 func TestShutdownFlushesPending(t *testing.T) {
 	storage := NewMemStorage()
 	auditor := NewSimpleAuditor(storage)

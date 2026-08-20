@@ -278,6 +278,10 @@ func (p *ProxyCore) handleStreaming(w http.ResponseWriter, r *http.Request, rc *
 			f.Flush()
 		}
 	}
+	// 上游读取错误或单行超长(ErrTooLong):先标记断连落库(Disconnected=true),再 Finalize 防重复
+	if err := scanner.Err(); err != nil && p.pipeline.auditor != nil {
+		_ = p.pipeline.auditor.MarkDisconnect(rc.RequestID, "upstream read error: "+err.Error())
+	}
 	rc.EndTime = time.Now()
 	p.updateQuota(rc)
 	p.finalizeAudit(rc, rc.PromptTokens, rc.CompletionTokens, rc.TotalTokens)
