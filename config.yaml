@@ -7,13 +7,16 @@ server:
   max_header_bytes: 1048576  # 最大Header大小(1MB)
 
 storage:
-  # ===== 数据库驱动选择 =====
-  # 可选值: mem(骨架期默认) / mysql / sqlite / dm(Enterprise) / kingbase(Enterprise)
-  # mem 为骨架阶段内存存储（Phase 3 切换 mysql/sqlite；dm/kingbase 需 Enterprise 编译）
-  driver: mem
-  dsn: "user:pass@tcp(host:3306)/neuralgate?charset=utf8mb4"
-  max_open_conns: 20          # 最大连接数
-  max_idle_conns: 10          # 最大空闲连接
+  # 可选值: sqlite(默认) / mysql / mem(内存,开发调试用)
+  # 注: 达梦/金仓需 Enterprise 编译版
+  driver: sqlite
+  dsn: "neuralgate.db"
+  encrypt_key: "neuralgate-default-encrypt-key"
+  max_open_conns: 20
+  max_idle_conns: 10
+  # ----- MySQL (可选) -----
+  # driver: mysql
+  # dsn: "user:pass@tcp(host:3306)/neuralgate?charset=utf8mb4&parseTime=true"
 
 audit:
   queue_size: 65536          # 环形队列大小

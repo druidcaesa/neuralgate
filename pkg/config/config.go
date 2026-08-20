@@ -45,6 +45,7 @@ type ServerConfig struct {
 type StorageConfig struct {
 	Driver       string `yaml:"driver"`
 	DSN          string `yaml:"dsn"`
+	EncryptKey   string `yaml:"encrypt_key"` // AES-GCM 加密密钥(上游 API Key 加密)
 	MaxOpenConns int    `yaml:"max_open_conns"`
 	MaxIdleConns int    `yaml:"max_idle_conns"`
 }
@@ -95,7 +96,9 @@ func Default() *Config {
 			MaxHeaderBytes: 1 << 20,
 		},
 		Storage: StorageConfig{
-			Driver:       "mem",
+			Driver:       "sqlite",
+			DSN:          "neuralgate.db",
+			EncryptKey:   "neuralgate-default-encrypt-key",
 			MaxOpenConns: 20,
 			MaxIdleConns: 10,
 		},
@@ -180,6 +183,12 @@ func (s *ServerConfig) apply(d ServerConfig) {
 func (s *StorageConfig) apply(d StorageConfig) {
 	if s.Driver == "" {
 		s.Driver = d.Driver
+	}
+	if s.DSN == "" {
+		s.DSN = d.DSN
+	}
+	if s.EncryptKey == "" {
+		s.EncryptKey = d.EncryptKey
 	}
 	if s.MaxOpenConns == 0 {
 		s.MaxOpenConns = d.MaxOpenConns

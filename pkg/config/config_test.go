@@ -102,8 +102,8 @@ func TestLoadMissingFieldsUseDefaults(t *testing.T) {
 	if cfg.Server.AdminAddr != ":8081" {
 		t.Errorf("AdminAddr = %q, want default :8081", cfg.Server.AdminAddr)
 	}
-	if cfg.Storage.Driver != "mem" {
-		t.Errorf("Driver = %q, want default mem", cfg.Storage.Driver)
+	if cfg.Storage.Driver != "sqlite" {
+		t.Errorf("Driver = %q, want default sqlite", cfg.Storage.Driver)
 	}
 	if cfg.Audit.QueueSize != 65536 {
 		t.Errorf("QueueSize = %d, want default 65536", cfg.Audit.QueueSize)
