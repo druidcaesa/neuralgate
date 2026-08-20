@@ -206,9 +206,11 @@ func (s *SQLStorage) scanModelConfig(row interface{ Scan(...interface{}) error }
 		return nil, err
 	}
 	if encrypted == 1 {
-		if plain, err := Decrypt(apiKey, s.encryptKey); err == nil {
-			apiKey = plain
+		plain, err := Decrypt(apiKey, s.encryptKey)
+		if err != nil {
+			return nil, fmt.Errorf("decrypt api key: %w", err)
 		}
+		apiKey = plain
 	}
 	c.APIKey = apiKey
 	c.Enabled = enabled == 1
@@ -383,7 +385,7 @@ func buildAuditWhere(filter plugin.AuditLogFilter) (string, []interface{}) {
 	}
 	if filter.Keyword != "" {
 		kw := "%" + filter.Keyword + "%"
-		add("(request_id LIKE ? OR model_name LIKE ? OR request_body LIKE ? OR response_body LIKE ?)", kw, kw, kw, kw)
+		add("(request_id LIKE ? OR tenant_id LIKE ? OR api_key_id LIKE ? OR model_name LIKE ? OR request_body LIKE ? OR response_body LIKE ? OR disconnect_reason LIKE ?)", kw, kw, kw, kw, kw, kw, kw)
 	}
 	if len(conds) == 0 {
 		return "1=1", nil

@@ -137,7 +137,7 @@ func TestSQLStorageAuditLogCRUD(t *testing.T) {
 		ModelName: "gpt-4", Provider: "openai", RequestMethod: "POST",
 		RequestPath: "/v1/chat/completions", RequestHeaders: map[string]string{"Content-Type": "application/json"},
 		RequestBody: `{"model":"gpt-4"}`, ResponseStatus: 200, ResponseBody: `{"choices":[]}`,
-		SSEChunks: []plugin.SSEChunk{{Index: 0, Data: `{"choices":[]}`, Timestamp: now}},
+		SSEChunks:    []plugin.SSEChunk{{Index: 0, Data: `{"choices":[]}`, Timestamp: now}},
 		PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15, Duration: 120,
 		ClientIP: "127.0.0.1", IsStream: true, CreatedAt: now,
 	}
@@ -178,6 +178,23 @@ func TestSQLStorageAuditLogCRUD(t *testing.T) {
 }
 
 func boolPtr(b bool) *bool { return &b }
+
+// TestSQLStorageModelConfigDecryptFail 密钥不匹配时读取应返回错误,而非返回密文
+func TestSQLStorageModelConfigDecryptFail(t *testing.T) {
+	// 保存时用 key A
+	s := newTestSQLStorage(t)
+	now := time.Now()
+	_ = s.SaveModelConfig(&plugin.ModelConfig{
+		ID: "m1", ModelName: "gpt-4", Provider: "openai", ProviderModel: "gpt-4o",
+		BaseURL: "https://x", APIKey: "sk-secret", Enabled: true,
+		CreatedAt: now, UpdatedAt: now,
+	})
+	// 读取时用 key B(密钥不匹配 → 解密失败 → 返回错误)
+	other := &SQLStorage{db: s.db, encryptKey: "other-key"}
+	if _, err := other.GetModelConfig("gpt-4"); err == nil {
+		t.Fatal("decrypt with wrong key must return error")
+	}
+}
 
 func TestSQLStoragePingClose(t *testing.T) {
 	s := newTestSQLStorage(t)
