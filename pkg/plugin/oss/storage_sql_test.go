@@ -20,8 +20,42 @@ import (
 	"time"
 
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
+	_ "github.com/go-sql-driver/mysql"
 	_ "modernc.org/sqlite"
 )
+
+// TestSQLiteCreateTables SQLite 三表建表后均应存在
+func TestSQLiteCreateTables(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := sqliteCreateTables(db); err != nil {
+		t.Fatalf("sqliteCreateTables: %v", err)
+	}
+	for _, table := range []string{"api_keys", "model_configs", "audit_logs"} {
+		var name string
+		if err := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&name); err != nil {
+			t.Fatalf("table %s missing: %v", table, err)
+		}
+	}
+}
+
+// TestMySQLCreateTables_SkipWithoutDB MySQL 需要真实环境;本地无 MySQL 时跳过
+func TestMySQLCreateTables_SkipWithoutDB(t *testing.T) {
+	db, err := sql.Open("mysql", "root:pass@tcp(127.0.0.1:3306)/neuralgate?charset=utf8mb4")
+	if err != nil {
+		t.Skipf("mysql driver unavailable: %v", err)
+	}
+	if err := db.Ping(); err != nil {
+		t.Skipf("mysql not reachable: %v", err)
+	}
+	defer db.Close()
+	if err := mysqlCreateTables(db); err != nil {
+		t.Fatalf("mysqlCreateTables: %v", err)
+	}
+}
 
 // newTestSQLStorage 创建基于内存 SQLite 的 SQLStorage(建表)
 func newTestSQLStorage(t *testing.T) *SQLStorage {
@@ -203,5 +237,36 @@ func TestSQLStoragePingClose(t *testing.T) {
 	}
 	if err := s.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
+	}
+}
+
+// TestSQLStorageAPIKeyReSaveAfterDelete 软删除后同 ID 重新保存应恢复(deleted 列随 UPSERT 重置为 0)
+func TestSQLStorageAPIKeyReSaveAfterDelete(t *testing.T) {
+	s := newTestSQLStorage(t)
+	now := time.Now()
+	key := &plugin.APIKey{
+		ID: "k1", KeyHash: "hash-1", KeyPrefix: "ng-abcdef12",
+		TenantID: "t1", Name: "恢复测试", Status: plugin.APIKeyStatusActive,
+		Quota: -1, RateLimit: 10, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := s.SaveAPIKey(key); err != nil {
+		t.Fatalf("SaveAPIKey: %v", err)
+	}
+	if err := s.DeleteAPIKey("k1"); err != nil {
+		t.Fatalf("DeleteAPIKey: %v", err)
+	}
+	if _, err := s.GetAPIKey("hash-1"); err != ErrNotFound {
+		t.Fatalf("GetAPIKey after delete err = %v; want ErrNotFound", err)
+	}
+	// 同 ID 重新保存(UPSERT),deleted 应恢复为 0
+	if err := s.SaveAPIKey(key); err != nil {
+		t.Fatalf("SaveAPIKey after delete: %v", err)
+	}
+	got, err := s.GetAPIKey("hash-1")
+	if err != nil {
+		t.Fatalf("GetAPIKey after re-save = %v, %v; key not restored", got, err)
+	}
+	if got.Name != "恢复测试" {
+		t.Fatalf("re-saved key name = %q; want 恢复测试", got.Name)
 	}
 }
