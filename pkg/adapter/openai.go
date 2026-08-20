@@ -15,7 +15,10 @@
 package adapter
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 )
 
@@ -29,21 +32,74 @@ func (a *OpenAIAdapter) Name() string { return "openai" }
 
 func (a *OpenAIAdapter) SupportsNativeProxy() bool { return true }
 
-// 以下转换方法当前未实现
+// TransformRequest 原生透传模式不调用;保留接口签名
 func (a *OpenAIAdapter) TransformRequest(req *UnifiedRequest, rawBody []byte) (*http.Request, error) {
-	return nil, errors.New("not implemented")
+	return nil, errors.New("native proxy only")
 }
 
+// TransformResponse 原生透传不调用
 func (a *OpenAIAdapter) TransformResponse(resp *http.Response) (*UnifiedResponse, error) {
-	return nil, errors.New("not implemented")
+	return nil, errors.New("native proxy only")
 }
 
+// TransformStreamChunk 原生透传不调用
 func (a *OpenAIAdapter) TransformStreamChunk(chunk []byte) (*UnifiedSSEChunk, error) {
-	return nil, errors.New("not implemented")
+	return nil, errors.New("native proxy only")
 }
 
-func (a *OpenAIAdapter) ParseTokenUsage(resp *http.Response) (int, int, int) { return 0, 0, 0 }
+// usageBody 非流式响应体(仅取 usage 字段)
+type usageBody struct {
+	Usage *TokenUsage `json:"usage"`
+}
 
-func (a *OpenAIAdapter) ParseStreamUsage(chunk []byte) (int, int, int) { return 0, 0, 0 }
+// ParseTokenUsage 从非流式响应体解析 Token 用量(OpenAI 格式)
+func (a *OpenAIAdapter) ParseTokenUsage(resp *http.Response) (int, int, int) {
+	if resp == nil || resp.Body == nil {
+		return 0, 0, 0
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, 0, 0
+	}
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	var ub usageBody
+	if err := json.Unmarshal(body, &ub); err != nil || ub.Usage == nil {
+		return 0, 0, 0
+	}
+	return ub.Usage.PromptTokens, ub.Usage.CompletionTokens, ub.Usage.TotalTokens
+}
 
-func (a *OpenAIAdapter) ParseError(resp *http.Response) (int, string) { return 0, "" }
+// ParseStreamUsage 从流式最后一个分片解析 Token 用量(含 usage 字段的分片)
+func (a *OpenAIAdapter) ParseStreamUsage(chunk []byte) (int, int, int) {
+	var ub usageBody
+	if err := json.Unmarshal(chunk, &ub); err != nil || ub.Usage == nil {
+		return 0, 0, 0
+	}
+	return ub.Usage.PromptTokens, ub.Usage.CompletionTokens, ub.Usage.TotalTokens
+}
+
+// errorBody OpenAI 错误响应体
+type errorBody struct {
+	Error struct {
+		Message string `json:"message"`
+		Type    string `json:"type"`
+		Code    string `json:"code"`
+	} `json:"error"`
+}
+
+// ParseError 解析错误状态码与消息;无法解析时返回 (0, "")
+func (a *OpenAIAdapter) ParseError(resp *http.Response) (int, string) {
+	if resp == nil || resp.Body == nil {
+		return 0, ""
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, ""
+	}
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	var eb errorBody
+	if err := json.Unmarshal(body, &eb); err != nil || eb.Error.Message == "" {
+		return 0, ""
+	}
+	return resp.StatusCode, eb.Error.Message
+}
