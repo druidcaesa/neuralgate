@@ -56,6 +56,17 @@ func (s *MemStorage) GetAPIKey(keyHash string) (*plugin.APIKey, error) {
 	return nil, ErrNotFound
 }
 
+func (s *MemStorage) GetAPIKeyByID(id string) (*plugin.APIKey, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, k := range s.apiKeys {
+		if k.ID == id {
+			return k, nil
+		}
+	}
+	return nil, ErrNotFound
+}
+
 func (s *MemStorage) SaveAPIKey(key *plugin.APIKey) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -110,6 +121,17 @@ func (s *MemStorage) GetModelConfig(modelName string) (*plugin.ModelConfig, erro
 	defer s.mu.RUnlock()
 	if c, ok := s.modelConfigs[modelName]; ok {
 		return c, nil
+	}
+	return nil, ErrNotFound
+}
+
+func (s *MemStorage) GetModelConfigByID(id string) (*plugin.ModelConfig, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, c := range s.modelConfigs {
+		if c.ID == id {
+			return c, nil
+		}
 	}
 	return nil, ErrNotFound
 }
@@ -214,6 +236,9 @@ func normalizePage(page, size int) (int, int) {
 
 // matchAuditLog 按过滤器匹配审计日志
 func matchAuditLog(l *plugin.AuditLog, f plugin.AuditLogFilter) bool {
+	if f.RequestID != "" && l.RequestID != f.RequestID {
+		return false
+	}
 	if f.TenantID != "" && l.TenantID != f.TenantID {
 		return false
 	}
