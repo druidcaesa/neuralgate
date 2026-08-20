@@ -14,7 +14,11 @@
 
 package oss
 
-import "database/sql"
+import (
+	"database/sql"
+
+	_ "modernc.org/sqlite" // 注册 sqlite 驱动(驱动名 "sqlite",DSN 为文件路径)
+)
 
 // sqliteCreateTables 建 SQLite 表(与 storage_sql.go 中 CRUD 列完全对应)
 func sqliteCreateTables(db *sql.DB) error {
