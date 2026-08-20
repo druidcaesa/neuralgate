@@ -41,6 +41,12 @@ func AuthMiddleware(storage plugin.StoragePlugin) Middleware {
 			// 脱敏:移除 Authorization 头,避免 API Key 明文进入审计日志(PRD 5.4)
 			delete(rc.RequestHeaders, "Authorization")
 
+			// /healthz 免鉴权:构建 rc 后直接放行,不校验 Key(运维探活需求)
+			if r.URL.Path == "/healthz" {
+				next.ServeHTTP(w, r.WithContext(WithRequestContext(r.Context(), rc)))
+				return
+			}
+
 			// 提取 Bearer Key
 			auth := r.Header.Get("Authorization")
 			if !strings.HasPrefix(auth, "Bearer ") || len(strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))) == 0 {
