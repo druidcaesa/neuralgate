@@ -264,6 +264,7 @@ type AuditConfig struct {
 // AuditMeta 审计元信息
 type AuditMeta struct {
 	ResponseStatus   int
+	ResponseBody     string // 非流式响应体(流式留空,分片已单独留存)
 	PromptTokens     int
 	CompletionTokens int
 	TotalTokens      int
