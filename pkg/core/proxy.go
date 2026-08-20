@@ -417,6 +417,7 @@ func (p *ProxyCore) finalizeAudit(rc *RequestContext, prompt, completion, total 
 	}
 	_ = p.pipeline.auditor.Finalize(rc.RequestID, &plugin.AuditMeta{
 		ResponseStatus:   rc.ResponseStatus,
+		ResponseBody:     string(rc.ResponseBody),
 		PromptTokens:     prompt,
 		CompletionTokens: completion,
 		TotalTokens:      total,
@@ -433,12 +434,34 @@ func (p *ProxyCore) handlePassThrough(w http.ResponseWriter, r *http.Request, rc
 	cfg := rc.ModelConfig
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
+		rc.ResponseStatus = http.StatusBadRequest
+		rc.EndTime = time.Now()
+		p.finalizeAudit(rc, 0, 0, 0)
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "bad_request", "failed to read body")
 		return
+	}
+	// 0. 审计:请求开始(携带基础元数据;透传不解析 body 外的语义,model/provider 取自路由配置)
+	if p.pipeline.auditor != nil {
+		_ = p.pipeline.auditor.Submit(&plugin.AuditEvent{
+			RequestID: rc.RequestID,
+			EventType: plugin.AuditEventRequestStart,
+			Timestamp: rc.StartTime,
+			Data: &plugin.AuditLog{
+				ID: rc.RequestID, RequestID: rc.RequestID,
+				TenantID: rc.TenantID, APIKeyID: rc.APIKeyID,
+				ModelName: cfg.ModelName, Provider: cfg.Provider,
+				RequestMethod: rc.RequestMethod, RequestPath: rc.RequestPath,
+				RequestHeaders: rc.RequestHeaders, RequestBody: string(body),
+				ClientIP: rc.ClientIP, CreatedAt: rc.StartTime,
+			},
+		})
 	}
 	upstreamURL := strings.TrimRight(cfg.BaseURL, "/") + r.URL.Path
 	outbound, err := http.NewRequest(r.Method, upstreamURL, bytes.NewReader(body))
 	if err != nil {
+		rc.ResponseStatus = http.StatusInternalServerError
+		rc.EndTime = time.Now()
+		p.finalizeAudit(rc, 0, 0, 0)
 		writeOpenAIError(w, http.StatusInternalServerError, "api_error", "internal_error", err.Error())
 		return
 	}
@@ -455,12 +478,18 @@ func (p *ProxyCore) handlePassThrough(w http.ResponseWriter, r *http.Request, rc
 
 	resp, err := p.doWithRetry(outbound, cfg)
 	if err != nil {
+		rc.ResponseStatus = http.StatusGatewayTimeout
+		rc.EndTime = time.Now()
+		p.finalizeAudit(rc, 0, 0, 0)
 		writeOpenAIError(w, http.StatusGatewayTimeout, "api_error", "upstream_timeout", "upstream timeout: "+err.Error())
 		return
 	}
 	defer resp.Body.Close()
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
+		rc.ResponseStatus = http.StatusBadGateway
+		rc.EndTime = time.Now()
+		p.finalizeAudit(rc, 0, 0, 0)
 		writeOpenAIError(w, http.StatusBadGateway, "api_error", "upstream_error", "failed to read upstream response")
 		return
 	}
@@ -469,6 +498,8 @@ func (p *ProxyCore) handlePassThrough(w http.ResponseWriter, r *http.Request, rc
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(respBody)
+	rc.EndTime = time.Now()
+	p.finalizeAudit(rc, 0, 0, 0)
 }
 
 // copyResponseHeaders 复制上游响应头到客户端

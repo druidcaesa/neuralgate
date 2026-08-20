@@ -85,6 +85,7 @@ func (a *SimpleAuditor) Finalize(requestID string, meta *plugin.AuditMeta) error
 		return nil
 	}
 	log.ResponseStatus = meta.ResponseStatus
+	log.ResponseBody = meta.ResponseBody
 	log.PromptTokens = meta.PromptTokens
 	log.CompletionTokens = meta.CompletionTokens
 	log.TotalTokens = meta.TotalTokens

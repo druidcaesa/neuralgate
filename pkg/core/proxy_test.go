@@ -114,6 +114,60 @@ func TestProxyPassThroughForwarding(t *testing.T) {
 	}
 }
 
+func TestProxyPassThroughAudited(t *testing.T) {
+	// 透传端点(/v1/completions):请求开始 Submit + 结束 Finalize,审计必须落库
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"cmpl-1","object":"text_completion","choices":[{"text":"hello"}]}`))
+	}))
+	defer upstream.Close()
+
+	storage := oss.NewMemStorage()
+	now := time.Now()
+	_ = storage.SaveModelConfig(&plugin.ModelConfig{
+		ID: "m1", ModelName: "gpt-4", Provider: "openai", ProviderModel: "gpt-4o",
+		BaseURL: upstream.URL, APIKey: "sk-upstream", Enabled: true,
+		CreatedAt: now, UpdatedAt: now,
+	})
+	_ = storage.SaveAPIKey(&plugin.APIKey{
+		ID: "k1", KeyHash: hashKey("ng-test"), KeyPrefix: "ng-test", Name: "t",
+		Status: plugin.APIKeyStatusActive, Quota: -1, CreatedAt: now, UpdatedAt: now,
+	})
+	registry := adapter.NewAdapterRegistry()
+	registry.Register(adapter.NewOpenAIAdapter())
+	limiter := oss.NewMemRateLimiter()
+	_ = limiter.Init(map[string]interface{}{"default_rps": 100, "default_tpm": 100000})
+	auditor := oss.NewSimpleAuditor(storage)
+	pc := NewProxyCore(NewPipeline(storage, limiter, auditor, registry), registry)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/completions", strings.NewReader(`{"model":"gpt-4","prompt":"hi"}`))
+	req.Header.Set("Authorization", "Bearer ng-test")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	pc.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; want 200, body=%s", rec.Code, rec.Body.String())
+	}
+
+	logs, total, err := storage.QueryAuditLogs(plugin.AuditLogFilter{}, 1, 10)
+	if err != nil || total != 1 {
+		t.Fatalf("audit total = %d, err %v; want 1", total, err)
+	}
+	if logs[0].RequestPath != "/v1/completions" {
+		t.Fatalf("audit RequestPath = %q; want /v1/completions", logs[0].RequestPath)
+	}
+	if logs[0].ModelName != "gpt-4" || logs[0].Provider != "openai" {
+		t.Fatalf("audit log = %+v", logs[0])
+	}
+	if logs[0].ResponseStatus != http.StatusOK {
+		t.Fatalf("audit status = %d; want 200", logs[0].ResponseStatus)
+	}
+	if logs[0].RequestBody == "" {
+		t.Fatal("audit RequestBody empty; want original body preserved")
+	}
+}
+
 func TestProxyModelsList(t *testing.T) {
 	storage := routeTestStorage()
 	registry := adapter.NewAdapterRegistry()
@@ -310,6 +364,9 @@ func TestProxyChatCompletion(t *testing.T) {
 	}
 	if logs[0].ResponseStatus != 200 {
 		t.Fatalf("audit status = %d", logs[0].ResponseStatus)
+	}
+	if logs[0].ResponseBody == "" || !strings.Contains(logs[0].ResponseBody, "hello from upstream") {
+		t.Fatalf("audit ResponseBody = %q; want non-empty upstream content", logs[0].ResponseBody)
 	}
 }
 
