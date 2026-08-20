@@ -56,6 +56,11 @@ func newTestStorage() *oss.MemStorage {
 		Name: "quota", Status: plugin.APIKeyStatusActive, Quota: 10, UsedQuota: 10,
 		CreatedAt: now, UpdatedAt: now,
 	})
+	_ = s.SaveAPIKey(&plugin.APIKey{
+		ID: "k5", KeyHash: hashKey("ng-statusexpired"), KeyPrefix: "ng-statusexpired",
+		Name: "status-expired", Status: plugin.APIKeyStatusExpired, // 状态枚举直接置 expired(与 k3 的 ExpiresAt 检查互补)
+		CreatedAt: now, UpdatedAt: now,
+	})
 	return s
 }
 
@@ -115,6 +120,14 @@ func TestAuthDisabledKey(t *testing.T) {
 
 func TestAuthExpiredKey(t *testing.T) {
 	rec := doAuthRequest(newTestStorage(), "ng-expired")
+	if rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Body.String(), "api_key_expired") {
+		t.Fatalf("status=%d body=%s; want 401 api_key_expired", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAuthStatusExpiredKey(t *testing.T) {
+	// Status=expired 状态枚举校验(与 TestAuthExpiredKey 的 ExpiresAt 时间检查互补)
+	rec := doAuthRequest(newTestStorage(), "ng-statusexpired")
 	if rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Body.String(), "api_key_expired") {
 		t.Fatalf("status=%d body=%s; want 401 api_key_expired", rec.Code, rec.Body.String())
 	}

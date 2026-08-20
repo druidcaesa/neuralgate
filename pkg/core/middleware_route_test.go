@@ -125,6 +125,20 @@ func TestRouteModelAccessDenied(t *testing.T) {
 	}
 }
 
+func TestRouteBodyTooLarge(t *testing.T) {
+	registry := adapter.NewAdapterRegistry()
+	registry.Register(adapter.NewOpenAIAdapter())
+	// >1MB 请求体:显式 413 request_too_large,不得静默截断后继续转发
+	big := `{"model":"gpt-4","padding":"` + strings.Repeat("a", 1<<20) + `"}`
+	rec := doRouteRequest(routeTestStorage(), registry, "k2", big)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d; want 413, body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "request_too_large") {
+		t.Fatalf("body = %s; want request_too_large", rec.Body.String())
+	}
+}
+
 func TestRouteBadJSON(t *testing.T) {
 	registry := adapter.NewAdapterRegistry()
 	registry.Register(adapter.NewOpenAIAdapter())
