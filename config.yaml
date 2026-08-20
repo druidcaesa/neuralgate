@@ -1,0 +1,45 @@
+server:
+  proxy_addr: ":8080"        # 代理服务监听地址
+  admin_addr: ":8081"        # 管理后台监听地址
+  read_timeout: 30s          # 读超时（非流式请求）
+  write_timeout: 30s         # 写超时（非流式请求）
+  idle_timeout: 120s         # 空闲超时
+  max_header_bytes: 1048576  # 最大Header大小(1MB)
+
+storage:
+  # ===== 数据库驱动选择 =====
+  # 可选值: mem(骨架期默认) / mysql / sqlite / dm(Enterprise) / kingbase(Enterprise)
+  # mem 为骨架阶段内存存储（Phase 3 切换 mysql/sqlite；dm/kingbase 需 Enterprise 编译）
+  driver: mem
+  dsn: "user:pass@tcp(host:3306)/neuralgate?charset=utf8mb4"
+  max_open_conns: 20          # 最大连接数
+  max_idle_conns: 10          # 最大空闲连接
+
+audit:
+  queue_size: 65536          # 环形队列大小
+  worker_count: 4            # worker数量
+  batch_size: 100            # 批量写入大小
+  flush_interval: 5s         # 刷新间隔
+  enable_sha256: true        # SHA256存证（Enterprise）
+  retention_days: 90         # 日志保留天数
+
+rate_limit:
+  strategy: token_bucket     # token_bucket/sliding_window
+  default_rps: 10            # 默认每秒请求数
+  default_tpm: 100000        # 默认每分钟Token数
+
+export:                       # Enterprise only
+  type: siem                  # siem/syslog/kafka
+  endpoint: "https://siem.example.com/api"
+  api_key: ""
+  batch_size: 50
+  flush_interval: 10s
+
+license:                      # Enterprise only
+  file_path: "/etc/neuralgate/license.lic"
+  offline_mode: false
+
+log:
+  level: info                 # debug/info/warn/error
+  format: json                # json/console
+  output: stdout              # stdout/file path

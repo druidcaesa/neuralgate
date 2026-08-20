@@ -1,0 +1,43 @@
+//go:build enterprise
+
+package enterprise
+
+import (
+	"github.com/druidcaesa/neuralgate/pkg/plugin"
+	"github.com/druidcaesa/neuralgate/pkg/plugin/oss"
+)
+
+// enterpriseFactory Enterprise 工厂（照设计文档 6.2：OSS 实现 + 商业增强）
+// 骨架期全部复用 OSS 实现；达梦/金仓/Redis/SIEM/授权为 Phase 7 内容
+type enterpriseFactory struct {
+	storage plugin.StoragePlugin
+}
+
+// NewPluginFactory 返回 Enterprise 版插件工厂
+func NewPluginFactory() plugin.PluginFactory {
+	return &enterpriseFactory{}
+}
+
+// CreateStorage 创建存储（骨架期：内存存储；Phase 7 按 config.driver 支持达梦/金仓）
+func (f *enterpriseFactory) CreateStorage() plugin.StoragePlugin {
+	if f.storage == nil {
+		f.storage = oss.NewMemStorage()
+	}
+	return f.storage
+}
+
+// CreateAuditor 创建审计器（骨架期：简单审计；Phase 7 切换流式审计）
+func (f *enterpriseFactory) CreateAuditor() plugin.AuditPipeline {
+	return oss.NewSimpleAuditor(f.CreateStorage())
+}
+
+// CreateRateLimiter 创建限流器（骨架期：内存限流；Phase 7 支持 Redis，不可用时降级）
+func (f *enterpriseFactory) CreateRateLimiter() plugin.RateLimitPlugin {
+	return oss.NewMemRateLimiter()
+}
+
+// CreateExporter 日志外推（Phase 7 实现 SIEM/Syslog/Kafka）
+func (f *enterpriseFactory) CreateExporter() plugin.LogExporter { return nil }
+
+// CreateLicenseValidator 授权校验（Phase 7 实现）
+func (f *enterpriseFactory) CreateLicenseValidator() plugin.LicenseValidator { return nil }
