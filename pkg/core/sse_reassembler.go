@@ -15,18 +15,35 @@
 package core
 
 import (
-	"errors"
+	"encoding/json"
+	"strings"
 
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
 )
 
-// StreamReassembler 分片重组器：将分片列表拼接为完整应答（当前未实现）
+// StreamReassembler 分片重组器：解析每个分片的 delta.content，拼接为完整应答
 type StreamReassembler struct{}
 
 // NewStreamReassembler 创建重组器
 func NewStreamReassembler() *StreamReassembler { return &StreamReassembler{} }
 
-// Reassemble 将分片列表重组为完整应答
+// Reassemble 重组:提取每分片 choices[0].delta.content(OpenAI 格式)拼接
 func (r *StreamReassembler) Reassemble(chunks []plugin.SSEChunk) (string, error) {
-	return "", errors.New("not implemented")
+	var sb strings.Builder
+	for _, c := range chunks {
+		var chunk struct {
+			Choices []struct {
+				Delta struct {
+					Content string `json:"content"`
+				} `json:"delta"`
+			} `json:"choices"`
+		}
+		if err := json.Unmarshal([]byte(c.Data), &chunk); err != nil {
+			continue // 跳过无法解析的分片
+		}
+		if len(chunk.Choices) > 0 {
+			sb.WriteString(chunk.Choices[0].Delta.Content)
+		}
+	}
+	return sb.String(), nil
 }
