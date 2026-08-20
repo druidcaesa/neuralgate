@@ -32,6 +32,8 @@ type ModelConfig struct {
 	Weight        int               // 负载均衡权重
 	Enabled       bool              // 是否启用
 	Tags          map[string]string // 扩展标签
+	CreatedAt     time.Time         // 创建时间
+	UpdatedAt     time.Time         // 更新时间
 }
 
 // APIKey 租户API Key

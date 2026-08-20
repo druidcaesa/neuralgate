@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
@@ -186,3 +187,243 @@ func (s *SQLStorage) DeleteAPIKey(keyID string) error {
 	}
 	return nil
 }
+
+// ===== 模型配置管理 =====
+
+const modelConfigCols = "id, model_name, provider, provider_model, base_url, api_key, encrypted, timeout, max_retries, retry_interval, weight, enabled, tags, created_at, updated_at"
+
+// scanModelConfig 扫描一行模型配置,encrypted=1 时用 s.encryptKey 解密 api_key
+func (s *SQLStorage) scanModelConfig(row interface{ Scan(...interface{}) error }) (*plugin.ModelConfig, error) {
+	var c plugin.ModelConfig
+	var apiKey, tags, createdAt, updatedAt string
+	var encrypted, enabled int
+	if err := row.Scan(&c.ID, &c.ModelName, &c.Provider, &c.ProviderModel, &c.BaseURL,
+		&apiKey, &encrypted, &c.Timeout, &c.MaxRetries, &c.RetryInterval, &c.Weight,
+		&enabled, &tags, &createdAt, &updatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	if encrypted == 1 {
+		if plain, err := Decrypt(apiKey, s.encryptKey); err == nil {
+			apiKey = plain
+		}
+	}
+	c.APIKey = apiKey
+	c.Enabled = enabled == 1
+	_ = json.Unmarshal([]byte(tags), &c.Tags)
+	var cms, ums int64
+	fmt.Sscanf(createdAt, "%d", &cms)
+	fmt.Sscanf(updatedAt, "%d", &ums)
+	c.CreatedAt = msToTime(cms)
+	c.UpdatedAt = msToTime(ums)
+	return &c, nil
+}
+
+func (s *SQLStorage) GetModelConfig(modelName string) (*plugin.ModelConfig, error) {
+	row := s.db.QueryRow("SELECT "+modelConfigCols+" FROM model_configs WHERE model_name = ?", modelName)
+	return s.scanModelConfig(row)
+}
+
+func (s *SQLStorage) GetModelConfigByID(id string) (*plugin.ModelConfig, error) {
+	row := s.db.QueryRow("SELECT "+modelConfigCols+" FROM model_configs WHERE id = ?", id)
+	return s.scanModelConfig(row)
+}
+
+func (s *SQLStorage) SaveModelConfig(config *plugin.ModelConfig) error {
+	encrypted, err := Encrypt(config.APIKey, s.encryptKey)
+	if err != nil {
+		return fmt.Errorf("encrypt api key: %w", err)
+	}
+	created := timeToMS(config.CreatedAt)
+	updated := timeToMS(config.UpdatedAt)
+	_, err = s.db.Exec(
+		`INSERT INTO model_configs (id, model_name, provider, provider_model, base_url, api_key, encrypted, timeout, max_retries, retry_interval, weight, enabled, tags, created_at, updated_at)
+		 VALUES (?,?,?,?,?,?,1,?,?,?,?,?,?,?,?)
+		 ON CONFLICT(id) DO UPDATE SET model_name=excluded.model_name, provider=excluded.provider,
+		   provider_model=excluded.provider_model, base_url=excluded.base_url, api_key=excluded.api_key,
+		   encrypted=excluded.encrypted, timeout=excluded.timeout, max_retries=excluded.max_retries,
+		   retry_interval=excluded.retry_interval, weight=excluded.weight, enabled=excluded.enabled,
+		   tags=excluded.tags, updated_at=excluded.updated_at`,
+		config.ID, config.ModelName, config.Provider, config.ProviderModel, config.BaseURL,
+		encrypted, config.Timeout, config.MaxRetries, config.RetryInterval, config.Weight,
+		config.Enabled, marshalJSON(config.Tags), created, updated)
+	return err
+}
+
+func (s *SQLStorage) ListModelConfigs(page, size int) ([]*plugin.ModelConfig, int64, error) {
+	page, size = normalizePage(page, size)
+	var total int64
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM model_configs").Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	rows, err := s.db.Query("SELECT "+modelConfigCols+" FROM model_configs ORDER BY created_at DESC LIMIT ? OFFSET ?", size, (page-1)*size)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var configs []*plugin.ModelConfig
+	for rows.Next() {
+		c, err := s.scanModelConfig(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		configs = append(configs, c)
+	}
+	return configs, total, rows.Err()
+}
+
+func (s *SQLStorage) DeleteModelConfig(id string) error {
+	res, err := s.db.Exec("DELETE FROM model_configs WHERE id = ?", id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ===== 审计日志 =====
+
+const auditLogCols = "id, request_id, tenant_id, api_key_id, model_name, provider, request_method, request_path, request_headers, request_body, response_status, response_body, sse_chunks, prompt_tokens, completion_tokens, total_tokens, duration_ms, client_ip, is_stream, disconnected, disconnect_reason, sha256_fingerprint, created_at"
+
+func (s *SQLStorage) scanAuditLog(row interface{ Scan(...interface{}) error }) (*plugin.AuditLog, error) {
+	var l plugin.AuditLog
+	var headers, chunks, createdAt string
+	var isStream, disconnected int
+	if err := row.Scan(&l.ID, &l.RequestID, &l.TenantID, &l.APIKeyID, &l.ModelName,
+		&l.Provider, &l.RequestMethod, &l.RequestPath, &headers, &l.RequestBody,
+		&l.ResponseStatus, &l.ResponseBody, &chunks, &l.PromptTokens, &l.CompletionTokens,
+		&l.TotalTokens, &l.Duration, &l.ClientIP, &isStream, &disconnected,
+		&l.DisconnectReason, &l.SHA256Fingerprint, &createdAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	_ = json.Unmarshal([]byte(headers), &l.RequestHeaders)
+	_ = json.Unmarshal([]byte(chunks), &l.SSEChunks)
+	l.IsStream = isStream == 1
+	l.Disconnected = disconnected == 1
+	var cms int64
+	fmt.Sscanf(createdAt, "%d", &cms)
+	l.CreatedAt = msToTime(cms)
+	return &l, nil
+}
+
+// sqlExecer 统一 sql.DB 与 sql.Tx 的 Exec,使单条与批量写入共用插入逻辑
+type sqlExecer interface {
+	Exec(query string, args ...interface{}) (sql.Result, error)
+}
+
+func insertAuditLog(ex sqlExecer, log *plugin.AuditLog) error {
+	_, err := ex.Exec(
+		`INSERT INTO audit_logs (id, request_id, tenant_id, api_key_id, model_name, provider, request_method, request_path, request_headers, request_body, response_status, response_body, sse_chunks, prompt_tokens, completion_tokens, total_tokens, duration_ms, client_ip, is_stream, disconnected, disconnect_reason, sha256_fingerprint, created_at)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		log.ID, log.RequestID, log.TenantID, log.APIKeyID, log.ModelName, log.Provider,
+		log.RequestMethod, log.RequestPath, marshalJSON(log.RequestHeaders), log.RequestBody,
+		log.ResponseStatus, log.ResponseBody, marshalJSON(log.SSEChunks),
+		log.PromptTokens, log.CompletionTokens, log.TotalTokens, log.Duration,
+		log.ClientIP, log.IsStream, log.Disconnected, log.DisconnectReason,
+		log.SHA256Fingerprint, timeToMS(log.CreatedAt))
+	return err
+}
+
+func (s *SQLStorage) SaveAuditLog(log *plugin.AuditLog) error {
+	return insertAuditLog(s.db, log)
+}
+
+func (s *SQLStorage) BatchSaveAuditLogs(logs []*plugin.AuditLog) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	for _, l := range logs {
+		if err := insertAuditLog(tx, l); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// buildAuditWhere 构建过滤 WHERE 子句与参数(与 MemStorage.matchAuditLog 语义一致)
+func buildAuditWhere(filter plugin.AuditLogFilter) (string, []interface{}) {
+	conds := []string{}
+	args := []interface{}{}
+	add := func(cond string, as ...interface{}) {
+		conds = append(conds, cond)
+		args = append(args, as...)
+	}
+	if filter.TenantID != "" {
+		add("tenant_id = ?", filter.TenantID)
+	}
+	if filter.APIKeyID != "" {
+		add("api_key_id = ?", filter.APIKeyID)
+	}
+	if filter.ModelName != "" {
+		add("model_name = ?", filter.ModelName)
+	}
+	if filter.RequestID != "" {
+		add("request_id = ?", filter.RequestID)
+	}
+	if filter.Status != 0 {
+		add("response_status = ?", filter.Status)
+	}
+	if filter.IsStream != nil {
+		add("is_stream = ?", boolToInt(*filter.IsStream))
+	}
+	if filter.StartTime != nil {
+		add("created_at >= ?", timeToMS(*filter.StartTime))
+	}
+	if filter.EndTime != nil {
+		add("created_at <= ?", timeToMS(*filter.EndTime))
+	}
+	if filter.Keyword != "" {
+		kw := "%" + filter.Keyword + "%"
+		add("(request_id LIKE ? OR model_name LIKE ? OR request_body LIKE ? OR response_body LIKE ?)", kw, kw, kw, kw)
+	}
+	if len(conds) == 0 {
+		return "1=1", nil
+	}
+	return strings.Join(conds, " AND "), args
+}
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+func (s *SQLStorage) QueryAuditLogs(filter plugin.AuditLogFilter, page, size int) ([]*plugin.AuditLog, int64, error) {
+	page, size = normalizePage(page, size)
+	where, args := buildAuditWhere(filter)
+	var total int64
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM audit_logs WHERE "+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	rows, err := s.db.Query("SELECT "+auditLogCols+" FROM audit_logs WHERE "+where+
+		" ORDER BY created_at DESC LIMIT ? OFFSET ?", append(args, size, (page-1)*size)...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var logs []*plugin.AuditLog
+	for rows.Next() {
+		l, err := s.scanAuditLog(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		logs = append(logs, l)
+	}
+	return logs, total, rows.Err()
+}
+
+// ===== 健康检查 =====
+
+func (s *SQLStorage) Ping() error { return s.db.Ping() }
+
+func (s *SQLStorage) Close() error { return s.db.Close() }
