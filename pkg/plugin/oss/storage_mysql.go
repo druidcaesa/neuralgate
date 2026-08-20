@@ -76,11 +76,11 @@ func mysqlCreateTables(db *sql.DB) error {
 			disconnected TINYINT NOT NULL DEFAULT 0,
 			disconnect_reason VARCHAR(255) NOT NULL DEFAULT '',
 			sha256_fingerprint VARCHAR(64) NOT NULL DEFAULT '',
-			created_at BIGINT NOT NULL
+			created_at BIGINT NOT NULL,
+			KEY idx_audit_created (created_at),
+			KEY idx_audit_tenant (tenant_id),
+			KEY idx_audit_model (model_name)
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
-		`CREATE INDEX idx_audit_created ON audit_logs(created_at)`,
-		`CREATE INDEX idx_audit_tenant ON audit_logs(tenant_id)`,
-		`CREATE INDEX idx_audit_model ON audit_logs(model_name)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {
