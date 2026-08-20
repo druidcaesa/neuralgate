@@ -65,7 +65,11 @@ func main() {
 	// 3. 初始化插件工厂（BuildTag 决定实现）
 	factory := newPluginFactory()
 	storage := factory.CreateStorage()
-	if err := storage.Init(map[string]interface{}{"driver": cfg.Storage.Driver}); err != nil {
+	if err := storage.Init(map[string]interface{}{
+		"driver":      cfg.Storage.Driver,
+		"dsn":         cfg.Storage.DSN,
+		"encrypt_key": cfg.Storage.EncryptKey,
+	}); err != nil {
 		logger.Fatal("存储初始化失败", zap.Error(err))
 	}
 	auditor := factory.CreateAuditor()
