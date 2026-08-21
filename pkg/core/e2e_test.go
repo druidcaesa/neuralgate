@@ -70,7 +70,7 @@ func TestEndToEnd(t *testing.T) {
 	// 3. 组件装配(与 cmd/gateway/main.go 一致)
 	registry := adapter.NewAdapterRegistry()
 	registry.Register(adapter.NewOpenAIAdapter())
-	registry.Register(adapter.NewTongyiAdapter())
+	registry.Register(adapter.NewQwenAdapter())
 	registry.Register(adapter.NewZhipuAdapter())
 	registry.Register(adapter.NewDeepSeekAdapter())
 	limiter := oss.NewRateLimiter(oss.NewMemStorage(), 100, 100000, "token_bucket")
