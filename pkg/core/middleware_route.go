@@ -77,6 +77,15 @@ func RouteMatchMiddleware(storage plugin.StoragePlugin, registry *adapter.Adapte
 			}
 			rc.ModelConfig = config
 
+			// 加载负载均衡上游(失败或为空则运行时回退 ModelConfig 默认上游)
+			if ups, err := storage.ListUpstreams(config.ID); err == nil {
+				loaded := make([]plugin.Upstream, 0, len(ups))
+				for _, u := range ups {
+					loaded = append(loaded, *u)
+				}
+				rc.Upstreams = loaded
+			}
+
 			// Key 模型权限校验(allowed_models 非空且不含 → 403)
 			if key, err := storage.GetAPIKeyByID(rc.APIKeyID); err == nil && len(key.AllowedModels) > 0 {
 				allowed := false

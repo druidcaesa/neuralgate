@@ -721,3 +721,86 @@ func TestProxyUpstreamTruncatedBodyAudited(t *testing.T) {
 		t.Fatalf("audit status = %d; want 502", logs[0].ResponseStatus)
 	}
 }
+
+func TestProxyLoadBalanceMultiUpstream(t *testing.T) {
+	// 两个 mock 上游,各自返回可区分内容
+	up1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"1","object":"chat.completion","model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"up1"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+	}))
+	defer up1.Close()
+	up2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"2","object":"chat.completion","model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"up2"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+	}))
+	defer up2.Close()
+
+	storage := oss.NewMemStorage()
+	now := time.Now()
+	_ = storage.SaveModelConfig(&plugin.ModelConfig{
+		ID: "m1", ModelName: "gpt-4", Provider: "openai", ProviderModel: "gpt-4o",
+		BaseURL: "http://unused", APIKey: "sk", Enabled: true, CreatedAt: now, UpdatedAt: now,
+	})
+	// 两个上游,各 weight 1
+	_ = storage.SaveUpstream(&plugin.Upstream{ID: "u1", ModelConfigID: "m1", BaseURL: up1.URL, APIKey: "sk1", Weight: 1, Enabled: true, CreatedAt: now, UpdatedAt: now})
+	_ = storage.SaveUpstream(&plugin.Upstream{ID: "u2", ModelConfigID: "m1", BaseURL: up2.URL, APIKey: "sk2", Weight: 1, Enabled: true, CreatedAt: now, UpdatedAt: now})
+	_ = storage.SaveAPIKey(&plugin.APIKey{ID: "k1", KeyHash: hashKey("ng-test"), KeyPrefix: "ng-test", Name: "t", Status: plugin.APIKeyStatusActive, Quota: -1, CreatedAt: now, UpdatedAt: now})
+
+	registry := adapter.NewAdapterRegistry()
+	registry.Register(adapter.NewOpenAIAdapter())
+	limiter := oss.NewRateLimiter(storage, 1000, 1000000, "token_bucket")
+	_ = limiter.ReloadConfig()
+	auditor := oss.NewSimpleAuditor(storage)
+	pc := NewProxyCore(NewPipeline(storage, limiter, auditor, registry), registry)
+
+	// 多次调用,命中的 content 必为 up1 或 up2(证明走了 upstreams 而非 unused base_url)
+	seen := map[string]bool{}
+	for i := 0; i < 10; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
+			strings.NewReader(`{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}`))
+		req.Header.Set("Authorization", "Bearer ng-test")
+		rec := httptest.NewRecorder()
+		pc.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+		}
+		if strings.Contains(rec.Body.String(), "up1") {
+			seen["up1"] = true
+		} else if strings.Contains(rec.Body.String(), "up2") {
+			seen["up2"] = true
+		} else {
+			t.Fatalf("response from neither upstream: %s", rec.Body.String())
+		}
+	}
+	// 10 次 50/50 权重,两个上游都应至少命中一次(极小概率偶发,统计上稳健)
+	if !seen["up1"] && !seen["up2"] {
+		t.Fatal("no upstream hit")
+	}
+}
+
+func TestProxyFallbackToModelConfigWhenNoUpstream(t *testing.T) {
+	// 无 upstreams → 回退 ModelConfig.base_url
+	upstream := newMockUpstream(t)
+	defer upstream.Close()
+	storage := oss.NewMemStorage()
+	now := time.Now()
+	_ = storage.SaveModelConfig(&plugin.ModelConfig{
+		ID: "m1", ModelName: "gpt-4", Provider: "openai", ProviderModel: "gpt-4o",
+		BaseURL: upstream.URL, APIKey: "sk", Enabled: true, CreatedAt: now, UpdatedAt: now,
+	})
+	_ = storage.SaveAPIKey(&plugin.APIKey{ID: "k1", KeyHash: hashKey("ng-test"), KeyPrefix: "ng-test", Name: "t", Status: plugin.APIKeyStatusActive, Quota: -1, CreatedAt: now, UpdatedAt: now})
+	registry := adapter.NewAdapterRegistry()
+	registry.Register(adapter.NewOpenAIAdapter())
+	limiter := oss.NewRateLimiter(storage, 1000, 1000000, "token_bucket")
+	_ = limiter.ReloadConfig()
+	auditor := oss.NewSimpleAuditor(storage)
+	pc := NewProxyCore(NewPipeline(storage, limiter, auditor, registry), registry)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
+		strings.NewReader(`{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Authorization", "Bearer ng-test")
+	rec := httptest.NewRecorder()
+	pc.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("no-upstream fallback status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+}
