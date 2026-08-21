@@ -19,6 +19,7 @@ export interface ModelItem {
   enabled: boolean
   tags: Record<string, string>
   created_at: string
+  _upstreams?: UpstreamItem[]
 }
 
 export interface ModelCreateRequest {
