@@ -16,6 +16,7 @@ package oss
 
 import (
 	"database/sql"
+	"os"
 	"testing"
 	"time"
 
@@ -40,9 +41,14 @@ func TestSQLiteCreateTables(t *testing.T) {
 	}
 }
 
-// TestMySQLCreateTables_SkipWithoutDB MySQL 需要真实环境;本地无 MySQL 时跳过
+// TestMySQLCreateTables_SkipWithoutDB MySQL 需要真实环境;无 MySQL 时跳过。
+// dsn 可用环境变量 NG_MYSQL_DSN 覆盖(如 NG_MYSQL_DSN="root:root@tcp(127.0.0.1:3306)/neuralgate?charset=utf8mb4")
 func TestMySQLCreateTables_SkipWithoutDB(t *testing.T) {
-	db, err := sql.Open("mysql", "root:pass@tcp(127.0.0.1:3306)/neuralgate?charset=utf8mb4")
+	dsn := os.Getenv("NG_MYSQL_DSN")
+	if dsn == "" {
+		dsn = "root:root@tcp(127.0.0.1:3306)/neuralgate?charset=utf8mb4"
+	}
+	db, err := sql.Open("mysql", dsn)
 	if err != nil {
 		t.Skipf("mysql driver unavailable: %v", err)
 	}
