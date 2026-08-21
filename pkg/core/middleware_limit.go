@@ -48,13 +48,20 @@ func RateLimitMiddleware(rateLimiter plugin.RateLimitPlugin) Middleware {
 			}
 			current, limit, resetAt := rateLimiter.Status(rc.TenantID, model)
 			if !allowed {
+				code := "rate_limit"
+				msg := "rate limit exceeded"
+				// RPS 未超(current < limit)则判定为 TPM(token)超限
+				if current < limit {
+					code = "token_limit"
+					msg = "token rate limit exceeded"
+				}
 				// X-RateLimit-Reset-Requests 为 unix 秒时间戳(OpenAI 规范)
 				w.Header().Set("X-RateLimit-Limit-Requests", strconv.FormatInt(limit, 10))
 				w.Header().Set("X-RateLimit-Remaining-Requests", "0")
 				w.Header().Set("X-RateLimit-Reset-Requests", strconv.FormatInt(resetAt.Unix(), 10))
 				w.Header().Set("Retry-After", "1")
-				writeOpenAIError(w, http.StatusTooManyRequests, "rate_limit_exceeded", "rate_limit",
-					"rate limit exceeded (current="+strconv.FormatInt(current, 10)+", limit="+strconv.FormatInt(limit, 10)+", reset="+resetAt.Format(time.RFC3339)+")")
+				writeOpenAIError(w, http.StatusTooManyRequests, "rate_limit_exceeded", code,
+					msg+" (current="+strconv.FormatInt(current, 10)+", limit="+strconv.FormatInt(limit, 10)+", reset="+resetAt.Format(time.RFC3339)+")")
 				return
 			}
 			// 放行:附带剩余额度 Header(与 OpenAI 限流 Header 语义一致)

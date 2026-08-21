@@ -21,11 +21,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/druidcaesa/neuralgate/pkg/plugin"
 	"github.com/druidcaesa/neuralgate/pkg/plugin/oss"
 )
 
 func TestRateLimitAllow(t *testing.T) {
-	limiter := oss.NewMemRateLimiter()
+	limiter := oss.NewRateLimiter(oss.NewMemStorage(), 100, 100000, "token_bucket")
 	_ = limiter.Init(map[string]interface{}{"default_rps": 10, "default_tpm": 100000})
 	mw := RateLimitMiddleware(limiter)
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -47,7 +48,7 @@ func TestRateLimitAllow(t *testing.T) {
 
 func TestRateLimitExceeded(t *testing.T) {
 	// 构造 rps=1 的限流器
-	limiter := oss.NewMemRateLimiter()
+	limiter := oss.NewRateLimiter(oss.NewMemStorage(), 100, 100000, "token_bucket")
 	_ = limiter.Init(map[string]interface{}{"default_rps": 1, "default_tpm": 100000})
 	mw := RateLimitMiddleware(limiter)
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -101,5 +102,33 @@ func TestRateLimitHealthzExempt(t *testing.T) {
 	}
 	if limiter.calls != 0 {
 		t.Fatalf("Allow calls = %d; want 0 (healthz 不计入限流桶)", limiter.calls)
+	}
+}
+
+func TestRateLimitTPMExceededTokenLimit(t *testing.T) {
+	s := oss.NewMemStorage()
+	_ = s.SaveRateLimitConfig(&plugin.RateLimitConfig{
+		ID: "g", RequestsPerSec: 1000, TokensPerMin: 5, Strategy: "sliding_window", Enabled: true,
+	})
+	limiter := oss.NewRateLimiter(s, 1000, 1000000, "sliding_window")
+	_ = limiter.ReloadConfig()
+	// 先耗尽 TPM
+	_ = limiter.RecordTokens("", "", 5)
+
+	mw := RateLimitMiddleware(limiter)
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	rc := &RequestContext{TenantID: ""}
+	req = req.WithContext(WithRequestContext(req.Context(), rc))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d; want 429", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "token_limit") {
+		t.Fatalf("body = %s; want token_limit", rec.Body.String())
 	}
 }

@@ -40,7 +40,9 @@ func (l *recordingLimiter) Allow(tenantID string, model string, tokens int) (boo
 func (l *recordingLimiter) Status(tenantID string, model string) (int64, int64, time.Time) {
 	return 0, 10, time.Now().Add(time.Second)
 }
-func (l *recordingLimiter) Reset(tenantID string, model string) error { return nil }
+func (l *recordingLimiter) Reset(tenantID string, model string) error                    { return nil }
+func (l *recordingLimiter) RecordTokens(tenantID string, model string, tokens int) error { return nil }
+func (l *recordingLimiter) ReloadConfig() error                                          { return nil }
 
 func TestPipelineOrder(t *testing.T) {
 	var calls []string
@@ -53,7 +55,7 @@ func TestPipelineOrder(t *testing.T) {
 			})
 		}
 	}
-	p := NewPipeline(newTestStorage(), oss.NewMemRateLimiter(), nil, adapter.NewAdapterRegistry())
+	p := NewPipeline(newTestStorage(), oss.NewRateLimiter(oss.NewMemStorage(), 100, 100000, "token_bucket"), nil, adapter.NewAdapterRegistry())
 	p.Use(record("m1"))
 	p.Use(record("m2"))
 	handler := p.Apply(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -74,7 +76,7 @@ func TestPipelineOrder(t *testing.T) {
 }
 
 func TestCustomMiddlewareRunsAfterAuth(t *testing.T) {
-	p := NewPipeline(newTestStorage(), oss.NewMemRateLimiter(), nil, adapter.NewAdapterRegistry())
+	p := NewPipeline(newTestStorage(), oss.NewRateLimiter(oss.NewMemStorage(), 100, 100000, "token_bucket"), nil, adapter.NewAdapterRegistry())
 	var sawRC *RequestContext
 	p.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -100,7 +102,7 @@ func TestCustomMiddlewareRunsAfterAuth(t *testing.T) {
 }
 
 func TestAuthMiddlewareCreatesRequestContext(t *testing.T) {
-	p := NewPipeline(newTestStorage(), oss.NewMemRateLimiter(), nil, adapter.NewAdapterRegistry())
+	p := NewPipeline(newTestStorage(), oss.NewRateLimiter(oss.NewMemStorage(), 100, 100000, "token_bucket"), nil, adapter.NewAdapterRegistry())
 	var gotRC *RequestContext
 	p.Use(AuthMiddleware(p.storage))
 	handler := p.Apply(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -132,7 +134,7 @@ func TestAuthMiddlewareCreatesRequestContext(t *testing.T) {
 }
 
 func TestRateLimitAndRouteMiddlewaresPassThrough(t *testing.T) {
-	p := NewPipeline(newTestStorage(), oss.NewMemRateLimiter(), nil, adapter.NewAdapterRegistry())
+	p := NewPipeline(newTestStorage(), oss.NewRateLimiter(oss.NewMemStorage(), 100, 100000, "token_bucket"), nil, adapter.NewAdapterRegistry())
 	hit := false
 	handler := p.Build(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hit = true
