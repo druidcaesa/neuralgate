@@ -44,6 +44,12 @@ func (s *AdminServer) registerRoutes(r *gin.Engine) {
 		api.DELETE("/models/:id", s.deleteModelConfig)
 		api.POST("/models/:id/test", s.testModelConfig)
 
+		// 上游管理(负载均衡)
+		api.POST("/models/:id/upstreams", s.createUpstream)
+		api.GET("/models/:id/upstreams", s.listUpstreams)
+		api.PUT("/upstreams/:uid", s.updateUpstream)
+		api.DELETE("/upstreams/:uid", s.deleteUpstream)
+
 		// 审计日志
 		api.GET("/audit-logs", s.queryAuditLogs)
 		api.GET("/audit-logs/export", s.exportAuditLogs)

@@ -318,3 +318,29 @@ func TestAdminSystem(t *testing.T) {
 		t.Fatalf("body = %s; want version field", w.Body.String())
 	}
 }
+
+func TestAdminUpstreamCRUD(t *testing.T) {
+	s := oss.NewMemStorage()
+	now := time.Now()
+	_ = s.SaveModelConfig(&plugin.ModelConfig{ID: "m1", ModelName: "gpt-4", Provider: "openai", ProviderModel: "x", BaseURL: "https://x", APIKey: "sk", Enabled: true, CreatedAt: now, UpdatedAt: now})
+	router := NewAdminServer(s, zap.NewNop(), "oss").Router()
+
+	// 创建上游
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/models/m1/upstreams",
+		strings.NewReader(`{"base_url":"https://up1","api_key":"sk-up","weight":3}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("create status = %d; body=%s", w.Code, w.Body.String())
+	}
+	// 列表(api_key 脱敏不回显)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/models/m1/upstreams", nil))
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "up1") {
+		t.Fatalf("list status=%d body=%s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "sk-up") {
+		t.Fatalf("list leaks upstream api_key: %s", w.Body.String())
+	}
+}
