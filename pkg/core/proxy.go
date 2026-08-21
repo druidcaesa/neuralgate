@@ -137,6 +137,14 @@ func (p *ProxyCore) handleProxy(w http.ResponseWriter, r *http.Request, rc *Requ
 	cfg := rc.ModelConfig
 	adpt := rc.Adapter
 
+	// 负载均衡:选中上游覆盖默认 base_url/api_key(局部副本,不改存储)
+	if up := selectUpstream(rc.Upstreams); up != nil {
+		cfgCopy := *cfg
+		cfgCopy.BaseURL = up.BaseURL
+		cfgCopy.APIKey = up.APIKey
+		cfg = &cfgCopy
+	}
+
 	// 0. 审计:请求开始(携带基础元数据)
 	rc.IsStream = isStreamRequest(r)
 	if p.pipeline.auditor != nil {
@@ -477,6 +485,13 @@ func (p *ProxyCore) handlePassThrough(w http.ResponseWriter, r *http.Request, rc
 	if cfg == nil {
 		writeOpenAIError(w, http.StatusNotFound, "invalid_request_error", "model_not_found", "no enabled model configured")
 		return
+	}
+	// 负载均衡:透传端点也支持多上游(选中则覆盖 base_url/api_key,局部副本)
+	if up := selectUpstream(rc.Upstreams); up != nil {
+		cfgCopy := *cfg
+		cfgCopy.BaseURL = up.BaseURL
+		cfgCopy.APIKey = up.APIKey
+		cfg = &cfgCopy
 	}
 	body, err := io.ReadAll(r.Body)
 	if err != nil {

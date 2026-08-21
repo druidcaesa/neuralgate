@@ -29,6 +29,7 @@ type RequestContext struct {
 	APIKeyID         string               // API Key ID
 	ModelConfig      *plugin.ModelConfig  // 匹配到的模型配置
 	Adapter          adapter.ModelAdapter // 模型适配器实例
+	Upstreams        []plugin.Upstream    // 负载均衡上游列表(为空则用 ModelConfig 默认上游)
 	StartTime        time.Time            // 请求开始时间
 	ClientIP         string               // 客户端IP
 	RequestMethod    string               // HTTP方法
