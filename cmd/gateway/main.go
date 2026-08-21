@@ -110,7 +110,8 @@ func main() {
 	// 6. 初始化代理内核
 	pipeline := core.NewPipeline(storage, rateLimiter, auditor, registry)
 	proxyCore := core.NewProxyCore(pipeline, registry)
-	acceptor := core.NewAcceptor(proxyCore.Handler())
+	ipf := core.NewIPFilter(cfg.IPFilter.Mode, cfg.IPFilter.Whitelist, cfg.IPFilter.Blacklist)
+	acceptor := core.NewAcceptor(proxyCore.Handler(), ipf)
 
 	// 7. 初始化管理后台
 	adminServer := admin.NewAdminServer(storage, logger, edition, rateLimiter)
