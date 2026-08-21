@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"strings"
@@ -585,4 +586,43 @@ func writeOpenAIError(w http.ResponseWriter, status int, etype, code, message st
 	_ = json.NewEncoder(w).Encode(openAIErrorBody{
 		Error: openAIError{Message: message, Type: etype, Param: nil, Code: code},
 	})
+}
+
+// selectUpstream 按 weight 加权随机选一个 enabled 上游
+// 空或全禁用返回 nil(调用方回退 ModelConfig 默认上游);权重和为 0 时等概率
+func selectUpstream(ups []plugin.Upstream) *plugin.Upstream {
+	enabled := make([]plugin.Upstream, 0, len(ups))
+	total := 0
+	for _, u := range ups {
+		if u.Enabled {
+			enabled = append(enabled, u)
+			w := u.Weight
+			if w < 0 {
+				w = 0
+			}
+			total += w
+		}
+	}
+	if len(enabled) == 0 {
+		return nil
+	}
+	if len(enabled) == 1 {
+		return &enabled[0]
+	}
+	if total <= 0 {
+		// 权重全 0:等概率
+		return &enabled[rand.Intn(len(enabled))]
+	}
+	r := rand.Intn(total)
+	for i := range enabled {
+		w := enabled[i].Weight
+		if w < 0 {
+			w = 0
+		}
+		if r < w {
+			return &enabled[i]
+		}
+		r -= w
+	}
+	return &enabled[len(enabled)-1] // 兜底(浮点/边界)
 }
