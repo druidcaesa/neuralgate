@@ -31,6 +31,11 @@ func RateLimitMiddleware(rateLimiter plugin.RateLimitPlugin) Middleware {
 				writeOpenAIError(w, http.StatusInternalServerError, "api_error", "internal_error", "internal error")
 				return
 			}
+			// 健康检查不计入限流桶
+			if r.URL.Path == "/healthz" {
+				next.ServeHTTP(w, r)
+				return
+			}
 			model := ""
 			if rc.ModelConfig != nil {
 				model = rc.ModelConfig.ModelName
@@ -43,9 +48,10 @@ func RateLimitMiddleware(rateLimiter plugin.RateLimitPlugin) Middleware {
 			}
 			current, limit, resetAt := rateLimiter.Status(rc.TenantID, model)
 			if !allowed {
+				// X-RateLimit-Reset-Requests 为 unix 秒时间戳(OpenAI 规范)
 				w.Header().Set("X-RateLimit-Limit-Requests", strconv.FormatInt(limit, 10))
 				w.Header().Set("X-RateLimit-Remaining-Requests", "0")
-				w.Header().Set("X-RateLimit-Reset-Requests", "1s")
+				w.Header().Set("X-RateLimit-Reset-Requests", strconv.FormatInt(resetAt.Unix(), 10))
 				w.Header().Set("Retry-After", "1")
 				writeOpenAIError(w, http.StatusTooManyRequests, "rate_limit_exceeded", "rate_limit",
 					"rate limit exceeded (current="+strconv.FormatInt(current, 10)+", limit="+strconv.FormatInt(limit, 10)+", reset="+resetAt.Format(time.RFC3339)+")")
@@ -54,7 +60,7 @@ func RateLimitMiddleware(rateLimiter plugin.RateLimitPlugin) Middleware {
 			// 放行:附带剩余额度 Header(与 OpenAI 限流 Header 语义一致)
 			w.Header().Set("X-RateLimit-Limit-Requests", strconv.FormatInt(limit, 10))
 			w.Header().Set("X-RateLimit-Remaining-Requests", strconv.FormatInt(remaining, 10))
-			w.Header().Set("X-RateLimit-Reset-Requests", "1s")
+			w.Header().Set("X-RateLimit-Reset-Requests", strconv.FormatInt(resetAt.Unix(), 10))
 			next.ServeHTTP(w, r)
 		})
 	}

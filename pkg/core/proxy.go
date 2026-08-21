@@ -74,10 +74,20 @@ func (p *ProxyCore) proxyHandler(w http.ResponseWriter, r *http.Request) {
 
 // handleModelsList GET /v1/models：返回启用模型列表（本地响应）
 func (p *ProxyCore) handleModelsList(w http.ResponseWriter, rc *RequestContext) {
-	models, _, err := p.pipeline.storage.ListModelConfigs(1, 1000)
-	if err != nil {
-		writeOpenAIError(w, http.StatusInternalServerError, "api_error", "internal_error", "failed to list models")
-		return
+	// 翻页拉全量(存储层单页上限 100)
+	var models []*plugin.ModelConfig
+	page := 1
+	for {
+		pageModels, total, err := p.pipeline.storage.ListModelConfigs(page, 100)
+		if err != nil {
+			writeOpenAIError(w, http.StatusInternalServerError, "api_error", "internal_error", "failed to list models")
+			return
+		}
+		models = append(models, pageModels...)
+		if page*100 >= int(total) {
+			break
+		}
+		page++
 	}
 	type modelItem struct {
 		ID      string `json:"id"`
@@ -219,8 +229,11 @@ func (p *ProxyCore) handleProxy(w http.ResponseWriter, r *http.Request, rc *Requ
 	p.finalizeAudit(rc, prompt, completion, total)
 }
 
-// isStreamRequest 判断流式请求(请求体 stream=true 或 rc 已标记流式)
+// isStreamRequest 判断流式请求(请求体 stream=true 或 Accept: text/event-stream)
 func isStreamRequest(r *http.Request) bool {
+	if strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
+		return true
+	}
 	rc, ok := RequestContextFrom(r.Context())
 	if ok && rc.IsStream {
 		return true
