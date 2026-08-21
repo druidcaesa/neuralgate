@@ -540,6 +540,49 @@ func TestProxyQuotaUpdate(t *testing.T) {
 	}
 }
 
+func TestProxyRecordsTokensAfterForward(t *testing.T) {
+	upstream := newMockUpstream(t)
+	defer upstream.Close()
+
+	storage := oss.NewMemStorage()
+	now := time.Now()
+	_ = storage.SaveModelConfig(&plugin.ModelConfig{
+		ID: "m1", ModelName: "gpt-4", Provider: "openai", ProviderModel: "gpt-4o",
+		BaseURL: upstream.URL, APIKey: "sk", Enabled: true, CreatedAt: now, UpdatedAt: now,
+	})
+	_ = storage.SaveAPIKey(&plugin.APIKey{
+		ID: "k1", KeyHash: hashKey("ng-test"), KeyPrefix: "ng-test", Name: "t",
+		Status: plugin.APIKeyStatusActive, Quota: -1, CreatedAt: now, UpdatedAt: now,
+	})
+	// tpm=100 sliding_window;mock 上游返回 total_tokens=15
+	_ = storage.SaveRateLimitConfig(&plugin.RateLimitConfig{
+		ID: "g", RequestsPerSec: 1000, TokensPerMin: 100, Strategy: "sliding_window", Enabled: true,
+	})
+	registry := adapter.NewAdapterRegistry()
+	registry.Register(adapter.NewOpenAIAdapter())
+	limiter := oss.NewRateLimiter(storage, 1000, 1000000, "sliding_window")
+	_ = limiter.ReloadConfig()
+	auditor := oss.NewSimpleAuditor(storage)
+	pc := NewProxyCore(NewPipeline(storage, limiter, auditor, registry), registry)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
+		strings.NewReader(`{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Authorization", "Bearer ng-test")
+	rec := httptest.NewRecorder()
+	pc.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	// 回补后 TPM 用量应为 15
+	current, _, _ := limiter.Status("", "gpt-4") // 注:Status 返回 RPS;需另验 TPM
+	_ = current
+	// 通过再次 RecordTokens 触发 TPM 判断:已用 15,tpm=100,再补 90 → 105 超限
+	_ = limiter.RecordTokens("", "gpt-4", 90)
+	if a, _, _ := limiter.Allow("", "gpt-4", 0); a {
+		t.Fatal("TPM should be exhausted after 15+90 > 100")
+	}
+}
+
 func TestProxyUpstreamError(t *testing.T) {
 	// 上游返回 500 → 网关 502 upstream_error
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
