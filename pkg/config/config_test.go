@@ -169,6 +169,8 @@ func TestDefaultsFullyApplied(t *testing.T) {
 		{"Log.Level", cfg.Log.Level, d.Log.Level},
 		{"Log.Format", cfg.Log.Format, d.Log.Format},
 		{"Log.Output", cfg.Log.Output, d.Log.Output},
+		{"IPFilter.Mode", cfg.IPFilter.Mode, d.IPFilter.Mode},
+		{"TLS.MinVersion", cfg.TLS.MinVersion, d.TLS.MinVersion},
 	}
 	for _, c := range checks {
 		if c.got != c.want {

@@ -31,18 +31,27 @@ type Acceptor struct {
 }
 
 // NewAcceptor 创建接入层
-func NewAcceptor(handler http.Handler) *Acceptor {
+func NewAcceptor(handler http.Handler, ipf *IPFilter) *Acceptor {
 	return &Acceptor{
 		handler: handler,
 		connMgr: NewConnectionManager(),
 		tls:     NewTLSHandler(),
-		ipf:     NewIPFilter(),
+		ipf:     ipf,
 		parser:  NewProtocolParser(),
 	}
 }
 
-// Handler 返回经接入层包装的 handler（当前直接返回原始 handler）
-func (a *Acceptor) Handler() http.Handler { return a.handler }
+// Handler 返回经接入层包装的 handler(IP 黑白名单在最外层)
+func (a *Acceptor) Handler() http.Handler {
+	inner := a.handler
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if a.ipf != nil && !a.ipf.Allow(clientIP(r)) {
+			writeOpenAIError(w, http.StatusForbidden, "invalid_request_error", "forbidden", "access denied by IP filter")
+			return
+		}
+		inner.ServeHTTP(w, r)
+	})
+}
 
 // ConnectionManager 连接生命周期管理（当前空实现）
 type ConnectionManager struct{}
@@ -60,13 +69,67 @@ func NewTLSHandler() *TLSHandler { return &TLSHandler{} }
 // TLSConfig 返回 TLS 配置（当前返回 nil，表示不启用 TLS）
 func (h *TLSHandler) TLSConfig() *tls.Config { return nil }
 
-// IPFilter IP 黑白名单（当前默认全部放行）
-type IPFilter struct{}
+// IPFilter IP 黑白名单(CIDR 或单 IP)
+type IPFilter struct {
+	mode      string // disabled/whitelist/blacklist
+	whitelist []*net.IPNet
+	blacklist []*net.IPNet
+}
 
-func NewIPFilter() *IPFilter { return &IPFilter{} }
+// NewIPFilter 按 mode 与规则列表(CIDR 或单 IP)构造
+func NewIPFilter(mode string, whitelist, blacklist []string) *IPFilter {
+	return &IPFilter{
+		mode:      mode,
+		whitelist: parseCIDRs(whitelist),
+		blacklist: parseCIDRs(blacklist),
+	}
+}
 
-// Allow 是否允许该 IP 访问（当前恒为 true）
-func (f *IPFilter) Allow(ip string) bool { return true }
+// parseCIDRs 解析规则:CIDR 直接解析;单 IP 转为 /32(v4)或 /128(v6)
+func parseCIDRs(rules []string) []*net.IPNet {
+	var nets []*net.IPNet
+	for _, r := range rules {
+		if _, ipnet, err := net.ParseCIDR(r); err == nil {
+			nets = append(nets, ipnet)
+			continue
+		}
+		if ip := net.ParseIP(r); ip != nil {
+			bits := 32
+			if ip.To4() == nil {
+				bits = 128
+			}
+			nets = append(nets, &net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)})
+		}
+	}
+	return nets
+}
+
+func ipInNets(nets []*net.IPNet, ip net.IP) bool {
+	for _, n := range nets {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// Allow 按 mode 判定:disabled 全放行;whitelist 命中才放行;blacklist 命中则拒
+func (f *IPFilter) Allow(ipStr string) bool {
+	if f.mode == "disabled" || f.mode == "" {
+		return true
+	}
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return f.mode != "whitelist" // 白名单模式解析失败拒绝;黑名单模式放行
+	}
+	switch f.mode {
+	case "whitelist":
+		return ipInNets(f.whitelist, ip)
+	case "blacklist":
+		return !ipInNets(f.blacklist, ip)
+	}
+	return true
+}
 
 // ProtocolParser HTTP 协议解析（当前仅提供 SSE 判断）
 type ProtocolParser struct{}

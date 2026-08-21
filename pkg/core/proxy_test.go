@@ -386,13 +386,6 @@ func TestProxyCoreHealthz(t *testing.T) {
 	}
 }
 
-func TestIPFilterDefaultsAllow(t *testing.T) {
-	f := NewIPFilter()
-	if !f.Allow("192.168.1.1") {
-		t.Error("Allow() should default to true")
-	}
-}
-
 func TestProtocolParserIsSSE(t *testing.T) {
 	p := NewProtocolParser()
 	req := httptest.NewRequest("POST", "/v1/chat/completions", nil)

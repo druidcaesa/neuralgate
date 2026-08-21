@@ -31,6 +31,8 @@ type Config struct {
 	Export    ExportConfig    `yaml:"export"`
 	License   LicenseConfig   `yaml:"license"`
 	Log       LogConfig       `yaml:"log"`
+	IPFilter  IPFilterConfig  `yaml:"ip_filter"`
+	TLS       TLSConfig       `yaml:"tls"`
 }
 
 type ServerConfig struct {
@@ -84,6 +86,21 @@ type LogConfig struct {
 	Output string `yaml:"output"`
 }
 
+// IPFilterConfig IP 黑白名单配置
+type IPFilterConfig struct {
+	Mode      string   `yaml:"mode"` // disabled/whitelist/blacklist
+	Whitelist []string `yaml:"whitelist"`
+	Blacklist []string `yaml:"blacklist"`
+}
+
+// TLSConfig 代理服务 TLS 配置
+type TLSConfig struct {
+	Enabled    bool   `yaml:"enabled"`
+	CertFile   string `yaml:"cert_file"`
+	KeyFile    string `yaml:"key_file"`
+	MinVersion string `yaml:"min_version"` // "1.2"/"1.3"
+}
+
 // Default 返回默认配置
 func Default() *Config {
 	return &Config{
@@ -127,6 +144,8 @@ func Default() *Config {
 			Format: "json",
 			Output: "stdout",
 		},
+		IPFilter: IPFilterConfig{Mode: "disabled"},
+		TLS:      TLSConfig{MinVersion: "1.2"},
 	}
 }
 
@@ -155,6 +174,12 @@ func (c *Config) applyDefaults() {
 	c.Export.apply(d.Export)
 	c.License.apply(d.License)
 	c.Log.apply(d.Log)
+	if c.IPFilter.Mode == "" {
+		c.IPFilter.Mode = d.IPFilter.Mode
+	}
+	if c.TLS.MinVersion == "" {
+		c.TLS.MinVersion = d.TLS.MinVersion
+	}
 }
 
 // apply 零值字段回填默认值（bool 字段不处理）
