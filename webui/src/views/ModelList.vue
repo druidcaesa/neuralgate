@@ -51,13 +51,18 @@
       <el-form :model="modelForm" label-width="120px">
         <el-form-item label="名称" required><el-input v-model="modelForm.name" /></el-form-item>
         <el-form-item label="供应商" required>
-          <el-select v-model="modelForm.provider">
-            <el-option label="openai" value="openai" /><el-option label="deepseek" value="deepseek" />
-            <el-option label="tongyi" value="tongyi" /><el-option label="zhipu" value="zhipu" />
+          <el-select v-model="modelForm.provider" allow-create filterable placeholder="选择或输入自定义供应商" @change="onProviderChange">
+            <el-option label="openai" value="openai" />
+            <el-option label="deepseek" value="deepseek" />
+            <el-option label="qwen（通义千问）" value="qwen" />
+            <el-option label="zhipu" value="zhipu" />
           </el-select>
         </el-form-item>
         <el-form-item label="上游模型" required><el-input v-model="modelForm.provider_model" /></el-form-item>
-        <el-form-item label="上游地址" required><el-input v-model="modelForm.base_url" placeholder="https://api.openai.com" /></el-form-item>
+        <el-form-item label="上游地址" required>
+          <el-input v-model="modelForm.base_url" placeholder="https://api.openai.com" :disabled="isBuiltinProvider(modelForm.provider)" />
+          <el-text v-if="isBuiltinProvider(modelForm.provider)" type="info" size="small">云服务商地址已锁定</el-text>
+        </el-form-item>
         <el-form-item label="API Key" required><el-input v-model="modelForm.api_key" show-password /></el-form-item>
         <el-form-item label="超时(秒)"><el-input-number v-model="modelForm.timeout" :min="1" :max="300" /></el-form-item>
         <el-form-item label="重试次数"><el-input-number v-model="modelForm.max_retries" :min="0" :max="5" /></el-form-item>
@@ -108,6 +113,28 @@ const modelForm = reactive<ModelCreateRequest>({
   name: '', provider: 'openai', provider_model: '', base_url: '', api_key: '',
   timeout: 60, max_retries: 2, weight: 1, enabled: true
 })
+
+// 内置云服务商预设上游地址(适配 base_url + /v1/chat/completions 拼接)
+const BUILTIN_BASE_URLS: Record<string, string> = {
+  openai: 'https://api.openai.com',
+  deepseek: 'https://api.deepseek.com',
+  qwen: 'https://dashscope.aliyuncs.com/compatible-mode',
+  zhipu: 'https://open.bigmodel.cn/api/paas/v4'
+}
+
+// 是否内置云服务商(内置则锁定 base_url)
+function isBuiltinProvider(p: string): boolean {
+  return p in BUILTIN_BASE_URLS
+}
+
+// 供应商变更:内置 → 自动填预设地址;自定义 → 清空地址让用户输入
+function onProviderChange(p: string) {
+  if (p in BUILTIN_BASE_URLS) {
+    modelForm.base_url = BUILTIN_BASE_URLS[p]
+  } else {
+    modelForm.base_url = ''
+  }
+}
 const upstreamForm = reactive<UpstreamRequest>({ base_url: '', api_key: '', weight: 1, enabled: true })
 
 async function load() {
@@ -123,7 +150,7 @@ async function load() {
 
 function openCreate() {
   editing.value = null
-  Object.assign(modelForm, { name: '', provider: 'openai', provider_model: '', base_url: '', api_key: '', timeout: 60, max_retries: 2, weight: 1, enabled: true })
+  Object.assign(modelForm, { name: '', provider: 'openai', provider_model: '', base_url: BUILTIN_BASE_URLS.openai, api_key: '', timeout: 60, max_retries: 2, weight: 1, enabled: true })
   modelDialog.value = true
 }
 
