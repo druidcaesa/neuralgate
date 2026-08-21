@@ -797,3 +797,49 @@ func TestProxyFallbackToModelConfigWhenNoUpstream(t *testing.T) {
 		t.Fatalf("no-upstream fallback status = %d; body=%s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestProxyPassThroughMethodNotAllowed(t *testing.T) {
+	storage := oss.NewMemStorage()
+	now := time.Now()
+	_ = storage.SaveModelConfig(&plugin.ModelConfig{
+		ID: "m1", ModelName: "gpt-4", Provider: "openai", ProviderModel: "gpt-4o",
+		BaseURL: "http://unused", APIKey: "sk", Enabled: true, CreatedAt: now, UpdatedAt: now,
+	})
+	_ = storage.SaveAPIKey(&plugin.APIKey{ID: "k1", KeyHash: hashKey("ng-test"), KeyPrefix: "ng-test", Name: "t", Status: plugin.APIKeyStatusActive, Quota: -1, CreatedAt: now, UpdatedAt: now})
+	registry := adapter.NewAdapterRegistry()
+	registry.Register(adapter.NewOpenAIAdapter())
+	limiter := oss.NewRateLimiter(storage, 1000, 1000000, "token_bucket")
+	_ = limiter.ReloadConfig()
+	pc := NewProxyCore(NewPipeline(storage, limiter, oss.NewSimpleAuditor(storage), registry), registry)
+
+	// /v1/moderations 只允许 POST,用 DELETE → 405
+	req := httptest.NewRequest(http.MethodDelete, "/v1/moderations", nil)
+	req.Header.Set("Authorization", "Bearer ng-test")
+	rec := httptest.NewRecorder()
+	pc.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("DELETE /v1/moderations status = %d; want 405, body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "method_not_allowed") {
+		t.Fatalf("body = %s; want method_not_allowed", rec.Body.String())
+	}
+}
+
+func TestProxyUnknownEndpoint404(t *testing.T) {
+	storage := oss.NewMemStorage()
+	now := time.Now()
+	_ = storage.SaveAPIKey(&plugin.APIKey{ID: "k1", KeyHash: hashKey("ng-test"), KeyPrefix: "ng-test", Name: "t", Status: plugin.APIKeyStatusActive, Quota: -1, CreatedAt: now, UpdatedAt: now})
+	registry := adapter.NewAdapterRegistry()
+	registry.Register(adapter.NewOpenAIAdapter())
+	limiter := oss.NewRateLimiter(storage, 1000, 1000000, "token_bucket")
+	_ = limiter.ReloadConfig()
+	pc := NewProxyCore(NewPipeline(storage, limiter, oss.NewSimpleAuditor(storage), registry), registry)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/unknown/path", nil)
+	req.Header.Set("Authorization", "Bearer ng-test")
+	rec := httptest.NewRecorder()
+	pc.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown endpoint status = %d; want 404", rec.Code)
+	}
+}

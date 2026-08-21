@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"slices"
 
 	"github.com/druidcaesa/neuralgate/pkg/adapter"
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
@@ -36,6 +37,13 @@ func RouteMatchMiddleware(storage plugin.StoragePlugin, registry *adapter.Adapte
 
 			// GET 请求(如 /v1/models)无 body,直接放行,不做模型解析
 			if r.Method == http.MethodGet {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// 透传端点(/v1/completions、/v1/moderations、/v1/audio/*、/v1/images/*、/v1/files*)
+			// body 不含 model 路由语义(原样转发),跳过解析;端点/方法校验由代理内核负责
+			if _, ok := matchPassthrough(r.URL.Path); ok {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -88,13 +96,7 @@ func RouteMatchMiddleware(storage plugin.StoragePlugin, registry *adapter.Adapte
 
 			// Key 模型权限校验(allowed_models 非空且不含 → 403)
 			if key, err := storage.GetAPIKeyByID(rc.APIKeyID); err == nil && len(key.AllowedModels) > 0 {
-				allowed := false
-				for _, m := range key.AllowedModels {
-					if m == config.ModelName {
-						allowed = true
-						break
-					}
-				}
+				allowed := slices.Contains(key.AllowedModels, config.ModelName)
 				if !allowed {
 					writeOpenAIError(w, http.StatusForbidden, "invalid_request_error", "model_access_denied", "model not allowed for this API key")
 					return
