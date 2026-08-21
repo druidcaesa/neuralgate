@@ -173,7 +173,6 @@ type StoragePlugin interface {
 	GetAPIKey(keyHash string) (*APIKey, error)
 	GetAPIKeyByID(id string) (*APIKey, error) // 按主键查询(管理后台用)
 	SaveAPIKey(key *APIKey) error
-	UpdateAPIKeyQuota(keyID string, usedQuota int64) error
 	IncrementAPIKeyUsage(keyID string, delta int64) error // 原子累加已用额度(并发安全)
 	ListAPIKeys(tenantID string, page, size int) ([]*APIKey, int64, error)
 	DeleteAPIKey(keyID string) error
@@ -226,8 +225,8 @@ type AuditPipeline interface {
 	// 标记请求结束，触发完整日志组装
 	Finalize(requestID string, meta *AuditMeta) error
 
-	// 标记客户端断连
-	MarkDisconnect(requestID string, reason string) error
+	// 标记客户端断连(meta 携带断连时已收集的 tokens/duration)
+	MarkDisconnect(requestID string, reason string, meta *AuditMeta) error
 
 	// 关闭管道，flush剩余数据
 	Shutdown() error

@@ -74,18 +74,6 @@ func (s *MemStorage) SaveAPIKey(key *plugin.APIKey) error {
 	return nil
 }
 
-func (s *MemStorage) UpdateAPIKeyQuota(keyID string, usedQuota int64) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, k := range s.apiKeys {
-		if k.ID == keyID {
-			k.UsedQuota = usedQuota
-			return nil
-		}
-	}
-	return ErrNotFound
-}
-
 // IncrementAPIKeyUsage 原子累加已用额度(写锁内原地修改,并发安全)
 func (s *MemStorage) IncrementAPIKeyUsage(keyID string, delta int64) error {
 	s.mu.Lock()

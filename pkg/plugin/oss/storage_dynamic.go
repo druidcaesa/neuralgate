@@ -45,9 +45,6 @@ func (d *dynamicStorage) GetAPIKeyByID(id string) (*plugin.APIKey, error) {
 	return d.impl.GetAPIKeyByID(id)
 }
 func (d *dynamicStorage) SaveAPIKey(key *plugin.APIKey) error { return d.impl.SaveAPIKey(key) }
-func (d *dynamicStorage) UpdateAPIKeyQuota(keyID string, usedQuota int64) error {
-	return d.impl.UpdateAPIKeyQuota(keyID, usedQuota)
-}
 func (d *dynamicStorage) IncrementAPIKeyUsage(keyID string, delta int64) error {
 	return d.impl.IncrementAPIKeyUsage(keyID, delta)
 }

@@ -97,8 +97,9 @@ func (a *SimpleAuditor) Finalize(requestID string, meta *plugin.AuditMeta) error
 	return nil
 }
 
-// MarkDisconnect 标记客户端断连,保存已收集内容;已 Finalize 的记录忽略(正常结束竞态)
-func (a *SimpleAuditor) MarkDisconnect(requestID string, reason string) error {
+// MarkDisconnect 标记客户端断连,保存已收集内容;meta 非 nil 时补齐 tokens/duration;
+// 已 Finalize 的记录忽略(正常结束竞态)
+func (a *SimpleAuditor) MarkDisconnect(requestID string, reason string, meta *plugin.AuditMeta) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	log, ok := a.pending[requestID]
@@ -107,6 +108,13 @@ func (a *SimpleAuditor) MarkDisconnect(requestID string, reason string) error {
 	}
 	log.Disconnected = true
 	log.DisconnectReason = reason
+	if meta != nil {
+		log.ResponseStatus = meta.ResponseStatus
+		log.PromptTokens = meta.PromptTokens
+		log.CompletionTokens = meta.CompletionTokens
+		log.TotalTokens = meta.TotalTokens
+		log.Duration = meta.Duration
+	}
 	if err := a.storage.SaveAuditLog(log); err != nil {
 		return err
 	}

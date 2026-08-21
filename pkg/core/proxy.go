@@ -254,7 +254,7 @@ func (p *ProxyCore) handleStreaming(w http.ResponseWriter, r *http.Request, rc *
 	done := make(chan struct{})
 	defer close(done)
 	disconnect := NewDisconnectHandler(p.pipeline.auditor)
-	go disconnect.Watch(r.Context(), rc.RequestID, done)
+	go disconnect.Watch(r.Context(), rc.RequestID, done, rc)
 
 	scanner := bufio.NewScanner(upstreamResp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -293,7 +293,13 @@ func (p *ProxyCore) handleStreaming(w http.ResponseWriter, r *http.Request, rc *
 	}
 	// 上游读取错误或单行超长(ErrTooLong):先标记断连落库(Disconnected=true),再 Finalize 防重复
 	if err := scanner.Err(); err != nil && p.pipeline.auditor != nil {
-		_ = p.pipeline.auditor.MarkDisconnect(rc.RequestID, "upstream read error: "+err.Error())
+		_ = p.pipeline.auditor.MarkDisconnect(rc.RequestID, "upstream read error: "+err.Error(), &plugin.AuditMeta{
+			ResponseStatus:   rc.ResponseStatus,
+			PromptTokens:     rc.PromptTokens,
+			CompletionTokens: rc.CompletionTokens,
+			TotalTokens:      rc.TotalTokens,
+			Duration:         time.Since(rc.StartTime).Milliseconds(),
+		})
 	}
 	rc.EndTime = time.Now()
 	p.updateQuota(rc)

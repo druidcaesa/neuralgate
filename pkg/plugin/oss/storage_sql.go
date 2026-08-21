@@ -160,11 +160,6 @@ func (s *SQLStorage) SaveAPIKey(key *plugin.APIKey) error {
 	return err
 }
 
-func (s *SQLStorage) UpdateAPIKeyQuota(keyID string, usedQuota int64) error {
-	_, err := s.db.Exec("UPDATE api_keys SET used_quota = ? WHERE id = ? AND deleted = 0", usedQuota, keyID)
-	return err
-}
-
 // IncrementAPIKeyUsage 原子累加已用额度(SQL 层 used_quota = used_quota + ? 单语句,并发安全)
 func (s *SQLStorage) IncrementAPIKeyUsage(keyID string, delta int64) error {
 	res, err := s.db.Exec("UPDATE api_keys SET used_quota = used_quota + ? WHERE id = ? AND deleted = 0", delta, keyID)
