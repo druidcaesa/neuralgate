@@ -32,11 +32,11 @@ type modelConfigRequest struct {
 	ProviderModel string            `json:"provider_model" binding:"required,min=1,max=128"`
 	BaseURL       string            `json:"base_url" binding:"required"`
 	APIKey        string            `json:"api_key" binding:"omitempty,min=1,max=256"` // 创建必填;更新留空=保留原值
-	Timeout       int               `json:"timeout"`        // 1-300,默认 60
-	MaxRetries    int               `json:"max_retries"`    // 0-5,默认 2
-	RetryInterval int               `json:"retry_interval"` // 1-30,默认 3
-	Weight        int               `json:"weight"`         // 1-100,默认 1
-	Enabled       *bool             `json:"enabled"`        // 默认 true
+	Timeout       int               `json:"timeout"`                                   // 1-300,默认 60
+	MaxRetries    int               `json:"max_retries"`                               // 0-5,默认 2
+	RetryInterval int               `json:"retry_interval"`                            // 1-30,默认 3
+	Weight        int               `json:"weight"`                                    // 1-100,默认 1
+	Enabled       *bool             `json:"enabled"`                                   // 默认 true
 	Tags          map[string]string `json:"tags"`
 }
 
