@@ -46,3 +46,14 @@ log:
   level: info                 # debug/info/warn/error
   format: json                # json/console
   output: stdout              # stdout/file path
+
+tls:                          # 代理服务 TLS(管理后台 8081 不启用)
+  enabled: false
+  cert_file: ""
+  key_file: ""
+  min_version: "1.2"          # 1.2/1.3
+
+ip_filter:                    # IP 黑白名单
+  mode: disabled              # disabled/whitelist/blacklist
+  whitelist: []               # CIDR 或单 IP,如 ["10.0.0.0/8", "192.168.1.100"]
+  blacklist: []

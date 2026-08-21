@@ -68,7 +68,16 @@ func (p *ProxyCore) proxyHandler(w http.ResponseWriter, r *http.Request) {
 	case r.URL.Path == "/v1/chat/completions" || r.URL.Path == "/v1/embeddings":
 		p.handleProxy(w, r, rc)
 	default:
-		// 透传端点（completions/moderations/images/audio/files 等）
+		// 透传端点:按 PRD 8.5 精确路由 + 方法校验
+		methods, ok := matchPassthrough(r.URL.Path)
+		if !ok {
+			writeOpenAIError(w, http.StatusNotFound, "invalid_request_error", "model_not_found", "unknown endpoint: "+r.URL.Path)
+			return
+		}
+		if !methodAllowed(methods, r.Method) {
+			writeOpenAIError(w, http.StatusMethodNotAllowed, "invalid_request_error", "method_not_allowed", "method "+r.Method+" not allowed for "+r.URL.Path)
+			return
+		}
 		p.handlePassThrough(w, r, rc)
 	}
 }
@@ -640,4 +649,42 @@ func selectUpstream(ups []plugin.Upstream) *plugin.Upstream {
 		r -= w
 	}
 	return &enabled[len(enabled)-1] // 兜底(浮点/边界)
+}
+
+// passthroughEndpoints 透传端点 → 允许的 HTTP 方法集合(PRD 8.5)
+var passthroughEndpoints = map[string][]string{
+	"/v1/completions":          {http.MethodPost},
+	"/v1/moderations":          {http.MethodPost},
+	"/v1/images/generations":   {http.MethodPost},
+	"/v1/images/edits":         {http.MethodPost},
+	"/v1/images/variations":    {http.MethodPost},
+	"/v1/audio/speech":         {http.MethodPost},
+	"/v1/audio/transcriptions": {http.MethodPost},
+	"/v1/audio/translations":   {http.MethodPost},
+	"/v1/files":                {http.MethodGet, http.MethodPost},
+}
+
+// matchPassthrough 判断路径是否为透传端点,返回允许方法与是否命中
+// 处理带路径参数的 files 子路径(/v1/files/{id}、/v1/files/{id}/content)
+func matchPassthrough(path string) (methods []string, ok bool) {
+	path = strings.TrimRight(path, "/")
+	if m, exist := passthroughEndpoints[path]; exist {
+		return m, true
+	}
+	if strings.HasPrefix(path, "/v1/files/") {
+		if strings.HasSuffix(path, "/content") {
+			return []string{http.MethodGet}, true
+		}
+		return []string{http.MethodGet, http.MethodDelete}, true
+	}
+	return nil, false
+}
+
+func methodAllowed(methods []string, m string) bool {
+	for _, x := range methods {
+		if x == m {
+			return true
+		}
+	}
+	return false
 }
