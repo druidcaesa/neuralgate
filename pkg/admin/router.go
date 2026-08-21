@@ -57,5 +57,11 @@ func (s *AdminServer) registerRoutes(r *gin.Engine) {
 
 		// 系统信息
 		api.GET("/system", s.systemInfo)
+
+		// 限流配置管理
+		api.POST("/rate-limits", s.createRateLimit)
+		api.GET("/rate-limits", s.listRateLimits)
+		api.PUT("/rate-limits/:id", s.updateRateLimit)
+		api.DELETE("/rate-limits/:id", s.deleteRateLimit)
 	}
 }

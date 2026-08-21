@@ -29,7 +29,7 @@ import (
 )
 
 func TestHealthz(t *testing.T) {
-	s := NewAdminServer(oss.NewMemStorage(), zap.NewNop(), "oss")
+	s := NewAdminServer(oss.NewMemStorage(), zap.NewNop(), "oss", oss.NewRateLimiter(oss.NewMemStorage(), 100, 100000, "token_bucket"))
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/healthz", nil)
 	s.Router().ServeHTTP(rec, req)
@@ -39,7 +39,7 @@ func TestHealthz(t *testing.T) {
 }
 
 func TestAPIPing(t *testing.T) {
-	s := NewAdminServer(oss.NewMemStorage(), zap.NewNop(), "oss")
+	s := NewAdminServer(oss.NewMemStorage(), zap.NewNop(), "oss", oss.NewRateLimiter(oss.NewMemStorage(), 100, 100000, "token_bucket"))
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/ping", nil)
 	s.Router().ServeHTTP(rec, req)
@@ -49,7 +49,7 @@ func TestAPIPing(t *testing.T) {
 }
 
 func TestCORSMiddleware(t *testing.T) {
-	s := NewAdminServer(oss.NewMemStorage(), zap.NewNop(), "oss")
+	s := NewAdminServer(oss.NewMemStorage(), zap.NewNop(), "oss", oss.NewRateLimiter(oss.NewMemStorage(), 100, 100000, "token_bucket"))
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodOptions, "/healthz", nil)
 	s.Router().ServeHTTP(rec, req)
@@ -60,7 +60,7 @@ func TestCORSMiddleware(t *testing.T) {
 
 func TestAdminAPIKeyCRUD(t *testing.T) {
 	s := oss.NewMemStorage()
-	router := NewAdminServer(s, nil, "oss").Router()
+	router := NewAdminServer(s, nil, "oss", oss.NewRateLimiter(s, 100, 100000, "token_bucket")).Router()
 
 	// 创建
 	w := httptest.NewRecorder()
@@ -136,7 +136,7 @@ func TestAdminAPIKeyCRUD(t *testing.T) {
 // TestAdminAPIKeyDefaultQuota 创建 Key 不传 quota 时应默认 -1(无限,PRD 3.2)
 func TestAdminAPIKeyDefaultQuota(t *testing.T) {
 	s := oss.NewMemStorage()
-	router := NewAdminServer(s, nil, "oss").Router()
+	router := NewAdminServer(s, nil, "oss", oss.NewRateLimiter(s, 100, 100000, "token_bucket")).Router()
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/api-keys",
@@ -169,7 +169,7 @@ func TestAdminAPIKeyDefaultQuota(t *testing.T) {
 
 func TestAdminModelConfigCRUD(t *testing.T) {
 	s := oss.NewMemStorage()
-	router := NewAdminServer(s, nil, "oss").Router()
+	router := NewAdminServer(s, nil, "oss", oss.NewRateLimiter(s, 100, 100000, "token_bucket")).Router()
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/models",
@@ -210,7 +210,7 @@ func TestAdminModelConfigCRUD(t *testing.T) {
 
 func TestAdminModelConfigRenameConflict(t *testing.T) {
 	s := oss.NewMemStorage()
-	router := NewAdminServer(s, nil, "oss").Router()
+	router := NewAdminServer(s, nil, "oss", oss.NewRateLimiter(s, 100, 100000, "token_bucket")).Router()
 	postModel := func(name string) (string, string) {
 		w := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodPost, "/api/models",
@@ -262,7 +262,7 @@ func TestAdminAuditExportAll(t *testing.T) {
 			CreatedAt: now.Add(time.Duration(i) * time.Second),
 		})
 	}
-	router := NewAdminServer(s, nil, "oss").Router()
+	router := NewAdminServer(s, nil, "oss", oss.NewRateLimiter(s, 100, 100000, "token_bucket")).Router()
 
 	// JSON 导出应拉全量(>100 条不受单页上限截断)
 	w := httptest.NewRecorder()
@@ -290,7 +290,7 @@ func TestAdminAuditQuery(t *testing.T) {
 		ID: "a1", RequestID: "r1", ModelName: "gpt-4", ResponseStatus: 200,
 		TotalTokens: 15, CreatedAt: now,
 	})
-	router := NewAdminServer(s, nil, "oss").Router()
+	router := NewAdminServer(s, nil, "oss", oss.NewRateLimiter(s, 100, 100000, "token_bucket")).Router()
 
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/audit-logs?model_name=gpt-4&page=1&size=10", nil))
@@ -308,7 +308,7 @@ func TestAdminAuditQuery(t *testing.T) {
 
 func TestAdminSystem(t *testing.T) {
 	s := oss.NewMemStorage()
-	router := NewAdminServer(s, nil, "oss").Router()
+	router := NewAdminServer(s, nil, "oss", oss.NewRateLimiter(s, 100, 100000, "token_bucket")).Router()
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/system", nil))
 	if w.Code != http.StatusOK {
@@ -323,7 +323,7 @@ func TestAdminUpstreamCRUD(t *testing.T) {
 	s := oss.NewMemStorage()
 	now := time.Now()
 	_ = s.SaveModelConfig(&plugin.ModelConfig{ID: "m1", ModelName: "gpt-4", Provider: "openai", ProviderModel: "x", BaseURL: "https://x", APIKey: "sk", Enabled: true, CreatedAt: now, UpdatedAt: now})
-	router := NewAdminServer(s, zap.NewNop(), "oss").Router()
+	router := NewAdminServer(s, zap.NewNop(), "oss", oss.NewRateLimiter(s, 100, 100000, "token_bucket")).Router()
 
 	// 创建上游
 	w := httptest.NewRecorder()
@@ -342,5 +342,36 @@ func TestAdminUpstreamCRUD(t *testing.T) {
 	}
 	if strings.Contains(w.Body.String(), "sk-up") {
 		t.Fatalf("list leaks upstream api_key: %s", w.Body.String())
+	}
+}
+
+func TestAdminRateLimitCRUD(t *testing.T) {
+	s := oss.NewMemStorage()
+	rl := oss.NewRateLimiter(s, 100, 100000, "token_bucket")
+	router := NewAdminServer(s, zap.NewNop(), "oss", rl).Router()
+
+	// 创建
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/rate-limits",
+		strings.NewReader(`{"tenant_id":"","model_name":"gpt-4","requests_per_sec":20,"tokens_per_min":50000,"strategy":"token_bucket"}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("create status = %d; body=%s", w.Code, w.Body.String())
+	}
+	// 列表
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/rate-limits", nil))
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "gpt-4") {
+		t.Fatalf("list status=%d body=%s", w.Code, w.Body.String())
+	}
+	// 校验:非法 strategy → 400
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/rate-limits",
+		strings.NewReader(`{"requests_per_sec":10,"tokens_per_min":1000,"strategy":"bad"}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("bad strategy status = %d; want 400", w.Code)
 	}
 }

@@ -24,17 +24,18 @@ import (
 
 // AdminServer 管理后台（Gin）：低并发短连接，提供 CRUD 接口、配置管理、日志查询、授权校验
 type AdminServer struct {
-	storage   plugin.StoragePlugin
-	logger    *zap.Logger
-	engine    *gin.Engine
-	edition   string
-	startedAt time.Time
+	storage     plugin.StoragePlugin
+	rateLimiter plugin.RateLimitPlugin
+	logger      *zap.Logger
+	engine      *gin.Engine
+	edition     string
+	startedAt   time.Time
 }
 
 // NewAdminServer 创建管理后台
-func NewAdminServer(storage plugin.StoragePlugin, logger *zap.Logger, edition string) *AdminServer {
+func NewAdminServer(storage plugin.StoragePlugin, logger *zap.Logger, edition string, rateLimiter plugin.RateLimitPlugin) *AdminServer {
 	gin.SetMode(gin.ReleaseMode)
-	s := &AdminServer{storage: storage, logger: logger, edition: edition, startedAt: time.Now()}
+	s := &AdminServer{storage: storage, rateLimiter: rateLimiter, logger: logger, edition: edition, startedAt: time.Now()}
 	s.engine = gin.New()
 	s.engine.Use(gin.Recovery(), CORS())
 	s.registerRoutes(s.engine)
