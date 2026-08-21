@@ -103,7 +103,7 @@ func main() {
 	// 5. 初始化模型适配器注册中心
 	registry := adapter.NewAdapterRegistry()
 	registry.Register(adapter.NewOpenAIAdapter())
-	registry.Register(adapter.NewTongyiAdapter())
+	registry.Register(adapter.NewQwenAdapter())
 	registry.Register(adapter.NewZhipuAdapter())
 	registry.Register(adapter.NewDeepSeekAdapter())
 

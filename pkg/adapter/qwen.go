@@ -21,15 +21,15 @@ import (
 	"net/http"
 )
 
-// TongyiAdapter 通义千问适配器（DashScope 协议，需转换）
-type TongyiAdapter struct{}
+// QwenAdapter Qwen(通义千问)适配器（DashScope 协议，需转换）
+type QwenAdapter struct{}
 
-// NewTongyiAdapter 创建通义千问适配器
-func NewTongyiAdapter() *TongyiAdapter { return &TongyiAdapter{} }
+// NewQwenAdapter 创建通义千问适配器
+func NewQwenAdapter() *QwenAdapter { return &QwenAdapter{} }
 
-func (a *TongyiAdapter) Name() string { return "tongyi" }
+func (a *QwenAdapter) Name() string { return "qwen" }
 
-func (a *TongyiAdapter) SupportsNativeProxy() bool { return false }
+func (a *QwenAdapter) SupportsNativeProxy() bool { return false }
 
 // dashScopeMessage DashScope 消息
 type dashScopeMessage struct {
@@ -45,7 +45,7 @@ type dashScopeRequest struct {
 }
 
 // TransformRequest OpenAI 格式 → DashScope 格式
-func (a *TongyiAdapter) TransformRequest(req *UnifiedRequest, rawBody []byte) (*http.Request, error) {
+func (a *QwenAdapter) TransformRequest(req *UnifiedRequest, rawBody []byte) (*http.Request, error) {
 	dash := dashScopeRequest{
 		Model: req.Model,
 		Input: map[string]any{"messages": toDashMessages(req.Messages)},
@@ -135,7 +135,7 @@ type dashScopeResponse struct {
 }
 
 // TransformResponse DashScope → OpenAI 格式（非流式）
-func (a *TongyiAdapter) TransformResponse(resp *http.Response) (*UnifiedResponse, error) {
+func (a *QwenAdapter) TransformResponse(resp *http.Response) (*UnifiedResponse, error) {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
@@ -167,7 +167,7 @@ func (a *TongyiAdapter) TransformResponse(resp *http.Response) (*UnifiedResponse
 }
 
 // TransformStreamChunk DashScope 流式分片 → OpenAI 格式
-func (a *TongyiAdapter) TransformStreamChunk(chunk []byte) (*UnifiedSSEChunk, error) {
+func (a *QwenAdapter) TransformStreamChunk(chunk []byte) (*UnifiedSSEChunk, error) {
 	var ds struct {
 		Output struct {
 			Choices []struct {
@@ -201,7 +201,7 @@ func (a *TongyiAdapter) TransformStreamChunk(chunk []byte) (*UnifiedSSEChunk, er
 }
 
 // ParseTokenUsage 从已读 body 解析 DashScope 用量
-func (a *TongyiAdapter) ParseTokenUsage(resp *http.Response) (int, int, int) {
+func (a *QwenAdapter) ParseTokenUsage(resp *http.Response) (int, int, int) {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return 0, 0, 0
@@ -215,10 +215,10 @@ func (a *TongyiAdapter) ParseTokenUsage(resp *http.Response) (int, int, int) {
 }
 
 // ParseStreamUsage DashScope 流式分片暂无用量，返回 0
-func (a *TongyiAdapter) ParseStreamUsage(chunk []byte) (int, int, int) { return 0, 0, 0 }
+func (a *QwenAdapter) ParseStreamUsage(chunk []byte) (int, int, int) { return 0, 0, 0 }
 
 // ParseError DashScope 错误格式：{"code":"...","message":"..."}
-func (a *TongyiAdapter) ParseError(resp *http.Response) (int, string) {
+func (a *QwenAdapter) ParseError(resp *http.Response) (int, string) {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return 0, ""

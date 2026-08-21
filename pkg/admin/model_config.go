@@ -28,7 +28,7 @@ import (
 // modelConfigRequest 模型配置请求体(字段校验按 PRD 3.1)
 type modelConfigRequest struct {
 	Name          string            `json:"name" binding:"required,min=1,max=64"`
-	Provider      string            `json:"provider" binding:"required,oneof=openai tongyi zhipu deepseek"`
+	Provider      string            `json:"provider" binding:"required,min=1,max=32"` // 内置 openai/qwen/zhipu/deepseek;自定义任意(走 OpenAI 兼容透传)
 	ProviderModel string            `json:"provider_model" binding:"required,min=1,max=128"`
 	BaseURL       string            `json:"base_url" binding:"required"`
 	APIKey        string            `json:"api_key" binding:"omitempty,min=1,max=256"` // 创建必填;更新留空=保留原值

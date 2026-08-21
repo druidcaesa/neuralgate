@@ -103,11 +103,10 @@ func RouteMatchMiddleware(storage plugin.StoragePlugin, registry *adapter.Adapte
 				}
 			}
 
-			// 获取适配器
+			// 获取适配器:内置供应商用对应转换适配器;未注册的自定义供应商回退 OpenAI 适配器(OpenAI 兼容透传)
 			adpt, err := registry.Get(config.Provider)
 			if err != nil {
-				writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "unsupported_model", "unsupported provider: "+config.Provider)
-				return
+				adpt = adapter.NewOpenAIAdapter()
 			}
 			rc.Adapter = adpt
 
