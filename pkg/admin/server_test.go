@@ -17,8 +17,10 @@ package admin
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -373,5 +375,54 @@ func TestAdminRateLimitCRUD(t *testing.T) {
 	router.ServeHTTP(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("bad strategy status = %d; want 400", w.Code)
+	}
+}
+
+func TestAdminServeWebUI(t *testing.T) {
+	router := NewAdminServer(oss.NewMemStorage(), zap.NewNop(), "oss", oss.NewRateLimiter(oss.NewMemStorage(), 100, 100000, "token_bucket")).Router()
+
+	// 首页 → index.html
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "NeuralGate") {
+		t.Fatalf("GET / status=%d body=%s; want index.html with NeuralGate", w.Code, w.Body.String())
+	}
+
+	// SPA fallback → /models 也返回 index.html
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/models", nil)
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "<div id=\"app\">") {
+		t.Fatalf("GET /models status=%d body=%s; want SPA fallback", w.Code, w.Body.String())
+	}
+
+	// 未知 /api 路径 → JSON 404(不 fallback)
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/api/unknown", nil)
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("GET /api/unknown status=%d; want 404", w.Code)
+	}
+
+	// 静态资源:index.html 引用的 /assets/* 应真实服务(而非 SPA fallback 的 text/html)
+	dist, err := fs.Sub(webuiFS, "webui/dist")
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx, err := fs.ReadFile(dist, "index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	re := regexp.MustCompile(`/assets/[^"']+`)
+	for _, assetPath := range re.FindAllString(string(idx), -1) {
+		w = httptest.NewRecorder()
+		router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, assetPath, nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("GET %s status=%d; want 200", assetPath, w.Code)
+		}
+		if ct := w.Header().Get("Content-Type"); strings.Contains(ct, "text/html") {
+			t.Fatalf("GET %s ct=%q; want real asset (not SPA fallback)", assetPath, ct)
+		}
 	}
 }

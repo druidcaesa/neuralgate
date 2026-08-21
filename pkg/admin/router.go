@@ -64,4 +64,7 @@ func (s *AdminServer) registerRoutes(r *gin.Engine) {
 		api.PUT("/rate-limits/:id", s.updateRateLimit)
 		api.DELETE("/rate-limits/:id", s.deleteRateLimit)
 	}
+
+	// 静态资源 + SPA fallback(go:embed)
+	s.registerWebUI(r)
 }
