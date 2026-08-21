@@ -14,7 +14,18 @@
 
 package core
 
-import "testing"
+import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"math/big"
+	"os"
+	"testing"
+	"time"
+)
 
 func TestIPFilterDisabled(t *testing.T) {
 	f := NewIPFilter("disabled", nil, nil)
@@ -51,4 +62,70 @@ func TestIPFilterInvalidIPDenied(t *testing.T) {
 	if f.Allow("not-an-ip") {
 		t.Fatal("unparseable IP in whitelist mode should be denied")
 	}
+}
+
+func TestTLSHandlerDisabled(t *testing.T) {
+	h := NewTLSHandler(false, "", "", "1.2")
+	cfg, err := h.TLSConfig()
+	if err != nil {
+		t.Fatalf("disabled TLS should not error: %v", err)
+	}
+	if cfg != nil {
+		t.Fatal("disabled TLS should return nil config")
+	}
+}
+
+func TestTLSHandlerMissingCertErrors(t *testing.T) {
+	h := NewTLSHandler(true, "/nonexistent/cert.pem", "/nonexistent/key.pem", "1.2")
+	if _, err := h.TLSConfig(); err == nil {
+		t.Fatal("enabled TLS with missing cert should error")
+	}
+}
+
+func TestTLSHandlerMinVersion(t *testing.T) {
+	certPEM, keyPEM := genSelfSignedCert(t)
+	certFile := writeTemp(t, "cert.pem", certPEM)
+	keyFile := writeTemp(t, "key.pem", keyPEM)
+	h := NewTLSHandler(true, certFile, keyFile, "1.3")
+	cfg, err := h.TLSConfig()
+	if err != nil {
+		t.Fatalf("valid cert should load: %v", err)
+	}
+	if cfg == nil || cfg.MinVersion != tls.VersionTLS13 {
+		t.Fatalf("MinVersion = %v; want TLS1.3", cfg.MinVersion)
+	}
+	if len(cfg.Certificates) != 1 {
+		t.Fatalf("should load 1 certificate")
+	}
+}
+
+// genSelfSignedCert 生成临时自签 RSA 证书 PEM
+func genSelfSignedCert(t *testing.T) (certPEM, keyPEM []byte) {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "test"},
+		NotBefore:    time.Unix(1000, 0),
+		NotAfter:     time.Unix(1<<31, 0),
+	}
+	der, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	return certPEM, keyPEM
+}
+
+func writeTemp(t *testing.T, name string, data []byte) string {
+	t.Helper()
+	path := t.TempDir() + "/" + name
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
