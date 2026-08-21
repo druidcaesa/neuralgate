@@ -69,8 +69,15 @@ func (l *RateLimiter) Init(config map[string]interface{}) error {
 	if v, ok := config["default_rps"].(int); ok && v > 0 {
 		l.defaultRPS = v
 	}
-	if v, ok := config["default_tpm"].(int64); ok && v > 0 {
-		l.defaultTPM = v
+	switch v := config["default_tpm"].(type) {
+	case int64:
+		if v > 0 {
+			l.defaultTPM = v
+		}
+	case int:
+		if v > 0 {
+			l.defaultTPM = int64(v)
+		}
 	}
 	if v, ok := config["strategy"].(string); ok && v != "" {
 		l.defaultStrategy = v
@@ -178,9 +185,9 @@ func (l *RateLimiter) RecordTokens(tenantID string, model string, tokens int) er
 	b := l.bucketFor(tenantID, model)
 	now := l.now()
 	if b.strategy == "sliding_window" {
-		b.tpmWindow.allow(int64(tokens), now) // 累加(可能越过 limit,下次 Allow 拒)
+		b.tpmWindow.add(int64(tokens), now) // 无条件累加 TPM 计数
 	} else {
-		b.tpmBucket.take(float64(tokens), now) // 扣减(可能扣至 <=0,下次 Allow 拒)
+		b.tpmBucket.consume(float64(tokens), now) // 无条件扣减 TPM 计数
 	}
 	return nil
 }
