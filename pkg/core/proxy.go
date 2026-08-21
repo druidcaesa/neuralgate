@@ -427,11 +427,23 @@ func (p *ProxyCore) finalizeAudit(rc *RequestContext, prompt, completion, total 
 
 // handlePassThrough 透传端点:原样转发(不解析 body,仅替换上游 Key)
 func (p *ProxyCore) handlePassThrough(w http.ResponseWriter, r *http.Request, rc *RequestContext) {
-	if rc.ModelConfig == nil {
-		writeOpenAIError(w, http.StatusNotFound, "invalid_request_error", "model_not_found", "model not found")
+	cfg := rc.ModelConfig
+	if cfg == nil {
+		// GET 透传端点(如 /v1/files/:id)无 model 字段,取首个启用模型配置作为上游
+		configs, _, err := p.pipeline.storage.ListModelConfigs(1, 100)
+		if err == nil {
+			for _, c := range configs {
+				if c.Enabled {
+					cfg = c
+					break
+				}
+			}
+		}
+	}
+	if cfg == nil {
+		writeOpenAIError(w, http.StatusNotFound, "invalid_request_error", "model_not_found", "no enabled model configured")
 		return
 	}
-	cfg := rc.ModelConfig
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		rc.ResponseStatus = http.StatusBadRequest
