@@ -50,7 +50,7 @@ func TestAPIKeyCRUD(t *testing.T) {
 	if _, err := s.GetAPIKey("nope"); err != ErrNotFound {
 		t.Errorf("GetAPIKey(missing) = %v, want ErrNotFound", err)
 	}
-	if err := s.UpdateAPIKeyQuota("k1", 500); err != nil {
+	if err := s.IncrementAPIKeyUsage("k1", 500); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := s.GetAPIKey("hash1"); got.UsedQuota != 500 {

@@ -96,9 +96,9 @@ func TestSQLStorageAPIKeyCRUD(t *testing.T) {
 		t.Fatalf("GetAPIKeyByID = %v, %v", byID, err)
 	}
 
-	// 更新额度
-	if err := s.UpdateAPIKeyQuota("k1", 100); err != nil {
-		t.Fatalf("UpdateAPIKeyQuota: %v", err)
+	// 原子累加额度(生产路径)
+	if err := s.IncrementAPIKeyUsage("k1", 100); err != nil {
+		t.Fatalf("IncrementAPIKeyUsage: %v", err)
 	}
 	got, _ = s.GetAPIKey("hash-1")
 	if got.UsedQuota != 100 {
