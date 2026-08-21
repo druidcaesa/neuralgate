@@ -16,6 +16,7 @@ package core
 
 import (
 	"crypto/tls"
+	"fmt"
 	"net"
 	"net/http"
 	"strings"
@@ -25,7 +26,6 @@ import (
 type Acceptor struct {
 	handler http.Handler
 	connMgr *ConnectionManager
-	tls     *TLSHandler
 	ipf     *IPFilter
 	parser  *ProtocolParser
 }
@@ -35,7 +35,6 @@ func NewAcceptor(handler http.Handler, ipf *IPFilter) *Acceptor {
 	return &Acceptor{
 		handler: handler,
 		connMgr: NewConnectionManager(),
-		tls:     NewTLSHandler(),
 		ipf:     ipf,
 		parser:  NewProtocolParser(),
 	}
@@ -61,13 +60,37 @@ func NewConnectionManager() *ConnectionManager { return &ConnectionManager{} }
 // OnStateChange ConnState 回调（http.Server.ConnState 挂接点）
 func (m *ConnectionManager) OnStateChange(c net.Conn, state http.ConnState) {}
 
-// TLSHandler TLS 终止（当前空实现）
-type TLSHandler struct{}
+// TLSHandler TLS 终止:按配置加载证书
+type TLSHandler struct {
+	enabled    bool
+	certFile   string
+	keyFile    string
+	minVersion string
+}
 
-func NewTLSHandler() *TLSHandler { return &TLSHandler{} }
+// NewTLSHandler 按配置构造
+func NewTLSHandler(enabled bool, certFile, keyFile, minVersion string) *TLSHandler {
+	return &TLSHandler{enabled: enabled, certFile: certFile, keyFile: keyFile, minVersion: minVersion}
+}
 
-// TLSConfig 返回 TLS 配置（当前返回 nil，表示不启用 TLS）
-func (h *TLSHandler) TLSConfig() *tls.Config { return nil }
+// TLSConfig 未启用返回 (nil,nil);启用则加载证书对,失败返回 error
+func (h *TLSHandler) TLSConfig() (*tls.Config, error) {
+	if !h.enabled {
+		return nil, nil
+	}
+	cert, err := tls.LoadX509KeyPair(h.certFile, h.keyFile)
+	if err != nil {
+		return nil, fmt.Errorf("load tls key pair: %w", err)
+	}
+	minVer := uint16(tls.VersionTLS12)
+	if h.minVersion == "1.3" {
+		minVer = tls.VersionTLS13
+	}
+	return &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		MinVersion:   minVer,
+	}, nil
+}
 
 // IPFilter IP 黑白名单(CIDR 或单 IP)
 type IPFilter struct {

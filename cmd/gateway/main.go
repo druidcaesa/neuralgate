@@ -117,6 +117,11 @@ func main() {
 	adminServer := admin.NewAdminServer(storage, logger, edition, rateLimiter)
 
 	// 8. 启动双服务（并发）
+	tlsHandler := core.NewTLSHandler(cfg.TLS.Enabled, cfg.TLS.CertFile, cfg.TLS.KeyFile, cfg.TLS.MinVersion)
+	tlsConf, err := tlsHandler.TLSConfig()
+	if err != nil {
+		logger.Fatal("TLS 配置加载失败", zap.Error(err))
+	}
 	proxyServer := &http.Server{
 		Addr:           cfg.Server.ProxyAddr,
 		Handler:        acceptor.Handler(),
@@ -124,6 +129,7 @@ func main() {
 		WriteTimeout:   cfg.Server.WriteTimeout,
 		IdleTimeout:    cfg.Server.IdleTimeout,
 		MaxHeaderBytes: cfg.Server.MaxHeaderBytes,
+		TLSConfig:      tlsConf, // nil 时等同普通 HTTP
 		// ConnState 回调：追踪连接状态（当前为空实现）
 		ConnState: func(c net.Conn, state http.ConnState) {},
 	}
@@ -134,9 +140,15 @@ func main() {
 
 	errCh := make(chan error, 2)
 	go func() {
-		logger.Info("代理服务启动", zap.String("addr", cfg.Server.ProxyAddr))
-		if err := proxyServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- fmt.Errorf("代理服务: %w", err)
+		logger.Info("代理服务启动", zap.String("addr", cfg.Server.ProxyAddr), zap.Bool("tls", tlsConf != nil))
+		var serveErr error
+		if tlsConf != nil {
+			serveErr = proxyServer.ListenAndServeTLS("", "") // 证书已在 TLSConfig
+		} else {
+			serveErr = proxyServer.ListenAndServe()
+		}
+		if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+			errCh <- fmt.Errorf("代理服务: %w", serveErr)
 		}
 	}()
 	go func() {
