@@ -17,11 +17,30 @@ package core
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/druidcaesa/neuralgate/pkg/adapter"
 	"github.com/druidcaesa/neuralgate/pkg/plugin/oss"
 )
+
+// recordingLimiter 记录 Allow 收到的 model 参数(验证模型级限流是否拿到路由注入的模型名)
+type recordingLimiter struct {
+	models []string
+	calls  int
+}
+
+func (l *recordingLimiter) Init(config map[string]interface{}) error { return nil }
+func (l *recordingLimiter) Allow(tenantID string, model string, tokens int) (bool, int64, error) {
+	l.calls++
+	l.models = append(l.models, model)
+	return true, 10, nil
+}
+func (l *recordingLimiter) Status(tenantID string, model string) (int64, int64, time.Time) {
+	return 0, 10, time.Now().Add(time.Second)
+}
+func (l *recordingLimiter) Reset(tenantID string, model string) error { return nil }
 
 func TestPipelineOrder(t *testing.T) {
 	var calls []string
@@ -124,5 +143,52 @@ func TestRateLimitAndRouteMiddlewaresPassThrough(t *testing.T) {
 	handler.ServeHTTP(httptest.NewRecorder(), req)
 	if !hit {
 		t.Error("handler was not reached through Build() chain")
+	}
+}
+
+func TestRateLimitReceivesRoutedModel(t *testing.T) {
+	// 路由前移(Auth → RouteMatch → RateLimit):POST 经完整链时,限流器必须拿到真实模型名(模型级限流)
+	limiter := &recordingLimiter{}
+	registry := adapter.NewAdapterRegistry()
+	registry.Register(adapter.NewOpenAIAdapter())
+	p := NewPipeline(routeTestStorage(), limiter, nil, registry)
+	hit := false
+	handler := p.Build(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hit = true
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4","messages":[]}`))
+	req.Header.Set("Authorization", "Bearer ng-open")
+	handler.ServeHTTP(httptest.NewRecorder(), req)
+	if !hit {
+		t.Fatal("handler was not reached through Build() chain")
+	}
+	if limiter.calls != 1 {
+		t.Fatalf("Allow calls = %d, want 1", limiter.calls)
+	}
+	if len(limiter.models) != 1 || limiter.models[0] != "gpt-4" {
+		t.Fatalf("Allow models = %v, want [gpt-4] (模型级限流必须按真实模型名计数)", limiter.models)
+	}
+}
+
+func TestRateLimitNotConsumedOnRouteReject(t *testing.T) {
+	// 路由在前:模型不存在(404)时不得消耗限流配额(Allow 不应被调用)
+	limiter := &recordingLimiter{}
+	registry := adapter.NewAdapterRegistry()
+	registry.Register(adapter.NewOpenAIAdapter())
+	p := NewPipeline(routeTestStorage(), limiter, nil, registry)
+	handler := p.Build(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"nope","messages":[]}`))
+	req.Header.Set("Authorization", "Bearer ng-open")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d; want 404", rec.Code)
+	}
+	if limiter.calls != 0 {
+		t.Fatalf("Allow calls = %d; want 0 (404/403 不消耗限流配额)", limiter.calls)
 	}
 }
