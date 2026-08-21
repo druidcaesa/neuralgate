@@ -30,7 +30,7 @@ import (
 )
 
 func TestProxyChatRoutingContextMissing(t *testing.T) {
-	pipeline := NewPipeline(newTestStorage(), oss.NewMemRateLimiter(), nil, adapter.NewAdapterRegistry())
+	pipeline := NewPipeline(newTestStorage(), oss.NewRateLimiter(oss.NewMemStorage(), 100, 100000, "token_bucket"), nil, adapter.NewAdapterRegistry())
 	proxy := NewProxyCore(pipeline, adapter.NewAdapterRegistry())
 	rec := httptest.NewRecorder()
 	// GET 请求经路由中间件直接放行(无 body/模型解析),抵达 handleProxy 时无路由上下文 → 500
@@ -93,7 +93,7 @@ func TestProxyPassThroughForwarding(t *testing.T) {
 	})
 	registry := adapter.NewAdapterRegistry()
 	registry.Register(adapter.NewOpenAIAdapter())
-	limiter := oss.NewMemRateLimiter()
+	limiter := oss.NewRateLimiter(storage, 100, 100000, "token_bucket")
 	_ = limiter.Init(map[string]interface{}{"default_rps": 100, "default_tpm": 100000})
 	auditor := oss.NewSimpleAuditor(storage)
 	pc := NewProxyCore(NewPipeline(storage, limiter, auditor, registry), registry)
@@ -140,7 +140,7 @@ func TestProxyPassThroughGET(t *testing.T) {
 	})
 	registry := adapter.NewAdapterRegistry()
 	registry.Register(adapter.NewOpenAIAdapter())
-	limiter := oss.NewMemRateLimiter()
+	limiter := oss.NewRateLimiter(storage, 100, 100000, "token_bucket")
 	_ = limiter.Init(map[string]interface{}{"default_rps": 100, "default_tpm": 100000})
 	pc := NewProxyCore(NewPipeline(storage, limiter, nil, registry), registry)
 
@@ -175,7 +175,7 @@ func TestProxyPassThroughGETNoEnabledModel(t *testing.T) {
 	})
 	registry := adapter.NewAdapterRegistry()
 	registry.Register(adapter.NewOpenAIAdapter())
-	pc := NewProxyCore(NewPipeline(storage, oss.NewMemRateLimiter(), nil, registry), registry)
+	pc := NewProxyCore(NewPipeline(storage, oss.NewRateLimiter(storage, 100, 100000, "token_bucket"), nil, registry), registry)
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/files/file-1", nil)
 	req.Header.Set("Authorization", "Bearer ng-test")
@@ -211,7 +211,7 @@ func TestProxyPassThroughAudited(t *testing.T) {
 	})
 	registry := adapter.NewAdapterRegistry()
 	registry.Register(adapter.NewOpenAIAdapter())
-	limiter := oss.NewMemRateLimiter()
+	limiter := oss.NewRateLimiter(storage, 100, 100000, "token_bucket")
 	_ = limiter.Init(map[string]interface{}{"default_rps": 100, "default_tpm": 100000})
 	auditor := oss.NewSimpleAuditor(storage)
 	pc := NewProxyCore(NewPipeline(storage, limiter, auditor, registry), registry)
@@ -247,7 +247,7 @@ func TestProxyModelsList(t *testing.T) {
 	storage := routeTestStorage()
 	registry := adapter.NewAdapterRegistry()
 	registry.Register(adapter.NewOpenAIAdapter())
-	limiter := oss.NewMemRateLimiter()
+	limiter := oss.NewRateLimiter(storage, 100, 100000, "token_bucket")
 	auditor := oss.NewSimpleAuditor(storage)
 	pc := NewProxyCore(NewPipeline(storage, limiter, auditor, registry), registry)
 
@@ -307,7 +307,7 @@ func TestProxyModelsListPagination(t *testing.T) {
 	})
 	registry := adapter.NewAdapterRegistry()
 	registry.Register(adapter.NewOpenAIAdapter())
-	pc := NewProxyCore(NewPipeline(storage, oss.NewMemRateLimiter(), nil, registry), registry)
+	pc := NewProxyCore(NewPipeline(storage, oss.NewRateLimiter(storage, 100, 100000, "token_bucket"), nil, registry), registry)
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
 	req.Header.Set("Authorization", "Bearer ng-test")
@@ -331,7 +331,7 @@ func TestProxyModelsDetail(t *testing.T) {
 	storage := routeTestStorage()
 	registry := adapter.NewAdapterRegistry()
 	registry.Register(adapter.NewOpenAIAdapter())
-	limiter := oss.NewMemRateLimiter()
+	limiter := oss.NewRateLimiter(storage, 100, 100000, "token_bucket")
 	auditor := oss.NewSimpleAuditor(storage)
 	pc := NewProxyCore(NewPipeline(storage, limiter, auditor, registry), registry)
 
@@ -354,7 +354,7 @@ func TestProxyModelsDetail(t *testing.T) {
 
 func TestProxyCoreHealthzNoAuth(t *testing.T) {
 	// /healthz 免鉴权:无 Bearer 也应直接放行(运维探活)
-	pipeline := NewPipeline(newTestStorage(), oss.NewMemRateLimiter(), nil, adapter.NewAdapterRegistry())
+	pipeline := NewPipeline(newTestStorage(), oss.NewRateLimiter(oss.NewMemStorage(), 100, 100000, "token_bucket"), nil, adapter.NewAdapterRegistry())
 	proxy := NewProxyCore(pipeline, adapter.NewAdapterRegistry())
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/healthz", nil)
@@ -368,7 +368,7 @@ func TestProxyCoreHealthzNoAuth(t *testing.T) {
 }
 
 func TestProxyCoreHealthz(t *testing.T) {
-	pipeline := NewPipeline(newTestStorage(), oss.NewMemRateLimiter(), nil, adapter.NewAdapterRegistry())
+	pipeline := NewPipeline(newTestStorage(), oss.NewRateLimiter(oss.NewMemStorage(), 100, 100000, "token_bucket"), nil, adapter.NewAdapterRegistry())
 	registry := adapter.NewAdapterRegistry()
 	proxy := NewProxyCore(pipeline, registry)
 	rec := httptest.NewRecorder()
@@ -459,7 +459,7 @@ func TestProxyChatCompletion(t *testing.T) {
 	})
 	registry := adapter.NewAdapterRegistry()
 	registry.Register(adapter.NewOpenAIAdapter())
-	limiter := oss.NewMemRateLimiter()
+	limiter := oss.NewRateLimiter(storage, 100, 100000, "token_bucket")
 	_ = limiter.Init(map[string]interface{}{"default_rps": 100, "default_tpm": 100000})
 	auditor := oss.NewSimpleAuditor(storage)
 	pc := NewProxyCore(NewPipeline(storage, limiter, auditor, registry), registry)
@@ -518,7 +518,7 @@ func TestProxyQuotaUpdate(t *testing.T) {
 	})
 	registry := adapter.NewAdapterRegistry()
 	registry.Register(adapter.NewOpenAIAdapter())
-	limiter := oss.NewMemRateLimiter()
+	limiter := oss.NewRateLimiter(storage, 100, 100000, "token_bucket")
 	_ = limiter.Init(map[string]interface{}{"default_rps": 100, "default_tpm": 100000})
 	auditor := oss.NewSimpleAuditor(storage)
 	pc := NewProxyCore(NewPipeline(storage, limiter, auditor, registry), registry)
@@ -561,7 +561,7 @@ func TestProxyUpstreamError(t *testing.T) {
 	})
 	registry := adapter.NewAdapterRegistry()
 	registry.Register(adapter.NewOpenAIAdapter())
-	limiter := oss.NewMemRateLimiter()
+	limiter := oss.NewRateLimiter(storage, 100, 100000, "token_bucket")
 	_ = limiter.Init(map[string]interface{}{"default_rps": 100, "default_tpm": 100000})
 	auditor := oss.NewSimpleAuditor(storage)
 	pc := NewProxyCore(NewPipeline(storage, limiter, auditor, registry), registry)
@@ -612,7 +612,7 @@ func TestProxyUpstreamTimeoutAudited(t *testing.T) {
 	})
 	registry := adapter.NewAdapterRegistry()
 	registry.Register(adapter.NewOpenAIAdapter())
-	limiter := oss.NewMemRateLimiter()
+	limiter := oss.NewRateLimiter(storage, 100, 100000, "token_bucket")
 	_ = limiter.Init(map[string]interface{}{"default_rps": 100, "default_tpm": 100000})
 	auditor := oss.NewSimpleAuditor(storage)
 	pc := NewProxyCore(NewPipeline(storage, limiter, auditor, registry), registry)
@@ -656,7 +656,7 @@ func TestProxyUpstreamTruncatedBodyAudited(t *testing.T) {
 	})
 	registry := adapter.NewAdapterRegistry()
 	registry.Register(adapter.NewOpenAIAdapter())
-	limiter := oss.NewMemRateLimiter()
+	limiter := oss.NewRateLimiter(storage, 100, 100000, "token_bucket")
 	_ = limiter.Init(map[string]interface{}{"default_rps": 100, "default_tpm": 100000})
 	auditor := oss.NewSimpleAuditor(storage)
 	pc := NewProxyCore(NewPipeline(storage, limiter, auditor, registry), registry)

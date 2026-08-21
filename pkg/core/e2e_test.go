@@ -73,7 +73,7 @@ func TestEndToEnd(t *testing.T) {
 	registry.Register(adapter.NewTongyiAdapter())
 	registry.Register(adapter.NewZhipuAdapter())
 	registry.Register(adapter.NewDeepSeekAdapter())
-	limiter := oss.NewMemRateLimiter()
+	limiter := oss.NewRateLimiter(oss.NewMemStorage(), 100, 100000, "token_bucket")
 	_ = limiter.Init(map[string]interface{}{"default_rps": 100, "default_tpm": 100000})
 	auditor := oss.NewSimpleAuditor(storage)
 	pc := core.NewProxyCore(core.NewPipeline(storage, limiter, auditor, registry), registry)
