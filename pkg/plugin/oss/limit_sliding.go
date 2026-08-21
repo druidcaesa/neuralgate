@@ -48,6 +48,12 @@ func (w *slidingWindow) allow(n int64, now time.Time) bool {
 	return true
 }
 
+// add 无条件累加 n(用于事后记录已消耗量,可越过 limit)
+func (w *slidingWindow) add(n int64, now time.Time) {
+	w.roll(now)
+	w.count += n
+}
+
 // current 当前窗口累计值
 func (w *slidingWindow) current(now time.Time) int64 {
 	w.roll(now)

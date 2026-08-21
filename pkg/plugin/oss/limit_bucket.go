@@ -57,6 +57,12 @@ func (b *tokenBucket) take(n float64, now time.Time) bool {
 	return false
 }
 
+// consume 无条件扣减 n(用于事后记录已消耗量,允许扣至负值)
+func (b *tokenBucket) consume(n float64, now time.Time) {
+	b.refill(now)
+	b.tokens -= n
+}
+
 // remaining 当前可用令牌数(整数向下取整)
 func (b *tokenBucket) remaining(now time.Time) int64 {
 	b.refill(now)

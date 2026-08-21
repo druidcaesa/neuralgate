@@ -85,6 +85,31 @@ func TestRateLimiterTPMRejectAndRecord(t *testing.T) {
 	}
 }
 
+func TestRateLimiterTPMRejectAfterOverconsume(t *testing.T) {
+	// tpm=100000,token_bucket;逐次记录 30000,累计越过上限后应拒
+	s := rlTestStorage(t,
+		&plugin.RateLimitConfig{ID: "g", RequestsPerSec: 100000, TokensPerMin: 100000, Strategy: "token_bucket", Enabled: true},
+	)
+	rl := NewRateLimiter(s, 100000, 100000, "token_bucket")
+	_ = rl.ReloadConfig()
+	// 预检放行 + 记录,累计 90000(未越限,仍放行)
+	for i := 0; i < 3; i++ {
+		if a, _, _ := rl.Allow("t1", "m", 0); !a {
+			t.Fatalf("Allow %d should pass before TPM exhausted", i)
+		}
+		_ = rl.RecordTokens("t1", "m", 30000)
+	}
+	// 第 4 次记录 30000 → 累计 120000 > 100000(越限,整包记录不能被丢弃)
+	if a, _, _ := rl.Allow("t1", "m", 0); !a {
+		t.Fatal("Allow should still pass at exactly 90000 (< 100000)")
+	}
+	_ = rl.RecordTokens("t1", "m", 30000) // 120000
+	// 此后 TPM 应耗尽 → 拒绝
+	if a, _, _ := rl.Allow("t1", "m", 0); a {
+		t.Fatal("Allow after TPM overconsumed (120000>100000) should be rejected")
+	}
+}
+
 func TestRateLimiterReloadPicksUpNewConfig(t *testing.T) {
 	s := NewMemStorage()
 	rl := NewRateLimiter(s, 100, 100000, "token_bucket")
