@@ -59,12 +59,13 @@ func (p *Pipeline) Apply(handler http.Handler) http.Handler {
 	return h
 }
 
-// fixedChain 固定顺序中间件链（不可调换）：鉴权 → 限流 → 路由匹配
+// fixedChain 固定顺序中间件链（不可调换）：鉴权 → 路由匹配 → 限流
+// 路由在前使限流可获取模型名（模型级限流），且 404/403 不消耗限流配额
 func (p *Pipeline) fixedChain() []Middleware {
 	return []Middleware{
 		AuthMiddleware(p.storage),
-		RateLimitMiddleware(p.rateLimiter),
 		RouteMatchMiddleware(p.storage, p.registry),
+		RateLimitMiddleware(p.rateLimiter),
 	}
 }
 
