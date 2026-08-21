@@ -22,7 +22,7 @@ import "time"
 type ModelConfig struct {
 	ID            string            // 配置ID
 	ModelName     string            // 对外模型名称（如 "gpt-4"）
-	Provider      string            // 供应商（openai/tongyi/zhipu/deepseek）
+	Provider      string            // 供应商（openai/qwen/zhipu/deepseek/自定义）
 	ProviderModel string            // 供应商实际模型名
 	BaseURL       string            // 上游API地址
 	APIKey        string            // 上游API Key

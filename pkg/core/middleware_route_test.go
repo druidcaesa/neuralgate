@@ -147,3 +147,37 @@ func TestRouteBadJSON(t *testing.T) {
 		t.Fatalf("status = %d; want 400", rec.Code)
 	}
 }
+
+func TestRouteCustomProviderFallsBackToOpenAI(t *testing.T) {
+	// 自定义供应商(未注册适配器) → 回退 OpenAIAdapter(原生透传)
+	s := routeTestStorage()
+	now := time.Now()
+	_ = s.SaveModelConfig(&plugin.ModelConfig{
+		ID: "m-custom", ModelName: "custom-model", Provider: "my-custom", ProviderModel: "custom-1",
+		BaseURL: "https://custom.example.com", APIKey: "sk", Enabled: true, CreatedAt: now, UpdatedAt: now,
+	})
+	registry := adapter.NewAdapterRegistry()
+	registry.Register(adapter.NewOpenAIAdapter())
+
+	rc := &RequestContext{APIKeyID: "k2", TenantID: "t1"}
+	ctx := WithRequestContext(context.Background(), rc)
+	mw := RouteMatchMiddleware(s, registry)
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rc, _ := RequestContextFrom(r.Context())
+		w.Header().Set("X-Provider", rc.Adapter.Name())
+		w.WriteHeader(http.StatusOK)
+	}))
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
+		bytes.NewReader([]byte(`{"model":"custom-model","messages":[]}`)))
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; want 200, body=%s", rec.Code, rec.Body.String())
+	}
+	// 自定义 provider 回退到 openai 适配器(原生透传)
+	if rec.Header().Get("X-Provider") != "openai" {
+		t.Fatalf("provider = %s; want openai (fallback)", rec.Header().Get("X-Provider"))
+	}
+}

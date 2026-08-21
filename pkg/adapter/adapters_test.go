@@ -29,7 +29,7 @@ func TestBuiltinAdapters(t *testing.T) {
 		native  bool
 	}{
 		{"openai", NewOpenAIAdapter(), true},
-		{"tongyi", NewTongyiAdapter(), false},
+		{"qwen", NewQwenAdapter(), false},
 		{"zhipu", NewZhipuAdapter(), false},
 		{"deepseek", NewDeepSeekAdapter(), true},
 	}
@@ -91,8 +91,8 @@ func TestDeepSeekParseTokenUsage(t *testing.T) {
 	}
 }
 
-func TestTongyiTransformRequest(t *testing.T) {
-	a := NewTongyiAdapter()
+func TestQwenTransformRequest(t *testing.T) {
+	a := NewQwenAdapter()
 	req := &UnifiedRequest{
 		Model: "qwen-max", Messages: []Message{{Role: "user", Content: "你好"}},
 		Temperature: float64Ptr(0.7), Stream: true,
@@ -120,8 +120,8 @@ func TestTongyiTransformRequest(t *testing.T) {
 	}
 }
 
-func TestTongyiTransformResponse(t *testing.T) {
-	a := NewTongyiAdapter()
+func TestQwenTransformResponse(t *testing.T) {
+	a := NewQwenAdapter()
 	body := `{"output":{"choices":[{"message":{"role":"assistant","content":"你好，世界"}}],
 	  "usage":{"input_tokens":5,"output_tokens":3,"total_tokens":8}},"request_id":"r1"}`
 	resp := &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body))}
@@ -140,9 +140,9 @@ func TestTongyiTransformResponse(t *testing.T) {
 	}
 }
 
-func TestTongyiTransformResponseFinishReason(t *testing.T) {
+func TestQwenTransformResponseFinishReason(t *testing.T) {
 	// DashScope 非流式响应透传 finish_reason,不硬编码 "stop"
-	a := NewTongyiAdapter()
+	a := NewQwenAdapter()
 	body := `{"output":{"choices":[{"message":{"role":"assistant","content":"截断了"},"finish_reason":"length"}],
 	  "usage":{"input_tokens":5,"output_tokens":3,"total_tokens":8}},"request_id":"r1"}`
 	resp := &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body))}
@@ -155,7 +155,7 @@ func TestTongyiTransformResponseFinishReason(t *testing.T) {
 	}
 }
 
-func TestTongyiToDashMessagesInterfaceContent(t *testing.T) {
+func TestQwenToDashMessagesInterfaceContent(t *testing.T) {
 	// 内核经 json.Unmarshal 构造的 UnifiedRequest:content 为 []interface{}(元素为 map)
 	content := []interface{}{
 		map[string]interface{}{"type": "text", "text": "hi"},
