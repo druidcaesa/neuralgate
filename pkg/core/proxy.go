@@ -219,6 +219,7 @@ func (p *ProxyCore) handleProxy(w http.ResponseWriter, r *http.Request, rc *Requ
 	rc.ResponseBody = body
 	rc.ResponseStatus = resp.StatusCode
 	p.updateQuota(rc)
+	p.recordTokens(rc)
 
 	// 写回客户端(透传上游响应头)
 	copyResponseHeaders(w.Header(), resp.Header)
@@ -303,6 +304,7 @@ func (p *ProxyCore) handleStreaming(w http.ResponseWriter, r *http.Request, rc *
 	}
 	rc.EndTime = time.Now()
 	p.updateQuota(rc)
+	p.recordTokens(rc)
 	p.finalizeAudit(rc, rc.PromptTokens, rc.CompletionTokens, rc.TotalTokens)
 }
 
@@ -442,6 +444,18 @@ func (p *ProxyCore) finalizeAudit(rc *RequestContext, prompt, completion, total 
 		TotalTokens:      total,
 		Duration:         rc.EndTime.Sub(rc.StartTime).Milliseconds(),
 	})
+}
+
+// recordTokens 请求完成后回补限流器 TPM 计数(model 维度)
+func (p *ProxyCore) recordTokens(rc *RequestContext) {
+	if p.pipeline.rateLimiter == nil || rc.TotalTokens <= 0 {
+		return
+	}
+	model := ""
+	if rc.ModelConfig != nil {
+		model = rc.ModelConfig.ModelName
+	}
+	_ = p.pipeline.rateLimiter.RecordTokens(rc.TenantID, model, rc.TotalTokens)
 }
 
 // handlePassThrough 透传端点:原样转发(不解析 body,仅替换上游 Key)
