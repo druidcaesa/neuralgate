@@ -36,6 +36,18 @@ type ModelConfig struct {
 	UpdatedAt     time.Time         // 更新时间
 }
 
+// Upstream 模型的上游端点（负载均衡：一个 ModelConfig 可挂多个 Upstream）
+type Upstream struct {
+	ID            string    // 上游ID
+	ModelConfigID string    // 所属模型配置ID
+	BaseURL       string    // 上游API地址
+	APIKey        string    // 上游API Key（加密存储）
+	Weight        int       // 加权轮询权重
+	Enabled       bool      // 是否启用
+	CreatedAt     time.Time // 创建时间
+	UpdatedAt     time.Time // 更新时间
+}
+
 // APIKey 租户API Key
 type APIKey struct {
 	ID            string       // 主键ID
@@ -132,12 +144,15 @@ type User struct {
 
 // RateLimitConfig 限流配置
 type RateLimitConfig struct {
-	TenantID       string // 租户ID
-	ModelName      string // 模型名称（空表示全模型）
-	RequestsPerSec int    // 每秒请求数
-	TokensPerMin   int64  // 每分钟Token数
-	Strategy       string // 策略：token_bucket/sliding_window
-	Enabled        bool   // 是否启用
+	ID             string    // 配置ID
+	TenantID       string    // 租户ID（空表示全局）
+	ModelName      string    // 模型名称（空表示全模型）
+	RequestsPerSec int       // 每秒请求数
+	TokensPerMin   int64     // 每分钟Token数
+	Strategy       string    // 策略：token_bucket/sliding_window
+	Enabled        bool      // 是否启用
+	CreatedAt      time.Time // 创建时间
+	UpdatedAt      time.Time // 更新时间
 }
 
 // LicenseInfo 商业授权信息
@@ -188,6 +203,18 @@ type StoragePlugin interface {
 	SaveAuditLog(log *AuditLog) error
 	BatchSaveAuditLogs(logs []*AuditLog) error
 	QueryAuditLogs(filter AuditLogFilter, page, size int) ([]*AuditLog, int64, error)
+
+	// 限流配置管理
+	GetRateLimitConfig(tenantID, modelName string) (*RateLimitConfig, error)
+	SaveRateLimitConfig(cfg *RateLimitConfig) error
+	ListRateLimitConfigs(page, size int) ([]*RateLimitConfig, int64, error)
+	DeleteRateLimitConfig(id string) error
+
+	// 上游管理（负载均衡）
+	ListUpstreams(modelConfigID string) ([]*Upstream, error)
+	GetUpstreamByID(id string) (*Upstream, error)
+	SaveUpstream(up *Upstream) error
+	DeleteUpstream(id string) error
 
 	// 健康检查
 	Ping() error
@@ -282,6 +309,12 @@ type RateLimitPlugin interface {
 
 	// 重置限流计数器
 	Reset(tenantID string, model string) error
+
+	// RecordTokens 记录已消耗 token（TPM 事后回补，请求完成后调用）
+	RecordTokens(tenantID string, model string, tokens int) error
+
+	// ReloadConfig 从存储重载限流配置（管理后台写操作后触发）
+	ReloadConfig() error
 }
 
 // LogExporter 日志外推接口

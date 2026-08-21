@@ -85,6 +85,30 @@ func mysqlCreateTables(db *sql.DB) error {
 			KEY idx_audit_tenant (tenant_id),
 			KEY idx_audit_model (model_name)
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+		`CREATE TABLE IF NOT EXISTS rate_limit_configs (
+			id VARCHAR(64) PRIMARY KEY,
+			tenant_id VARCHAR(64) NOT NULL DEFAULT '',
+			model_name VARCHAR(64) NOT NULL DEFAULT '',
+			requests_per_sec INT NOT NULL,
+			tokens_per_min BIGINT NOT NULL,
+			strategy VARCHAR(32) NOT NULL DEFAULT 'token_bucket',
+			enabled TINYINT NOT NULL DEFAULT 1,
+			created_at BIGINT NOT NULL,
+			updated_at BIGINT NOT NULL,
+			UNIQUE KEY uq_tenant_model (tenant_id, model_name)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+		`CREATE TABLE IF NOT EXISTS upstreams (
+			id VARCHAR(64) PRIMARY KEY,
+			model_config_id VARCHAR(64) NOT NULL,
+			base_url VARCHAR(512) NOT NULL,
+			api_key VARCHAR(1024) NOT NULL,
+			encrypted TINYINT NOT NULL DEFAULT 1,
+			weight INT NOT NULL DEFAULT 1,
+			enabled TINYINT NOT NULL DEFAULT 1,
+			created_at BIGINT NOT NULL,
+			updated_at BIGINT NOT NULL,
+			KEY idx_upstreams_model (model_config_id)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {

@@ -456,3 +456,164 @@ func (s *SQLStorage) QueryAuditLogs(filter plugin.AuditLogFilter, page, size int
 func (s *SQLStorage) Ping() error { return s.db.Ping() }
 
 func (s *SQLStorage) Close() error { return s.db.Close() }
+
+// ===== 限流配置 =====
+
+const rateLimitCols = "id, tenant_id, model_name, requests_per_sec, tokens_per_min, strategy, enabled, created_at, updated_at"
+
+func (s *SQLStorage) scanRateLimitConfig(row interface{ Scan(...interface{}) error }) (*plugin.RateLimitConfig, error) {
+	var c plugin.RateLimitConfig
+	var enabled int
+	var createdAt, updatedAt string
+	if err := row.Scan(&c.ID, &c.TenantID, &c.ModelName, &c.RequestsPerSec, &c.TokensPerMin,
+		&c.Strategy, &enabled, &createdAt, &updatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	c.Enabled = enabled == 1
+	var cms, ums int64
+	fmt.Sscanf(createdAt, "%d", &cms)
+	fmt.Sscanf(updatedAt, "%d", &ums)
+	c.CreatedAt = msToTime(cms)
+	c.UpdatedAt = msToTime(ums)
+	return &c, nil
+}
+
+func (s *SQLStorage) GetRateLimitConfig(tenantID, modelName string) (*plugin.RateLimitConfig, error) {
+	row := s.db.QueryRow("SELECT "+rateLimitCols+" FROM rate_limit_configs WHERE tenant_id = ? AND model_name = ?", tenantID, modelName)
+	return s.scanRateLimitConfig(row)
+}
+
+func (s *SQLStorage) SaveRateLimitConfig(cfg *plugin.RateLimitConfig) error {
+	var upsert string
+	if s.isMySQL() {
+		upsert = " ON DUPLICATE KEY UPDATE requests_per_sec=VALUES(requests_per_sec), tokens_per_min=VALUES(tokens_per_min), strategy=VALUES(strategy), enabled=VALUES(enabled), updated_at=VALUES(updated_at)"
+	} else {
+		upsert = " ON CONFLICT(id) DO UPDATE SET tenant_id=excluded.tenant_id, model_name=excluded.model_name, requests_per_sec=excluded.requests_per_sec, tokens_per_min=excluded.tokens_per_min, strategy=excluded.strategy, enabled=excluded.enabled, updated_at=excluded.updated_at"
+	}
+	_, err := s.db.Exec(
+		`INSERT INTO rate_limit_configs (id, tenant_id, model_name, requests_per_sec, tokens_per_min, strategy, enabled, created_at, updated_at)
+		 VALUES (?,?,?,?,?,?,?,?,?)`+upsert,
+		cfg.ID, cfg.TenantID, cfg.ModelName, cfg.RequestsPerSec, cfg.TokensPerMin, cfg.Strategy,
+		boolToInt(cfg.Enabled), timeToMS(cfg.CreatedAt), timeToMS(cfg.UpdatedAt))
+	return err
+}
+
+func (s *SQLStorage) ListRateLimitConfigs(page, size int) ([]*plugin.RateLimitConfig, int64, error) {
+	page, size = normalizePage(page, size)
+	var total int64
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM rate_limit_configs").Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	rows, err := s.db.Query("SELECT "+rateLimitCols+" FROM rate_limit_configs ORDER BY created_at DESC LIMIT ? OFFSET ?", size, (page-1)*size)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var configs []*plugin.RateLimitConfig
+	for rows.Next() {
+		c, err := s.scanRateLimitConfig(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		configs = append(configs, c)
+	}
+	return configs, total, rows.Err()
+}
+
+func (s *SQLStorage) DeleteRateLimitConfig(id string) error {
+	res, err := s.db.Exec("DELETE FROM rate_limit_configs WHERE id = ?", id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ===== 上游管理 =====
+
+const upstreamCols = "id, model_config_id, base_url, api_key, encrypted, weight, enabled, created_at, updated_at"
+
+func (s *SQLStorage) scanUpstream(row interface{ Scan(...interface{}) error }) (*plugin.Upstream, error) {
+	var u plugin.Upstream
+	var apiKey, createdAt, updatedAt string
+	var encrypted, enabled int
+	if err := row.Scan(&u.ID, &u.ModelConfigID, &u.BaseURL, &apiKey, &encrypted, &u.Weight,
+		&enabled, &createdAt, &updatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	if encrypted == 1 {
+		plain, err := Decrypt(apiKey, s.encryptKey)
+		if err != nil {
+			return nil, fmt.Errorf("decrypt upstream api key: %w", err)
+		}
+		apiKey = plain
+	}
+	u.APIKey = apiKey
+	u.Enabled = enabled == 1
+	var cms, ums int64
+	fmt.Sscanf(createdAt, "%d", &cms)
+	fmt.Sscanf(updatedAt, "%d", &ums)
+	u.CreatedAt = msToTime(cms)
+	u.UpdatedAt = msToTime(ums)
+	return &u, nil
+}
+
+func (s *SQLStorage) GetUpstreamByID(id string) (*plugin.Upstream, error) {
+	row := s.db.QueryRow("SELECT "+upstreamCols+" FROM upstreams WHERE id = ?", id)
+	return s.scanUpstream(row)
+}
+
+func (s *SQLStorage) ListUpstreams(modelConfigID string) ([]*plugin.Upstream, error) {
+	rows, err := s.db.Query("SELECT "+upstreamCols+" FROM upstreams WHERE model_config_id = ? ORDER BY created_at", modelConfigID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ups []*plugin.Upstream
+	for rows.Next() {
+		u, err := s.scanUpstream(rows)
+		if err != nil {
+			return nil, err
+		}
+		ups = append(ups, u)
+	}
+	return ups, rows.Err()
+}
+
+func (s *SQLStorage) SaveUpstream(up *plugin.Upstream) error {
+	enc, err := Encrypt(up.APIKey, s.encryptKey)
+	if err != nil {
+		return fmt.Errorf("encrypt upstream api key: %w", err)
+	}
+	var upsert string
+	if s.isMySQL() {
+		upsert = " ON DUPLICATE KEY UPDATE model_config_id=VALUES(model_config_id), base_url=VALUES(base_url), api_key=VALUES(api_key), encrypted=VALUES(encrypted), weight=VALUES(weight), enabled=VALUES(enabled), updated_at=VALUES(updated_at)"
+	} else {
+		upsert = " ON CONFLICT(id) DO UPDATE SET model_config_id=excluded.model_config_id, base_url=excluded.base_url, api_key=excluded.api_key, encrypted=excluded.encrypted, weight=excluded.weight, enabled=excluded.enabled, updated_at=excluded.updated_at"
+	}
+	_, err = s.db.Exec(
+		`INSERT INTO upstreams (id, model_config_id, base_url, api_key, encrypted, weight, enabled, created_at, updated_at)
+		 VALUES (?,?,?,?,1,?,?,?,?)`+upsert,
+		up.ID, up.ModelConfigID, up.BaseURL, enc, up.Weight, boolToInt(up.Enabled),
+		timeToMS(up.CreatedAt), timeToMS(up.UpdatedAt))
+	return err
+}
+
+func (s *SQLStorage) DeleteUpstream(id string) error {
+	res, err := s.db.Exec("DELETE FROM upstreams WHERE id = ?", id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}

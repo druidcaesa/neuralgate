@@ -74,5 +74,29 @@ func (d *dynamicStorage) BatchSaveAuditLogs(logs []*plugin.AuditLog) error {
 func (d *dynamicStorage) QueryAuditLogs(filter plugin.AuditLogFilter, page, size int) ([]*plugin.AuditLog, int64, error) {
 	return d.impl.QueryAuditLogs(filter, page, size)
 }
+func (d *dynamicStorage) GetRateLimitConfig(tenantID, modelName string) (*plugin.RateLimitConfig, error) {
+	return d.impl.GetRateLimitConfig(tenantID, modelName)
+}
+func (d *dynamicStorage) SaveRateLimitConfig(cfg *plugin.RateLimitConfig) error {
+	return d.impl.SaveRateLimitConfig(cfg)
+}
+func (d *dynamicStorage) ListRateLimitConfigs(page, size int) ([]*plugin.RateLimitConfig, int64, error) {
+	return d.impl.ListRateLimitConfigs(page, size)
+}
+func (d *dynamicStorage) DeleteRateLimitConfig(id string) error {
+	return d.impl.DeleteRateLimitConfig(id)
+}
+func (d *dynamicStorage) ListUpstreams(modelConfigID string) ([]*plugin.Upstream, error) {
+	return d.impl.ListUpstreams(modelConfigID)
+}
+func (d *dynamicStorage) GetUpstreamByID(id string) (*plugin.Upstream, error) {
+	return d.impl.GetUpstreamByID(id)
+}
+func (d *dynamicStorage) SaveUpstream(up *plugin.Upstream) error {
+	return d.impl.SaveUpstream(up)
+}
+func (d *dynamicStorage) DeleteUpstream(id string) error {
+	return d.impl.DeleteUpstream(id)
+}
 func (d *dynamicStorage) Ping() error  { return d.impl.Ping() }
 func (d *dynamicStorage) Close() error { return d.impl.Close() }

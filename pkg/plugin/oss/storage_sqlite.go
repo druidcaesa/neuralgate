@@ -85,6 +85,30 @@ func sqliteCreateTables(db *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_audit_tenant ON audit_logs(tenant_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_audit_model ON audit_logs(model_name)`,
+		`CREATE TABLE IF NOT EXISTS rate_limit_configs (
+			id TEXT PRIMARY KEY,
+			tenant_id TEXT NOT NULL DEFAULT '',
+			model_name TEXT NOT NULL DEFAULT '',
+			requests_per_sec INTEGER NOT NULL,
+			tokens_per_min INTEGER NOT NULL,
+			strategy TEXT NOT NULL DEFAULT 'token_bucket',
+			enabled INTEGER NOT NULL DEFAULT 1,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			UNIQUE(tenant_id, model_name)
+		)`,
+		`CREATE TABLE IF NOT EXISTS upstreams (
+			id TEXT PRIMARY KEY,
+			model_config_id TEXT NOT NULL,
+			base_url TEXT NOT NULL,
+			api_key TEXT NOT NULL,
+			encrypted INTEGER NOT NULL DEFAULT 1,
+			weight INTEGER NOT NULL DEFAULT 1,
+			enabled INTEGER NOT NULL DEFAULT 1,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_upstreams_model ON upstreams(model_config_id)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {

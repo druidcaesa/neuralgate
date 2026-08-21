@@ -40,9 +40,9 @@ func (f *ossFactory) CreateAuditor() plugin.AuditPipeline {
 	return NewSimpleAuditor(f.CreateStorage())
 }
 
-// CreateRateLimiter 创建内存限流器
+// CreateRateLimiter 创建限流器（三层配置 + 双策略,配置源为共享存储）
 func (f *ossFactory) CreateRateLimiter() plugin.RateLimitPlugin {
-	return NewMemRateLimiter()
+	return NewRateLimiter(f.CreateStorage(), 10, 100000, "token_bucket")
 }
 
 // CreateExporter OSS 版无日志外推
