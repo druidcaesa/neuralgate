@@ -308,3 +308,65 @@ func TestSQLStorageAPIKeyReSaveAfterDelete(t *testing.T) {
 		t.Fatalf("re-saved key name = %q; want 恢复测试", got.Name)
 	}
 }
+
+func TestSQLStorageRateLimitConfigCRUD(t *testing.T) {
+	s := newTestSQLStorage(t)
+	now := time.Now()
+	cfg := &plugin.RateLimitConfig{
+		ID: "rl1", TenantID: "t1", ModelName: "gpt-4",
+		RequestsPerSec: 20, TokensPerMin: 50000, Strategy: "token_bucket",
+		Enabled: true, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := s.SaveRateLimitConfig(cfg); err != nil {
+		t.Fatalf("SaveRateLimitConfig: %v", err)
+	}
+	got, err := s.GetRateLimitConfig("t1", "gpt-4")
+	if err != nil || got.RequestsPerSec != 20 || got.Strategy != "token_bucket" {
+		t.Fatalf("GetRateLimitConfig = %v, %v", got, err)
+	}
+	// 不存在返回 ErrNotFound
+	if _, err := s.GetRateLimitConfig("t1", "nope"); err != ErrNotFound {
+		t.Fatalf("GetRateLimitConfig(nope) err = %v; want ErrNotFound", err)
+	}
+	if _, total, err := s.ListRateLimitConfigs(1, 10); err != nil || total != 1 {
+		t.Fatalf("ListRateLimitConfigs total = %d, err %v", total, err)
+	}
+	if err := s.DeleteRateLimitConfig("rl1"); err != nil {
+		t.Fatalf("DeleteRateLimitConfig: %v", err)
+	}
+	if _, err := s.GetRateLimitConfig("t1", "gpt-4"); err != ErrNotFound {
+		t.Fatalf("after delete err = %v; want ErrNotFound", err)
+	}
+}
+
+func TestSQLStorageUpstreamCRUD(t *testing.T) {
+	s := newTestSQLStorage(t)
+	now := time.Now()
+	up := &plugin.Upstream{
+		ID: "u1", ModelConfigID: "m1", BaseURL: "https://up1",
+		APIKey: "sk-up-secret", Weight: 3, Enabled: true,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := s.SaveUpstream(up); err != nil {
+		t.Fatalf("SaveUpstream: %v", err)
+	}
+	// api_key 加密后读回还原
+	got, err := s.GetUpstreamByID("u1")
+	if err != nil || got.APIKey != "sk-up-secret" || got.Weight != 3 {
+		t.Fatalf("GetUpstreamByID = %v, %v", got, err)
+	}
+	ups, err := s.ListUpstreams("m1")
+	if err != nil || len(ups) != 1 || ups[0].BaseURL != "https://up1" {
+		t.Fatalf("ListUpstreams = %v, %v", ups, err)
+	}
+	// 另一模型的上游不返回
+	if ups2, _ := s.ListUpstreams("m2"); len(ups2) != 0 {
+		t.Fatalf("ListUpstreams(m2) len = %d; want 0", len(ups2))
+	}
+	if err := s.DeleteUpstream("u1"); err != nil {
+		t.Fatalf("DeleteUpstream: %v", err)
+	}
+	if _, err := s.GetUpstreamByID("u1"); err != ErrNotFound {
+		t.Fatalf("after delete err = %v; want ErrNotFound", err)
+	}
+}

@@ -29,9 +29,11 @@ var ErrNotFound = errors.New("record not found")
 // MemStorage 内存存储实现
 type MemStorage struct {
 	mu           sync.RWMutex
-	apiKeys      map[string]*plugin.APIKey      // keyHash -> key
-	modelConfigs map[string]*plugin.ModelConfig // modelName -> config
-	auditLogs    []*plugin.AuditLog             // 按写入顺序
+	apiKeys      map[string]*plugin.APIKey          // keyHash -> key
+	modelConfigs map[string]*plugin.ModelConfig     // modelName -> config
+	auditLogs    []*plugin.AuditLog                 // 按写入顺序
+	rateLimits   map[string]*plugin.RateLimitConfig // id -> config
+	upstreams    map[string]*plugin.Upstream        // id -> upstream
 }
 
 // NewMemStorage 创建内存存储
@@ -39,6 +41,8 @@ func NewMemStorage() *MemStorage {
 	return &MemStorage{
 		apiKeys:      make(map[string]*plugin.APIKey),
 		modelConfigs: make(map[string]*plugin.ModelConfig),
+		rateLimits:   make(map[string]*plugin.RateLimitConfig),
+		upstreams:    make(map[string]*plugin.Upstream),
 	}
 }
 
@@ -220,6 +224,91 @@ func (s *MemStorage) QueryAuditLogs(filter plugin.AuditLogFilter, page, size int
 func (s *MemStorage) Ping() error { return nil }
 
 func (s *MemStorage) Close() error { return nil }
+
+// ===== 限流配置 =====
+
+func (s *MemStorage) GetRateLimitConfig(tenantID, modelName string) (*plugin.RateLimitConfig, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, c := range s.rateLimits {
+		if c.TenantID == tenantID && c.ModelName == modelName {
+			return c, nil
+		}
+	}
+	return nil, ErrNotFound
+}
+
+func (s *MemStorage) SaveRateLimitConfig(cfg *plugin.RateLimitConfig) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.rateLimits[cfg.ID] = cfg
+	return nil
+}
+
+func (s *MemStorage) ListRateLimitConfigs(page, size int) ([]*plugin.RateLimitConfig, int64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var all []*plugin.RateLimitConfig
+	for _, c := range s.rateLimits {
+		all = append(all, c)
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
+	page, size = normalizePage(page, size)
+	start := min((page-1)*size, len(all))
+	end := min(start+size, len(all))
+	return all[start:end], int64(len(all)), nil
+}
+
+func (s *MemStorage) DeleteRateLimitConfig(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.rateLimits[id]; !ok {
+		return ErrNotFound
+	}
+	delete(s.rateLimits, id)
+	return nil
+}
+
+// ===== 上游管理 =====
+
+func (s *MemStorage) ListUpstreams(modelConfigID string) ([]*plugin.Upstream, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var ups []*plugin.Upstream
+	for _, u := range s.upstreams {
+		if u.ModelConfigID == modelConfigID {
+			ups = append(ups, u)
+		}
+	}
+	sort.Slice(ups, func(i, j int) bool { return ups[i].ID < ups[j].ID })
+	return ups, nil
+}
+
+func (s *MemStorage) GetUpstreamByID(id string) (*plugin.Upstream, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if u, ok := s.upstreams[id]; ok {
+		return u, nil
+	}
+	return nil, ErrNotFound
+}
+
+func (s *MemStorage) SaveUpstream(up *plugin.Upstream) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.upstreams[up.ID] = up
+	return nil
+}
+
+func (s *MemStorage) DeleteUpstream(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.upstreams[id]; !ok {
+		return ErrNotFound
+	}
+	delete(s.upstreams, id)
+	return nil
+}
 
 // normalizePage 分页参数规范化：page>=1，size 取 [1,100]
 func normalizePage(page, size int) (int, int) {
