@@ -114,6 +114,80 @@ func TestProxyPassThroughForwarding(t *testing.T) {
 	}
 }
 
+func TestProxyPassThroughGET(t *testing.T) {
+	// GET 透传端点(如 /v1/files/:id):路由中间件对 GET 放行不设模型,
+	// handlePassThrough 应取首个启用模型配置作为上游
+	var gotMethod, gotPath, gotAuth string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath, gotAuth = r.Method, r.URL.Path, r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"file-1","object":"file"}`))
+	}))
+	defer upstream.Close()
+
+	storage := oss.NewMemStorage()
+	now := time.Now()
+	_ = storage.SaveModelConfig(&plugin.ModelConfig{
+		ID: "m1", ModelName: "gpt-4", Provider: "openai", ProviderModel: "gpt-4o",
+		BaseURL: upstream.URL, APIKey: "sk-upstream", Enabled: true,
+		CreatedAt: now, UpdatedAt: now,
+	})
+	_ = storage.SaveAPIKey(&plugin.APIKey{
+		ID: "k1", KeyHash: hashKey("ng-test"), KeyPrefix: "ng-test", Name: "t",
+		Status: plugin.APIKeyStatusActive, Quota: -1, CreatedAt: now, UpdatedAt: now,
+	})
+	registry := adapter.NewAdapterRegistry()
+	registry.Register(adapter.NewOpenAIAdapter())
+	limiter := oss.NewMemRateLimiter()
+	_ = limiter.Init(map[string]interface{}{"default_rps": 100, "default_tpm": 100000})
+	pc := NewProxyCore(NewPipeline(storage, limiter, nil, registry), registry)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/files/file-1", nil)
+	req.Header.Set("Authorization", "Bearer ng-test")
+	rec := httptest.NewRecorder()
+	pc.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; want 200, body=%s", rec.Code, rec.Body.String())
+	}
+	if gotMethod != http.MethodGet || gotPath != "/v1/files/file-1" {
+		t.Errorf("upstream got %s %s; want GET /v1/files/file-1", gotMethod, gotPath)
+	}
+	if gotAuth != "Bearer sk-upstream" {
+		t.Errorf("upstream auth = %q; want Bearer sk-upstream", gotAuth)
+	}
+}
+
+func TestProxyPassThroughGETNoEnabledModel(t *testing.T) {
+	// 无任何启用模型时,GET 透传端点应返回 404 model_not_found
+	storage := oss.NewMemStorage()
+	now := time.Now()
+	_ = storage.SaveModelConfig(&plugin.ModelConfig{
+		ID: "m1", ModelName: "disabled-model", Provider: "openai", ProviderModel: "x",
+		BaseURL: "https://upstream", APIKey: "sk", Enabled: false,
+		CreatedAt: now, UpdatedAt: now,
+	})
+	_ = storage.SaveAPIKey(&plugin.APIKey{
+		ID: "k1", KeyHash: hashKey("ng-test"), KeyPrefix: "ng-test", Name: "t",
+		Status: plugin.APIKeyStatusActive, Quota: -1, CreatedAt: now, UpdatedAt: now,
+	})
+	registry := adapter.NewAdapterRegistry()
+	registry.Register(adapter.NewOpenAIAdapter())
+	pc := NewProxyCore(NewPipeline(storage, oss.NewMemRateLimiter(), nil, registry), registry)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/files/file-1", nil)
+	req.Header.Set("Authorization", "Bearer ng-test")
+	rec := httptest.NewRecorder()
+	pc.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d; want 404, body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "model_not_found") {
+		t.Fatalf("body = %s; want model_not_found", rec.Body.String())
+	}
+}
+
 func TestProxyPassThroughAudited(t *testing.T) {
 	// 透传端点(/v1/completions):请求开始 Submit + 结束 Finalize,审计必须落库
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
