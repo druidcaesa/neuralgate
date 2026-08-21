@@ -16,7 +16,7 @@ storage:
   max_idle_conns: 10
   # ----- MySQL (可选) -----
   # driver: mysql
-  # dsn: "user:pass@tcp(host:3306)/neuralgate?charset=utf8mb4&parseTime=true"
+  # dsn: "root:root@tcp(127.0.0.1:3306)/neuralgate?charset=utf8mb4&parseTime=true"
 
 audit:
   queue_size: 65536          # 环形队列大小
