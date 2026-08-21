@@ -16,6 +16,7 @@ package core
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -288,6 +289,44 @@ func TestProxyModelsList(t *testing.T) {
 	}
 }
 
+func TestProxyModelsListPagination(t *testing.T) {
+	// 模型数超单页上限(100)时,/v1/models 必须翻页拉全量,不得截断
+	storage := oss.NewMemStorage()
+	now := time.Now()
+	for i := 0; i < 105; i++ {
+		name := fmt.Sprintf("model-%03d", i)
+		_ = storage.SaveModelConfig(&plugin.ModelConfig{
+			ID: name, ModelName: name, Provider: "openai", ProviderModel: name,
+			BaseURL: "https://upstream", APIKey: "sk", Enabled: true,
+			CreatedAt: now, UpdatedAt: now,
+		})
+	}
+	_ = storage.SaveAPIKey(&plugin.APIKey{
+		ID: "k1", KeyHash: hashKey("ng-test"), KeyPrefix: "ng-test", Name: "t",
+		Status: plugin.APIKeyStatusActive, Quota: -1, CreatedAt: now, UpdatedAt: now,
+	})
+	registry := adapter.NewAdapterRegistry()
+	registry.Register(adapter.NewOpenAIAdapter())
+	pc := NewProxyCore(NewPipeline(storage, oss.NewMemRateLimiter(), nil, registry), registry)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	req.Header.Set("Authorization", "Bearer ng-test")
+	rec := httptest.NewRecorder()
+	pc.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var list struct {
+		Data []map[string]interface{} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(list.Data) != 105 {
+		t.Fatalf("data len = %d; want 105 (存储层单页上限 100,必须翻页拉全量)", len(list.Data))
+	}
+}
+
 func TestProxyModelsDetail(t *testing.T) {
 	storage := routeTestStorage()
 	registry := adapter.NewAdapterRegistry()
@@ -364,6 +403,22 @@ func TestProtocolParserIsSSE(t *testing.T) {
 	req2 := httptest.NewRequest("POST", "/v1/chat/completions", nil)
 	if p.IsSSE(req2) {
 		t.Error("IsSSE() = true, want false without Accept header")
+	}
+}
+
+func TestIsStreamRequestAcceptHeader(t *testing.T) {
+	// Accept: text/event-stream → 流式(即使 body 无 stream 字段)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4","messages":[]}`))
+	req.Header.Set("Accept", "text/event-stream")
+	req = req.WithContext(WithRequestContext(req.Context(), &RequestContext{}))
+	if !isStreamRequest(req) {
+		t.Error("isStreamRequest = false, want true for Accept: text/event-stream")
+	}
+	// 无 Accept 且 body stream=false → 非流式
+	req2 := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4","stream":false}`))
+	req2 = req2.WithContext(WithRequestContext(req2.Context(), &RequestContext{}))
+	if isStreamRequest(req2) {
+		t.Error("isStreamRequest = true, want false")
 	}
 }
 

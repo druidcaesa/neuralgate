@@ -17,6 +17,7 @@ package core
 import (
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -73,5 +74,32 @@ func TestRateLimitExceeded(t *testing.T) {
 	}
 	if rec.Header().Get("Retry-After") == "" {
 		t.Fatalf("missing Retry-After header")
+	}
+	// X-RateLimit-Reset-Requests 应为 unix 秒时间戳(OpenAI 规范,非硬编码 "1s")
+	if v := rec.Header().Get("X-RateLimit-Reset-Requests"); v == "" {
+		t.Fatalf("missing X-RateLimit-Reset-Requests header")
+	} else if _, err := strconv.Atoi(v); err != nil {
+		t.Fatalf("X-RateLimit-Reset-Requests = %q; want unix timestamp", v)
+	}
+}
+
+func TestRateLimitHealthzExempt(t *testing.T) {
+	// /healthz 不计入限流桶(与 AuthMiddleware 的免鉴权对称):Allow 不应被调用
+	limiter := &recordingLimiter{}
+	mw := RateLimitMiddleware(limiter)
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	for i := 0; i < 3; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+		req = req.WithContext(WithRequestContext(req.Context(), &RequestContext{TenantID: "test"}))
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("healthz request %d status = %d; want 200", i, rec.Code)
+		}
+	}
+	if limiter.calls != 0 {
+		t.Fatalf("Allow calls = %d; want 0 (healthz 不计入限流桶)", limiter.calls)
 	}
 }
