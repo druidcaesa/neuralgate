@@ -426,3 +426,24 @@ func TestAdminServeWebUI(t *testing.T) {
 		}
 	}
 }
+
+func TestAdminUpdateModelKeepAPIKeyWhenEmpty(t *testing.T) {
+	s := oss.NewMemStorage()
+	now := time.Now()
+	_ = s.SaveModelConfig(&plugin.ModelConfig{ID: "m1", ModelName: "gpt-4", Provider: "openai", ProviderModel: "gpt-4o", BaseURL: "https://a", APIKey: "sk-original", Enabled: true, CreatedAt: now, UpdatedAt: now})
+	router := NewAdminServer(s, zap.NewNop(), "oss", oss.NewRateLimiter(s, 100, 100000, "token_bucket")).Router()
+
+	// PUT 时 api_key 留空 → 保留原值
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/models/m1",
+		strings.NewReader(`{"name":"gpt-4","provider":"openai","provider_model":"gpt-4o","base_url":"https://a","api_key":""}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("update with empty api_key status = %d; body=%s", w.Code, w.Body.String())
+	}
+	got, _ := s.GetModelConfigByID("m1")
+	if got.APIKey != "sk-original" {
+		t.Fatalf("api_key = %q; want sk-original (留空应保留原值)", got.APIKey)
+	}
+}

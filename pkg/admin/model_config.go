@@ -31,7 +31,7 @@ type modelConfigRequest struct {
 	Provider      string            `json:"provider" binding:"required,oneof=openai tongyi zhipu deepseek"`
 	ProviderModel string            `json:"provider_model" binding:"required,min=1,max=128"`
 	BaseURL       string            `json:"base_url" binding:"required"`
-	APIKey        string            `json:"api_key" binding:"required,min=1,max=256"`
+	APIKey        string            `json:"api_key" binding:"omitempty,min=1,max=256"` // 创建必填;更新留空=保留原值
 	Timeout       int               `json:"timeout"`        // 1-300,默认 60
 	MaxRetries    int               `json:"max_retries"`    // 0-5,默认 2
 	RetryInterval int               `json:"retry_interval"` // 1-30,默认 3
@@ -148,7 +148,10 @@ func (s *AdminServer) updateModelConfig(c *gin.Context) {
 	existing.Provider = req.Provider
 	existing.ProviderModel = req.ProviderModel
 	existing.BaseURL = req.BaseURL
-	existing.APIKey = req.APIKey
+	// api_key 留空 = 保留原值(编辑/启停场景前端不回传明文 key)
+	if req.APIKey != "" {
+		existing.APIKey = req.APIKey
+	}
 	existing.Timeout = time.Duration(req.Timeout)
 	existing.MaxRetries = req.MaxRetries
 	existing.RetryInterval = time.Duration(req.RetryInterval)
