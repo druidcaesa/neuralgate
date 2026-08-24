@@ -227,3 +227,70 @@ func TestMemStorageQueryAuditLogsByRequestID(t *testing.T) {
 		t.Fatalf("QueryAuditLogs by requestID = %v,%d,%v", logs, total, err)
 	}
 }
+
+// tamperAlert 构造指向指定审计日志的未处置告警
+func tamperAlert(logID string) *plugin.TamperAlert {
+	return &plugin.TamperAlert{AuditLogID: logID, Reason: "指纹不一致"}
+}
+
+func TestMemSaveListTamperAlerts(t *testing.T) {
+	s := NewMemStorage()
+	if err := s.SaveTamperAlerts([]*plugin.TamperAlert{tamperAlert("req-1")}); err != nil {
+		t.Fatal(err)
+	}
+	// upsert：同 AuditLogID 再存更新而非新增
+	if err := s.SaveTamperAlerts([]*plugin.TamperAlert{tamperAlert("req-1")}); err != nil {
+		t.Fatal(err)
+	}
+	all, total, err := s.ListTamperAlerts(nil, 1, 10)
+	if err != nil || total != 1 || len(all) != 1 {
+		t.Fatalf("upsert 后应仍 1 条: total=%d err=%v", total, err)
+	}
+	if all[0].FirstSeenAt.After(all[0].LastCheckedAt) {
+		t.Error("LastCheckedAt 应不早于 FirstSeenAt")
+	}
+	if all[0].ID == "" {
+		t.Error("插入时应生成告警 ID")
+	}
+	// resolved=false 过滤应无结果（当前全部未处置）
+	no := false
+	unresolved, _, _ := s.ListTamperAlerts(&no, 1, 10)
+	yes := true
+	resolved, _, _ := s.ListTamperAlerts(&yes, 1, 10)
+	if len(unresolved) != 1 || len(resolved) != 0 {
+		t.Errorf("过滤不符: unresolved=%d resolved=%d", len(unresolved), len(resolved))
+	}
+}
+
+func TestMemResolveTamperAlert(t *testing.T) {
+	s := NewMemStorage()
+	_ = s.SaveTamperAlerts([]*plugin.TamperAlert{tamperAlert("req-2")})
+	got, _, _ := s.ListTamperAlerts(nil, 1, 10)
+	if err := s.SetTamperAlertResolved(got[0].ID, true); err != nil {
+		t.Fatal(err)
+	}
+	yes := true
+	resolved, total, err := s.ListTamperAlerts(&yes, 1, 10)
+	if err != nil || total != 1 || !resolved[0].Resolved {
+		t.Fatalf("处置后应可查到 resolved=true: %d,%v", total, err)
+	}
+}
+
+func TestMemDeleteAuditLogsBefore(t *testing.T) {
+	s := NewMemStorage()
+	old := time.Now().Add(-48 * time.Hour)
+	_ = s.SaveAuditLog(&plugin.AuditLog{ID: "old", RequestID: "old", CreatedAt: old})
+	_ = s.SaveAuditLog(&plugin.AuditLog{ID: "new", RequestID: "new", CreatedAt: time.Now()})
+	n, err := s.DeleteAuditLogsBefore(time.Now().Add(-24 * time.Hour))
+	if err != nil || n != 1 {
+		t.Fatalf("应删 1 条: n=%d err=%v", n, err)
+	}
+	logs, total, err := s.QueryAuditLogs(plugin.AuditLogFilter{RequestID: "old"}, 1, 10)
+	if err != nil || total != 0 || len(logs) != 0 {
+		t.Errorf("过期日志应已删除: %d,%v", total, err)
+	}
+	logs2, total2, _ := s.QueryAuditLogs(plugin.AuditLogFilter{RequestID: "new"}, 1, 10)
+	if total2 != 1 || len(logs2) != 1 {
+		t.Error("未到期日志应保留")
+	}
+}

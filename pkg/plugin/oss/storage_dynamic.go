@@ -16,6 +16,7 @@ package oss
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
 )
@@ -100,3 +101,18 @@ func (d *dynamicStorage) DeleteUpstream(id string) error {
 }
 func (d *dynamicStorage) Ping() error  { return d.impl.Ping() }
 func (d *dynamicStorage) Close() error { return d.impl.Close() }
+
+// ===== 留存清理与篡改告警(委托底层实现) =====
+
+func (d *dynamicStorage) DeleteAuditLogsBefore(cutoff time.Time) (int64, error) {
+	return d.impl.DeleteAuditLogsBefore(cutoff)
+}
+func (d *dynamicStorage) SaveTamperAlerts(alerts []*plugin.TamperAlert) error {
+	return d.impl.SaveTamperAlerts(alerts)
+}
+func (d *dynamicStorage) ListTamperAlerts(resolved *bool, page, size int) ([]*plugin.TamperAlert, int64, error) {
+	return d.impl.ListTamperAlerts(resolved, page, size)
+}
+func (d *dynamicStorage) SetTamperAlertResolved(id string, resolved bool) error {
+	return d.impl.SetTamperAlertResolved(id, resolved)
+}

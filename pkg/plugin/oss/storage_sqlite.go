@@ -109,6 +109,15 @@ func sqliteCreateTables(db *sql.DB) error {
 			updated_at INTEGER NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_upstreams_model ON upstreams(model_config_id)`,
+		`CREATE TABLE IF NOT EXISTS audit_tamper_alerts (
+			id TEXT PRIMARY KEY,
+			audit_log_id TEXT NOT NULL,
+			reason TEXT NOT NULL,
+			resolved INTEGER NOT NULL DEFAULT 0,
+			first_seen_at INTEGER NOT NULL,
+			last_checked_at INTEGER NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_tamper_alerts_log ON audit_tamper_alerts(audit_log_id)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {
