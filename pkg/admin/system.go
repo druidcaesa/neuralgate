@@ -45,5 +45,6 @@ func (s *AdminServer) systemInfo(c *gin.Context) {
 		"audit_queue_status":  gin.H{"status": "ok"},
 		"rate_limiter_status": gin.H{"status": "ok"},
 		"license":             licenseView,
+		"tamper":              gin.H{"unresolved_count": s.unresolvedTamperCount()},
 	})
 }
