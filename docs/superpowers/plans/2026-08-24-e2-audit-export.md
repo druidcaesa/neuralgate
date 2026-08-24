@@ -40,7 +40,7 @@
   func NewSIEMTarget(endpoint, apiKey string) *SIEMTarget
   ```
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```go
 // 标准头 + //go:build enterprise + package enterprise
@@ -121,12 +121,12 @@ func TestSIEMTestConnection(t *testing.T) {
 
 注意：测试文件需要 `fmt` 与 `time` import（sampleLogs 用到）。
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
 Run: `go test -tags enterprise ./pkg/plugin/enterprise/ -run 'TestSIEM|TestNewExportTarget'`
 Expected: FAIL `undefined: NewExportTarget`
 
-- [ ] **Step 3: 最小实现**
+- [x] **Step 3: 最小实现**
 
 ```go
 // export_target.go：标准许可证头 + //go:build enterprise + package enterprise
@@ -224,12 +224,12 @@ func (t *SIEMTarget) TestConnection() error {
 func (t *SIEMTarget) Close() error { return nil }
 ```
 
-- [ ] **Step 4: 运行确认通过**
+- [x] **Step 4: 运行确认通过**
 
 Run: `go test -race -tags enterprise ./pkg/plugin/enterprise/ -run 'TestSIEM|TestNewExportTarget'`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add pkg/plugin/enterprise/export_target.go pkg/plugin/enterprise/export_target_test.go
@@ -251,7 +251,7 @@ git commit -m "feat(enterprise): ExportTarget 接口与 SIEM HTTP 外推目标"
   func NewSyslogTarget(endpoint string) (*SyslogTarget, error) // endpoint: udp://host:port | tcp://host:port | host:port(默认udp)
   ```
 
-- [ ] **Step 1: 写失败测试（追加到 export_target_test.go）**
+- [x] **Step 1: 写失败测试（追加到 export_target_test.go）**
 
 ```go
 // 追加 imports: bufio, net, strconv, strings(已), time(已)
@@ -388,12 +388,12 @@ func TestSyslogRejectsBadScheme(t *testing.T) {
 
 测试文件需追加 imports：`bufio`、`io`、`net`、`strconv`。
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
 Run: `go test -tags enterprise ./pkg/plugin/enterprise/ -run TestSyslog`
 Expected: FAIL `undefined: NewSyslogTarget`
 
-- [ ] **Step 3: 实现（追加到 export_target.go）**
+- [x] **Step 3: 实现（追加到 export_target.go）**
 
 ```go
 // ===== Syslog =====
@@ -522,12 +522,12 @@ func (t *SyslogTarget) Close() error {
 }
 ```
 
-- [ ] **Step 4: 运行确认通过**
+- [x] **Step 4: 运行确认通过**
 
 Run: `go test -race -tags enterprise ./pkg/plugin/enterprise/ -run TestSyslog`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add pkg/plugin/enterprise/
@@ -549,7 +549,7 @@ git commit -m "feat(enterprise): Syslog RFC5424 外推目标(UDP/TCP octet-count
   // Close() error —— 停循环→最终拉取→无视退避清空缓冲→target.Close()；未 Init 时安全空操作
   ```
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```go
 // 标准头 + //go:build enterprise + package enterprise
@@ -715,12 +715,12 @@ func TestCloseDrainsRemainingAndSafeOnUninit(t *testing.T) {
 
 测试文件需追加 import：`fmt`。
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
 Run: `go test -tags enterprise ./pkg/plugin/enterprise/ -run 'TestPull|TestSame|TestFailure|TestBackoff|TestBuffer|TestClose'`
 Expected: FAIL `undefined: NewTailExporter`
 
-- [ ] **Step 3: 最小实现**
+- [x] **Step 3: 最小实现**
 
 ```go
 // export_tail.go：标准许可证头 + //go:build enterprise + package enterprise
@@ -1035,12 +1035,12 @@ func (e *TailExporter) TestConnection() error {
 注意一处实现要点：
 - `flushOnce`/`flushAll` 中 `copy(batch, e.buffer[:n])` 必须在解锁前完成快照；`e.buffer = e.buffer[n:]` 只能由本方法在重新持锁后执行。
 
-- [ ] **Step 4: 运行确认通过**
+- [x] **Step 4: 运行确认通过**
 
 Run: `go test -race -tags enterprise ./pkg/plugin/enterprise/`
 Expected: PASS（Task 1/2 用例一并回归）
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add pkg/plugin/enterprise/export_tail.go pkg/plugin/enterprise/export_tail_test.go
@@ -1068,7 +1068,7 @@ git commit -m "feat(enterprise): TailExporter 游标拉取与有界缓冲退避�
   type ExportConfig struct { Enabled bool; Type, Endpoint, APIKey string; BatchSize int; FlushInterval time.Duration } // 均 yaml 标签
   ```
 
-- [ ] **Step 1: 写失败测试（cmd/gateway/main_test.go 新建）**
+- [x] **Step 1: 写失败测试（cmd/gateway/main_test.go 新建）**
 
 ```go
 // 标准许可证头；package main；无 BuildTag（双矩阵都要跑）
@@ -1100,12 +1100,12 @@ func TestShouldStartExport(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
 Run: `go test ./cmd/gateway/ -run TestShouldStartExport`
 Expected: FAIL `undefined: shouldStartExport`
 
-- [ ] **Step 3: 实现（三处修改一次完成）**
+- [x] **Step 3: 实现（三处修改一次完成）**
 
 `pkg/config/config.go`：
 
@@ -1189,12 +1189,12 @@ export:                       # Enterprise only：审计日志外推(audit_strea
   flush_interval: 10s         # 拉取/推送节奏 1-60s
 ```
 
-- [ ] **Step 4: 运行确认通过**
+- [x] **Step 4: 运行确认通过**
 
 Run: `go test ./cmd/gateway/ -run TestShouldStartExport && go build ./... && go build -tags enterprise ./...`
 Expected: PASS + 双编译无错误
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add pkg/config/config.go pkg/plugin/enterprise/factory.go cmd/gateway/main.go cmd/gateway/main_test.go config.yaml
@@ -1207,17 +1207,17 @@ git commit -m "feat(gateway): 审计外推门控启动接线与 export.enabled �
 
 **Files:** 无新改动（验证任务；发现问题则修复后单独 commit）
 
-- [ ] **Step 1: 格式与静态检查**
+- [x] **Step 1: 格式与静态检查**
 
 Run: `gofmt -l cmd pkg | grep . && echo NEED_FMT || echo FMT_OK; go vet ./... && go vet -tags enterprise ./...`
 Expected: FMT_OK 且 vet 无输出
 
-- [ ] **Step 2: 双矩阵构建与测试**
+- [x] **Step 2: 双矩阵构建与测试**
 
 Run: `go build ./... && go build -tags enterprise ./... && go test -race -tags oss ./... && go test -race -tags enterprise ./...`
 Expected: oss 全绿（数量与 E1 基线一致，证明零行为变化）；enterprise 全绿（新增 export 用例）
 
-- [ ] **Step 3: 端到端冒烟（真实密钥 + 企业版二进制）**
+- [x] **Step 3: 端到端冒烟（真实密钥 + 企业版二进制）**
 
 ```bash
 # 签发含 audit_stream 的真实 license
@@ -1254,7 +1254,7 @@ grep -o '"msg":"[^"]*外推[^"]*"' /tmp/e2-smoke.log                   # 已启�
 # 反向验证：enabled:false 或去掉 features 里 audit_stream 重签 → 日志出现「未启用」及原因
 ```
 
-- [ ] **Step 4: 收尾提交（如有修复）**
+- [x] **Step 4: 收尾提交（如有修复）**
 
 ```bash
 git add -A && git commit -m "fix(enterprise): E2 验证问题修复"  # 仅当有修复
@@ -1268,3 +1268,20 @@ git add -A && git commit -m "fix(enterprise): E2 验证问题修复"  # 仅当�
 - **占位符**：Task 3 Step 1 的 `newManualExporter` 骨架已在 Step 3 注明删除、用例内联构造；无 TBD/TODO
 - **类型一致性**：`ExportTarget.Send/TestConnection/Close` 在 Task 1 定义、Task 2/3 实现与消费一致；`shouldStartExport` 签名在 Task 4 测试与实现一致
 
+
+---
+
+## 实施结果（2026-08-24 完成）
+
+| 提交 | 内容 |
+|------|------|
+| 00067d4 | ExportTarget 接口与 SIEM/Syslog 外推目标（T1+T2 合并提交，两者编译互依无法拆分） |
+| 3c1276c | TailExporter 游标拉取与有界缓冲退避补投（构造器补 seen 初始化修复测试装配路径） |
+| 52eaa75 | 门控启动接线与 export.enabled 开关 |
+
+**验证矩阵**：gofmt/vet 干净；`go test -race` oss 167 / enterprise 189 全绿。
+
+**端到端冒烟**（真实密钥授权 + 企业版二进制 + 本地 UDP Syslog 接收器）：
+- 授权含 audit_stream 且 enabled=true → 「审计日志外推已启动」，edition=enterprise
+- 触发代理请求（上游不可达 504）→ 1s 内接收器收到 RFC5424 帧 `<11>1 ... NeuralGate NeuralGate - <requestID> - {全量审计JSON}`（504→err severity 映射正确）
+- 反向：授权仅含 rbac → 「审计日志外推未启用 reason=授权未包含 audit_stream 功能」
