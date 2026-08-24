@@ -1,4 +1,16 @@
 <template>
+  <div>
+  <el-alert
+    v-if="tamperUnresolved > 0"
+    :title="`检测到 ${tamperUnresolved} 条审计篡改告警，请立即核实处置`"
+    type="error"
+    show-icon
+    :closable="false"
+    style="margin-bottom:16px"
+  >
+    <router-link to="/tamper-alerts">前往告警列表 →</router-link>
+  </el-alert>
+
   <el-card>
     <template #header><span>系统信息</span></template>
     <el-descriptions v-if="info" :column="2" border>
@@ -45,6 +57,7 @@
       </el-descriptions-item>
     </el-descriptions>
   </el-card>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -54,6 +67,8 @@ import { getLicense, getSystemInfo } from '../api/system'
 
 const info = ref<SystemInfo | null>(null)
 const license = ref<LicenseDetail | null>(null)
+
+const tamperUnresolved = computed(() => info.value?.tamper?.unresolved_count ?? 0)
 
 const statusLabels: Record<string, string> = {
   valid: '有效',

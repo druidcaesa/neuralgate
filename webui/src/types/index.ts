@@ -196,6 +196,25 @@ export interface SystemInfo {
     expires_at?: string
     features_count?: number
   }
+  tamper?: {
+    unresolved_count: number
+  }
+}
+
+// ===== 篡改告警（GET /api/tamper-alerts） =====
+export interface TamperAlertItem {
+  id: string
+  audit_log_id: string
+  reason: string
+  resolved: boolean
+  first_seen_at: string
+  last_checked_at: string
+}
+
+export interface TamperAlertQueryParams {
+  page?: number
+  size?: number
+  resolved?: string   // 'true'/'false'，不传=全部
 }
 
 // ===== 授权信息（GET /api/license，脱敏后） =====

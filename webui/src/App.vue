@@ -7,6 +7,7 @@
         <el-menu-item index="/api-keys"><el-icon><Key /></el-icon>API Key</el-menu-item>
         <el-menu-item index="/audit-logs"><el-icon><Document /></el-icon>审计日志</el-menu-item>
         <el-menu-item index="/rate-limits"><el-icon><Timer /></el-icon>限流配置</el-menu-item>
+        <el-menu-item index="/tamper-alerts"><el-icon><Warning /></el-icon>防篡改告警</el-menu-item>
         <el-menu-item index="/system"><el-icon><Setting /></el-icon>系统信息</el-menu-item>
       </el-menu>
     </el-aside>
@@ -22,7 +23,7 @@
 </template>
 
 <script setup lang="ts">
-import { Cpu, Key, Document, Timer, Setting } from '@element-plus/icons-vue'
+import { Cpu, Key, Document, Timer, Setting, Warning } from '@element-plus/icons-vue'
 </script>
 
 <style>
