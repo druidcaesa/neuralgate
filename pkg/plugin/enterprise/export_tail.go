@@ -33,6 +33,8 @@ const (
 	cursorOverlap          = time.Second      // 游标向前重叠窗口(配合 seen 去重)
 	defaultExportBatchSize = 50
 	defaultFlushInterval   = 10 * time.Second
+	maxExportBatchSize     = 1000             // PRD 3.8 batch_size 上限
+	maxFlushInterval       = 60 * time.Second // PRD 3.8 flush_interval 上限
 )
 
 // backoffDelay 第 failures 次连续失败后的重试间隔：1s 起倍增，30s 封顶
@@ -107,11 +109,25 @@ func (e *TailExporter) Init(config map[string]interface{}) error {
 	if err != nil {
 		return err
 	}
-	if v, ok := config["batch_size"].(int); ok && v > 0 {
-		e.batchSize = v
+	if v, ok := config["batch_size"].(int); ok {
+		switch {
+		case v < 1:
+			// 非法值保持默认 50
+		case v > maxExportBatchSize:
+			e.batchSize = maxExportBatchSize
+		default:
+			e.batchSize = v
+		}
 	}
-	if v, ok := config["flush_interval"].(time.Duration); ok && v > 0 {
-		e.flushInterval = v
+	if v, ok := config["flush_interval"].(time.Duration); ok {
+		switch {
+		case v < time.Second:
+			// 非法值保持默认 10s
+		case v > maxFlushInterval:
+			e.flushInterval = maxFlushInterval
+		default:
+			e.flushInterval = v
+		}
 	}
 	if l, ok := config["logger"].(*zap.Logger); ok && l != nil {
 		e.logger = l

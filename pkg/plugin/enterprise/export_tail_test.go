@@ -19,6 +19,8 @@ package enterprise
 import (
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
@@ -181,5 +183,51 @@ func TestCloseDrainsRemainingAndSafeOnUninit(t *testing.T) {
 	}
 	if got := target.count(); got != 1 {
 		t.Fatalf("Close 应无视退避清空缓冲, got %d", got)
+	}
+}
+
+func TestInitClampsConfigRanges(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+
+	e := NewTailExporter(oss.NewMemStorage())
+	err := e.Init(map[string]interface{}{
+		"type":           "siem",
+		"endpoint":       srv.URL,
+		"batch_size":     5000,              // 超 PRD 上限 1000 → 钳制
+		"flush_interval": 120 * time.Second, // 超 PRD 上限 60s → 钳制
+	})
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	defer e.Close()
+	if e.batchSize != 1000 {
+		t.Errorf("batch_size 应钳制为 1000, got %d", e.batchSize)
+	}
+	if e.flushInterval != 60*time.Second {
+		t.Errorf("flush_interval 应钳制为 60s, got %v", e.flushInterval)
+	}
+}
+
+func TestInitKeepsDefaultsOnInvalidValues(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+
+	e := NewTailExporter(oss.NewMemStorage())
+	err := e.Init(map[string]interface{}{
+		"type":           "siem",
+		"endpoint":       srv.URL,
+		"batch_size":     -5,           // 非法 → 保持默认 50
+		"flush_interval": -time.Second, // 非法 → 保持默认 10s
+	})
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	defer e.Close()
+	if e.batchSize != defaultExportBatchSize {
+		t.Errorf("非法 batch_size 应保持默认 50, got %d", e.batchSize)
+	}
+	if e.flushInterval != defaultFlushInterval {
+		t.Errorf("非法 flush_interval 应保持默认 10s, got %v", e.flushInterval)
 	}
 }
