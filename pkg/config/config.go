@@ -68,6 +68,7 @@ type RateLimitConfig struct {
 }
 
 type ExportConfig struct {
+	Enabled       bool          `yaml:"enabled"` // 是否启用外推(bool 不参与 applyDefaults)
 	Type          string        `yaml:"type"`
 	Endpoint      string        `yaml:"endpoint"`
 	APIKey        string        `yaml:"api_key"`

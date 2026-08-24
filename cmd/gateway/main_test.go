@@ -1,0 +1,45 @@
+// Copyright 2026 FanYaNan. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package main
+
+import (
+	"testing"
+
+	"github.com/druidcaesa/neuralgate/pkg/core"
+	"github.com/druidcaesa/neuralgate/pkg/license"
+)
+
+// featureGate 测试用固定清单门控
+type featureGate map[string]bool
+
+func (f featureGate) HasFeature(feature string) bool { return f[feature] }
+
+func TestShouldStartExport(t *testing.T) {
+	if ok, reason := shouldStartExport(core.NopGate(), false); ok || reason == "" {
+		t.Errorf("未启用应不启动且给出原因: ok=%v reason=%q", ok, reason)
+	}
+	ok, reason := shouldStartExport(core.NopGate(), true)
+	if ok || reason != "授权未包含 audit_stream 功能" {
+		t.Errorf("NopGate 应因缺 feature 不启动: ok=%v reason=%q", ok, reason)
+	}
+	licensed := featureGate{license.FeatureAuditStream: true}
+	if ok, _ := shouldStartExport(licensed, true); !ok {
+		t.Error("启用且授权含 audit_stream 应启动")
+	}
+	other := featureGate{license.FeatureRBAC: true}
+	if ok, _ := shouldStartExport(other, true); ok {
+		t.Error("仅含其他功能不应启动")
+	}
+}
