@@ -31,12 +31,13 @@ rate_limit:
   default_rps: 10            # 默认每秒请求数
   default_tpm: 100000        # 默认每分钟Token数
 
-export:                       # Enterprise only
-  type: siem                  # siem/syslog/kafka
-  endpoint: "https://siem.example.com/api"
-  api_key: ""
-  batch_size: 50
-  flush_interval: 10s
+export:                       # Enterprise only：审计日志外推(audit_stream 门控)
+  enabled: false              # 是否启用外推
+  type: siem                  # siem/syslog
+  endpoint: "https://siem.example.com/api"   # syslog 形如 udp://10.0.0.1:514 或 tcp://...
+  api_key: ""                 # SIEM 认证密钥(syslog 忽略)
+  batch_size: 50              # 批量大小 1-1000
+  flush_interval: 10s         # 拉取/推送节奏 1-60s
 
 license:                      # Enterprise only：缺失/过期/验签失败时软降级为 OSS 模式运行
   file_path: "/etc/neuralgate/license.lic"

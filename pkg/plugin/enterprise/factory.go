@@ -51,8 +51,10 @@ func (f *enterpriseFactory) CreateRateLimiter() plugin.RateLimitPlugin {
 	return oss.NewRateLimiter(f.CreateStorage(), 10, 100000, "token_bucket")
 }
 
-// CreateExporter 日志外推（当前未实现，返回 nil）
-func (f *enterpriseFactory) CreateExporter() plugin.LogExporter { return nil }
+// CreateExporter 审计日志外推器（存储尾随；经 Init 配置目标后启动循环）
+func (f *enterpriseFactory) CreateExporter() plugin.LogExporter {
+	return NewTailExporter(f.CreateStorage())
+}
 
 // CreateLicenseValidator 创建企业版授权校验器（内置供应商公钥；
 // 公钥常量非法属构建错误，启动即暴露）

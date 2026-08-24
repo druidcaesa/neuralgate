@@ -152,6 +152,29 @@ func main() {
 
 	adminServer := admin.NewAdminServer(storage, logger, effectiveEdition, rateLimiter, licenseOverview)
 
+	// 8. 审计日志外推（audit_stream 门控）
+	exporter := factory.CreateExporter()
+	exportStarted := false
+	if exporter != nil {
+		if start, reason := shouldStartExport(gate, cfg.Export.Enabled); !start {
+			logger.Info("审计日志外推未启用", zap.String("reason", reason))
+		} else if err := exporter.Init(map[string]interface{}{
+			"type":           cfg.Export.Type,
+			"endpoint":       cfg.Export.Endpoint,
+			"api_key":        cfg.Export.APIKey,
+			"batch_size":     cfg.Export.BatchSize,
+			"flush_interval": cfg.Export.FlushInterval,
+			"logger":         logger,
+		}); err != nil {
+			logger.Warn("审计日志外推启动失败", zap.Error(err))
+		} else {
+			exportStarted = true
+			logger.Info("审计日志外推已启用",
+				zap.String("type", cfg.Export.Type),
+				zap.Duration("flush_interval", cfg.Export.FlushInterval))
+		}
+	}
+
 	// 8. 启动双服务（并发）
 	tlsHandler := core.NewTLSHandler(cfg.TLS.Enabled, cfg.TLS.CertFile, cfg.TLS.KeyFile, cfg.TLS.MinVersion)
 	tlsConf, err := tlsHandler.TLSConfig()
@@ -223,12 +246,26 @@ func main() {
 	} else {
 		logger.Info("审计管道已关闭")
 	}
+	if exportStarted {
+		exporter.Close() // 最终一轮拉取兜住 auditor.Shutdown 落库的尾部日志
+	}
 	if err := storage.Close(); err != nil {
 		logger.Warn("存储关闭异常", zap.Error(err))
 	} else {
 		logger.Info("存储已关闭")
 	}
 	logger.Info("NeuralGate 已退出")
+}
+
+// shouldStartExport 判断外推启动条件（配置启用 + 授权含 audit_stream）；不满足给出原因
+func shouldStartExport(gate core.LicenseGate, enabled bool) (bool, string) {
+	if !enabled {
+		return false, "配置未启用(enabled=false)"
+	}
+	if !gate.HasFeature(license.FeatureAuditStream) {
+		return false, "授权未包含 audit_stream 功能"
+	}
+	return true, ""
 }
 
 // licenseStatus 将验签失败原因映射为后台展示的授权状态（过期单列，其余归为无效）
