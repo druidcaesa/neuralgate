@@ -122,3 +122,56 @@ func TestShutdownFlushesPending(t *testing.T) {
 		t.Errorf("total after Shutdown = %d, want 1", total)
 	}
 }
+
+// fingerprint 注入后三条落库路径均应填充指纹；未注入则保持空（OSS 行为零变化）
+func TestSimpleAuditorFingerprintHook(t *testing.T) {
+	newMeta := func() *plugin.AuditMeta {
+		return &plugin.AuditMeta{ResponseStatus: 200, TotalTokens: 7}
+	}
+
+	t.Run("无钩子指纹为空", func(t *testing.T) {
+		s := NewMemStorage()
+		a := NewSimpleAuditor(s)
+		_ = a.Submit(&plugin.AuditEvent{RequestID: "r1", Data: &plugin.AuditLog{ID: "r1", RequestID: "r1", ModelName: "m"}})
+		_ = a.Finalize("r1", newMeta())
+		logs, _, _ := s.QueryAuditLogs(plugin.AuditLogFilter{RequestID: "r1"}, 1, 10)
+		if logs[0].SHA256Fingerprint != "" {
+			t.Fatalf("未注入钩子不应有指纹: %q", logs[0].SHA256Fingerprint)
+		}
+	})
+
+	t.Run("注入后三路径均带指纹", func(t *testing.T) {
+		s := NewMemStorage()
+		a := NewSimpleAuditor(s)
+		var pipe plugin.AuditPipeline = a
+		hook, ok := pipe.(plugin.FingerprintHook)
+		if !ok {
+			t.Fatal("SimpleAuditor 应实现 FingerprintHook")
+		}
+		called := false
+		hook.SetFingerprintFunc(func(log *plugin.AuditLog) string {
+			called = true
+			return "fp-" + log.ID
+		})
+
+		// 路径1: Finalize
+		_ = a.Submit(&plugin.AuditEvent{RequestID: "f1", Data: &plugin.AuditLog{ID: "f1", RequestID: "f1"}})
+		_ = a.Finalize("f1", newMeta())
+		// 路径2: MarkDisconnect
+		_ = a.Submit(&plugin.AuditEvent{RequestID: "d1", Data: &plugin.AuditLog{ID: "d1", RequestID: "d1"}})
+		_ = a.MarkDisconnect("d1", "client gone", nil)
+		// 路径3: Shutdown 兜底
+		_ = a.Submit(&plugin.AuditEvent{RequestID: "s1", Data: &plugin.AuditLog{ID: "s1", RequestID: "s1"}})
+		_ = a.Shutdown()
+
+		if !called {
+			t.Fatal("指纹函数未被调用")
+		}
+		for _, id := range []string{"f1", "d1", "s1"} {
+			logs, _, _ := s.QueryAuditLogs(plugin.AuditLogFilter{RequestID: id}, 1, 10)
+			if len(logs) != 1 || logs[0].SHA256Fingerprint != "fp-"+id {
+				t.Errorf("路径 %s 指纹不符: %+v", id, logs)
+			}
+		}
+	})
+}
