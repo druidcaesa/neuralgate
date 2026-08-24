@@ -61,6 +61,10 @@ func (s *AdminServer) registerRoutes(r *gin.Engine) {
 		// 授权信息
 		api.GET("/license", s.licenseInfo)
 
+		// 篡改告警
+		api.GET("/tamper-alerts", s.listTamperAlerts)
+		api.PATCH("/tamper-alerts/:id", s.resolveTamperAlert)
+
 		// 限流配置管理
 		api.POST("/rate-limits", s.createRateLimit)
 		api.GET("/rate-limits", s.listRateLimits)

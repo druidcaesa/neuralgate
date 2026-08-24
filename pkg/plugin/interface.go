@@ -356,12 +356,12 @@ const (
 
 // TamperAlert 篡改告警
 type TamperAlert struct {
-	ID            string    // 主键
-	AuditLogID    string    // 被篡改日志 ID
-	Reason        string    // 不一致描述
-	Resolved      bool      // 是否已处置
-	FirstSeenAt   time.Time // 首次发现
-	LastCheckedAt time.Time // 最近一次确认仍不一致
+	ID            string    `json:"id"`              // 主键
+	AuditLogID    string    `json:"audit_log_id"`    // 被篡改日志 ID
+	Reason        string    `json:"reason"`          // 不一致描述
+	Resolved      bool      `json:"resolved"`        // 是否已处置
+	FirstSeenAt   time.Time `json:"first_seen_at"`   // 首次发现
+	LastCheckedAt time.Time `json:"last_checked_at"` // 最近一次确认仍不一致
 }
 
 // FingerprintFunc 审计指纹计算函数（enterprise 提供，OSS 为 nil 不计算）
