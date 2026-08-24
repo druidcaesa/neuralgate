@@ -30,6 +30,7 @@ import (
 	"github.com/druidcaesa/neuralgate/pkg/admin"
 	"github.com/druidcaesa/neuralgate/pkg/config"
 	"github.com/druidcaesa/neuralgate/pkg/core"
+	"github.com/druidcaesa/neuralgate/pkg/license"
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -113,8 +114,39 @@ func main() {
 	ipf := core.NewIPFilter(cfg.IPFilter.Mode, cfg.IPFilter.Whitelist, cfg.IPFilter.Blacklist)
 	acceptor := core.NewAcceptor(proxyCore.Handler(), ipf)
 
-	// 7. 初始化管理后台
-	adminServer := admin.NewAdminServer(storage, logger, edition, rateLimiter, nil)
+	// 7. 授权校验（失败软降级 OSS）与管理后台初始化
+	validator := factory.CreateLicenseValidator()
+	effectiveEdition := edition
+	var gate core.LicenseGate = core.NopGate()
+	licenseOverview := &admin.LicenseOverview{Status: "oss", Message: "开源版本，无授权信息"}
+
+	if validator != nil {
+		licenseOverview.Status = "missing"
+		licenseOverview.Message = "未检测到授权文件"
+		info, err := validator.LoadLicense(cfg.License.FilePath)
+		if err != nil {
+			logger.Warn("未检测到授权文件，以开源模式运行",
+				zap.String("path", cfg.License.FilePath), zap.Error(err))
+		} else if ok, verr := validator.Validate(info); !ok {
+			logger.Warn("授权无效或已过期，降级为开源模式运行", zap.Error(verr))
+			licenseOverview.Status = licenseStatus(verr)
+			licenseOverview.Message = verr.Error()
+		} else {
+			effectiveEdition = "enterprise"
+			gate = validator
+			licenseOverview.Status = "valid"
+			licenseOverview.Info = info
+			logger.Info("授权校验通过",
+				zap.String("customer", info.CustomerName),
+				zap.Time("expires_at", info.ExpiresAt),
+				zap.Strings("features", info.Features))
+		}
+	}
+	logger.Info("功能门控初始化完成",
+		zap.String("effective_edition", effectiveEdition),
+		zap.Bool("gate_enabled", gate != core.LicenseGate(core.NopGate())))
+
+	adminServer := admin.NewAdminServer(storage, logger, effectiveEdition, rateLimiter, licenseOverview)
 
 	// 8. 启动双服务（并发）
 	tlsHandler := core.NewTLSHandler(cfg.TLS.Enabled, cfg.TLS.CertFile, cfg.TLS.KeyFile, cfg.TLS.MinVersion)
@@ -193,6 +225,14 @@ func main() {
 		logger.Info("存储已关闭")
 	}
 	logger.Info("NeuralGate 已退出")
+}
+
+// licenseStatus 将验签失败原因映射为后台展示的授权状态（过期单列，其余归为无效）
+func licenseStatus(err error) string {
+	if errors.Is(err, license.ErrExpired) {
+		return "expired"
+	}
+	return "invalid"
 }
 
 // initLogger 按配置初始化 zap 日志
