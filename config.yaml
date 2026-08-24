@@ -38,9 +38,9 @@ export:                       # Enterprise only
   batch_size: 50
   flush_interval: 10s
 
-license:                      # Enterprise only
+license:                      # Enterprise only：缺失/过期/验签失败时软降级为 OSS 模式运行
   file_path: "/etc/neuralgate/license.lic"
-  offline_mode: false
+  offline_mode: false         # 是否离线授权（当前签发的 license 均为离线授权）
 
 log:
   level: info                 # debug/info/warn/error
