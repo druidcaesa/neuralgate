@@ -190,6 +190,30 @@ export interface SystemInfo {
   db_status: string
   audit_queue_status: { status: string }
   rate_limiter_status: { status: string }
+  license?: {
+    status: string
+    customer?: string
+    expires_at?: string
+    features_count?: number
+  }
+}
+
+// ===== 授权信息（GET /api/license，脱敏后） =====
+export interface LicenseDetail {
+  status: string            // valid/expired/invalid/missing/oss
+  message?: string          // 降级原因说明
+  edition: string           // 运行版本（降级后为 oss）
+  license_key?: string      // 授权码（前 8 位 + ****）
+  product_name?: string
+  customer_name?: string
+  max_nodes?: number
+  max_tenants?: number
+  issued_at?: string
+  expires_at?: string
+  features?: string[]
+  is_offline?: boolean
+  signed: boolean           // 是否携带签名（不回显签名全文）
+  days_remaining?: number   // 剩余天数（仅有效时）
 }
 
 // ===== 分页列表 =====
