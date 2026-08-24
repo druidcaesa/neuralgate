@@ -125,16 +125,20 @@ func main() {
 		licenseOverview.Message = "未检测到授权文件"
 		info, err := validator.LoadLicense(cfg.License.FilePath)
 		if err != nil {
+			effectiveEdition = "oss"
 			logger.Warn("未检测到授权文件，以开源模式运行",
 				zap.String("path", cfg.License.FilePath), zap.Error(err))
 		} else if ok, verr := validator.Validate(info); !ok {
+			effectiveEdition = "oss"
 			logger.Warn("授权无效或已过期，降级为开源模式运行", zap.Error(verr))
 			licenseOverview.Status = licenseStatus(verr)
 			licenseOverview.Message = verr.Error()
+			licenseOverview.Info = info // 过期/无效授权仍尽量展示业务字段
 		} else {
 			effectiveEdition = "enterprise"
 			gate = validator
 			licenseOverview.Status = "valid"
+			licenseOverview.Message = ""
 			licenseOverview.Info = info
 			logger.Info("授权校验通过",
 				zap.String("customer", info.CustomerName),
