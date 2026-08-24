@@ -1285,3 +1285,8 @@ git add -A && git commit -m "fix(enterprise): E2 验证问题修复"  # 仅当�
 - 授权含 audit_stream 且 enabled=true → 「审计日志外推已启动」，edition=enterprise
 - 触发代理请求（上游不可达 504）→ 1s 内接收器收到 RFC5424 帧 `<11>1 ... NeuralGate NeuralGate - <requestID> - {全量审计JSON}`（504→err severity 映射正确）
 - 反向：授权仅含 rbac → 「审计日志外推未启用 reason=授权未包含 audit_stream 功能」
+
+## 复核补遗（2026-08-24）
+
+对照 PRD 3.8 字段约束复核发现并修复一处遗漏：Init 未钳制 batch_size/flush_interval 上限（75ec1b3）。
+修复后终验：gofmt/vet 双标签干净、双标签构建通过、`go test -race` oss 167 / enterprise 191 全绿；工作树干净、无残留冒烟进程与临时文件。
