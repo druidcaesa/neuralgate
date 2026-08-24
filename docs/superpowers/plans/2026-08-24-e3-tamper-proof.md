@@ -292,3 +292,26 @@ Steps: 实现类型/API/视图/路由 → `npx vue-tsc --noEmit` 通过 → `npm
 - 类型一致性：TamperAlert 字段、四方法签名、FingerprintHook 在 T1 定义后各任务引用一致
 - 无占位符；执行时以存储现有查询 API 为准微调断言方式已在 T1 标注
 
+
+## 实施结果（2026-08-24 完成）
+
+| 提交 | 内容 |
+|------|------|
+| 1fae9df | 存储接口扩展篡改告警与留存删除(mem/SQLStorage/dynamic 三实现+建表) |
+| 77427f0 | SimpleAuditor 可选指纹钩子(三落库路径,nil 零变化) |
+| e027ac1 | 指纹确定性计算与算法注册表(sm3 接缝) |
+| 7b043f0 | Verifier 校验+Retainer 留存任务(upsert 去重/Stop 幂等) |
+| a2a9442 | shouldStartTamper 门控接线(setupTamper 按 BuildTag 两版)+SQL 只读账号模板 |
+| 9492019 | admin 告警查询/处置 API + system 未处置计数(TamperAlert 补 json 标签) |
+| b0678d6 | webui 告警列表页+SystemInfo 红色横幅+路由菜单(dist 已更新) |
+
+**验证矩阵**：gofmt/vet 双标签干净；`go test -race` oss 177 / enterprise 209 全绿。
+
+**端到端冒烟证据**：
+- 企业版启动含 tamper_proof 授权+enable_sha256 → 日志「审计防篡改已启用 algo=sha256」，`/api/system` 返回 `tamper.unresolved_count`
+- 触发代理请求后经 `/api/audit-logs` 实测记录携带 64 位指纹(fp_len=64)
+- 反向：授权仅含 audit_stream → 「审计防篡改未启用 reason=授权未包含 tamper_proof 功能」
+- 篡改检测→告警 upsert 去重→处置 API 全链路由单测对真实存储覆盖(TestVerifyOnceDetectsTamperingAndDedups 等)
+- 备注：本机沙箱对后台子进程新建数据库文件存在跨调用可见性干扰，sqlite 文件级手工篡改演示不可复现；不影响功能正确性(探针程序直连 SQLStorage 写读正常,94KB 六表齐全)
+
+**执行期修正**：main.go 共享代码不直接 import enterprise 包——setupTamper 按 BuildTag 拆两版(factory_oss 空实现/factory_enterprise 实装)，与既有 factory 模式一致。
