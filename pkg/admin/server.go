@@ -22,20 +22,21 @@ import (
 	"go.uber.org/zap"
 )
 
-// AdminServer 管理后台（Gin）：低并发短连接，提供 CRUD 接口、配置管理、日志查询、授权校验
+// AdminServer 管理后台（Gin）：低并发短连接，提供 CRUD 接口、配置管理、日志查询、授权展示
 type AdminServer struct {
 	storage     plugin.StoragePlugin
 	rateLimiter plugin.RateLimitPlugin
 	logger      *zap.Logger
 	engine      *gin.Engine
-	edition     string
+	edition     string // 运行版本（授权降级后为 oss）
 	startedAt   time.Time
+	license     *LicenseOverview // 授权概要快照（nil 按 OSS 未授权处理）
 }
 
-// NewAdminServer 创建管理后台
-func NewAdminServer(storage plugin.StoragePlugin, logger *zap.Logger, edition string, rateLimiter plugin.RateLimitPlugin) *AdminServer {
+// NewAdminServer 创建管理后台；license 为启动时校验得到的授权概要（OSS 版传 nil）
+func NewAdminServer(storage plugin.StoragePlugin, logger *zap.Logger, edition string, rateLimiter plugin.RateLimitPlugin, license *LicenseOverview) *AdminServer {
 	gin.SetMode(gin.ReleaseMode)
-	s := &AdminServer{storage: storage, rateLimiter: rateLimiter, logger: logger, edition: edition, startedAt: time.Now()}
+	s := &AdminServer{storage: storage, rateLimiter: rateLimiter, logger: logger, edition: edition, startedAt: time.Now(), license: license}
 	s.engine = gin.New()
 	s.engine.Use(gin.Recovery(), CORS())
 	s.registerRoutes(s.engine)
