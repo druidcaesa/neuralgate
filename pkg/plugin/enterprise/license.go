@@ -28,9 +28,9 @@ import (
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
 )
 
-// embeddedPublicKeyBase64 供应商签发公钥（base64），
-// 由 licensegen keygen 生成后替换；对应私钥由供应商离线保管，绝不进入仓库。
-const embeddedPublicKeyBase64 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+// embeddedPublicKeyBase64 供应商签发公钥（base64），由 licensegen keygen 生成；
+// 对应私钥由供应商离线保管，绝不进入仓库。
+const embeddedPublicKeyBase64 = "ek/ZdfUcWuEgnHaM8lX8/2c9A8A0tuXdd0sxLnai2uA="
 
 // EmbeddedPublicKey 解码内置签发公钥；常量被错误修改时在装配阶段即报错
 func EmbeddedPublicKey() (ed25519.PublicKey, error) {

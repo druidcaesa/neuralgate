@@ -25,3 +25,5 @@ vendor/
 .DS_Store
 .codegraph
 .superpowers
+# 授权签发密钥目录
+.keys/
