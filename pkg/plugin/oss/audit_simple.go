@@ -20,11 +20,27 @@ import (
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
 )
 
-// SimpleAuditor 简单同步审计：分片与元数据在请求结束时同步组装落库
+// SimpleAuditor 简单同步审计：分片与元数据在请求结束时同步组装落库。
+// fingerprintFn 非 nil 时（企业版装配注入）落库前计算全量内容指纹，nil 时行为不变
 type SimpleAuditor struct {
-	storage plugin.StoragePlugin
-	mu      sync.Mutex
-	pending map[string]*plugin.AuditLog // requestID -> 组装中的日志
+	storage       plugin.StoragePlugin
+	fingerprintFn plugin.FingerprintFunc
+	mu            sync.Mutex
+	pending       map[string]*plugin.AuditLog // requestID -> 组装中的日志
+}
+
+// SetFingerprintFunc 注入指纹计算函数
+func (a *SimpleAuditor) SetFingerprintFunc(fn plugin.FingerprintFunc) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.fingerprintFn = fn
+}
+
+// stamp 计算并回填指纹（调用方须持锁）
+func (a *SimpleAuditor) stamp(log *plugin.AuditLog) {
+	if a.fingerprintFn != nil {
+		log.SHA256Fingerprint = a.fingerprintFn(log)
+	}
 }
 
 // NewSimpleAuditor 创建简单审计器
@@ -90,6 +106,7 @@ func (a *SimpleAuditor) Finalize(requestID string, meta *plugin.AuditMeta) error
 	log.CompletionTokens = meta.CompletionTokens
 	log.TotalTokens = meta.TotalTokens
 	log.Duration = meta.Duration
+	a.stamp(log)
 	if err := a.storage.SaveAuditLog(log); err != nil {
 		return err
 	}
@@ -115,6 +132,7 @@ func (a *SimpleAuditor) MarkDisconnect(requestID string, reason string, meta *pl
 		log.TotalTokens = meta.TotalTokens
 		log.Duration = meta.Duration
 	}
+	a.stamp(log)
 	if err := a.storage.SaveAuditLog(log); err != nil {
 		return err
 	}
@@ -127,6 +145,7 @@ func (a *SimpleAuditor) Shutdown() error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	for requestID, log := range a.pending {
+		a.stamp(log)
 		if err := a.storage.SaveAuditLog(log); err != nil {
 			return err
 		}
