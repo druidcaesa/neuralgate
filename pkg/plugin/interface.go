@@ -155,18 +155,18 @@ type RateLimitConfig struct {
 	UpdatedAt      time.Time // 更新时间
 }
 
-// LicenseInfo 商业授权信息
+// LicenseInfo 商业授权信息（license.json 的结构）
 type LicenseInfo struct {
-	LicenseKey   string    // 授权码
-	ProductName  string    // 产品名称
-	CustomerName string    // 客户名称
-	MaxNodes     int       // 最大节点数
-	MaxTenants   int       // 最大租户数
-	IssuedAt     time.Time // 签发时间
-	ExpiresAt    time.Time // 过期时间
-	Features     []string  // 授权功能列表
-	Signature    string    // 签名
-	IsOffline    bool      // 是否离线授权
+	LicenseKey   string    `json:"license_key"`   // 授权码
+	ProductName  string    `json:"product_name"`  // 产品名称
+	CustomerName string    `json:"customer_name"` // 客户名称
+	MaxNodes     int       `json:"max_nodes"`     // 最大节点数
+	MaxTenants   int       `json:"max_tenants"`   // 最大租户数
+	IssuedAt     time.Time `json:"issued_at"`     // 签发时间
+	ExpiresAt    time.Time `json:"expires_at"`    // 过期时间
+	Features     []string  `json:"features"`      // 授权功能列表
+	Signature    string    `json:"signature"`     // 签名
+	IsOffline    bool      `json:"is_offline"`    // 是否离线授权
 }
 
 // PluginFactory 插件工厂统一入口

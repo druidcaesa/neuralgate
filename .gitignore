@@ -1,6 +1,9 @@
-# 商业授权文件
+# 商业授权文件（私钥与授权文件不进仓库）
 *.lic
-license/
+*.pem
+*.key
+license.json
+/license/
 
 # 编译产物
 /neuralgate
