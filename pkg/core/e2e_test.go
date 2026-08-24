@@ -78,7 +78,7 @@ func TestEndToEnd(t *testing.T) {
 	auditor := oss.NewSimpleAuditor(storage)
 	pc := core.NewProxyCore(core.NewPipeline(storage, limiter, auditor, registry), registry)
 	proxyHandler := pc.Handler()
-	adminRouter := admin.NewAdminServer(storage, nil, "oss", limiter).Router()
+	adminRouter := admin.NewAdminServer(storage, nil, "oss", limiter, nil).Router()
 
 	// 4. 通过管理后台创建模型配置(指向 mock 上游)
 	w := httptest.NewRecorder()
@@ -167,7 +167,7 @@ func TestEndToEndLoadBalanceAndRateLimit(t *testing.T) {
 	auditor := oss.NewSimpleAuditor(storage)
 	pc := core.NewProxyCore(core.NewPipeline(storage, limiter, auditor, registry), registry)
 	proxyHandler := pc.Handler()
-	adminRouter := admin.NewAdminServer(storage, nil, "oss", limiter).Router()
+	adminRouter := admin.NewAdminServer(storage, nil, "oss", limiter, nil).Router()
 
 	// 建模型
 	w := httptest.NewRecorder()
