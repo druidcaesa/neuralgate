@@ -53,12 +53,15 @@ type StorageConfig struct {
 }
 
 type AuditConfig struct {
-	QueueSize     int           `yaml:"queue_size"`
-	WorkerCount   int           `yaml:"worker_count"`
-	BatchSize     int           `yaml:"batch_size"`
-	FlushInterval time.Duration `yaml:"flush_interval"`
-	EnableSHA256  bool          `yaml:"enable_sha256"`
-	RetentionDays int           `yaml:"retention_days"`
+	QueueSize       int           `yaml:"queue_size"`
+	WorkerCount     int           `yaml:"worker_count"`
+	BatchSize       int           `yaml:"batch_size"`
+	FlushInterval   time.Duration `yaml:"flush_interval"`
+	EnableSHA256    bool          `yaml:"enable_sha256"`
+	RetentionDays   int           `yaml:"retention_days"`
+	VerifyInterval  time.Duration `yaml:"verify_interval"`   // 哈希校验间隔(Enterprise)
+	VerifyBatchSize int           `yaml:"verify_batch_size"` // 每次校验批次大小(Enterprise)
+	FingerprintAlgo string        `yaml:"fingerprint_algo"`  // 指纹算法(本期仅 sha256)
 }
 
 type RateLimitConfig struct {
@@ -121,11 +124,14 @@ func Default() *Config {
 			MaxIdleConns: 10,
 		},
 		Audit: AuditConfig{
-			QueueSize:     65536,
-			WorkerCount:   4,
-			BatchSize:     100,
-			FlushInterval: 5 * time.Second,
-			RetentionDays: 90,
+			QueueSize:       65536,
+			WorkerCount:     4,
+			BatchSize:       100,
+			FlushInterval:   5 * time.Second,
+			RetentionDays:   90,
+			VerifyInterval:  24 * time.Hour,
+			VerifyBatchSize: 1000,
+			FingerprintAlgo: "sha256",
 		},
 		RateLimit: RateLimitConfig{
 			Strategy:   "token_bucket",
@@ -241,6 +247,16 @@ func (s *AuditConfig) apply(d AuditConfig) {
 	if s.RetentionDays == 0 {
 		s.RetentionDays = d.RetentionDays
 	}
+	if s.VerifyInterval == 0 {
+		s.VerifyInterval = d.VerifyInterval
+	}
+	if s.VerifyBatchSize == 0 {
+		s.VerifyBatchSize = d.VerifyBatchSize
+	}
+	if s.FingerprintAlgo == "" {
+		s.FingerprintAlgo = d.FingerprintAlgo
+	}
+	// 指纹算法选定后不可更换；未知值在启动接线处回退并告警
 }
 
 // apply 零值字段回填默认值
