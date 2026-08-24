@@ -17,8 +17,11 @@
 package main
 
 import (
+	"github.com/druidcaesa/neuralgate/pkg/config"
+	"github.com/druidcaesa/neuralgate/pkg/core"
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
 	"github.com/druidcaesa/neuralgate/pkg/plugin/oss"
+	"go.uber.org/zap"
 )
 
 const edition = "oss"
@@ -26,4 +29,9 @@ const edition = "oss"
 // newPluginFactory 由 BuildTag 决定返回哪个版本的插件工厂
 func newPluginFactory() plugin.PluginFactory {
 	return oss.NewPluginFactory()
+}
+
+// setupTamper OSS 版无防篡改能力，恒为空操作
+func setupTamper(core.LicenseGate, plugin.AuditPipeline, plugin.StoragePlugin, config.AuditConfig, *zap.Logger) func() {
+	return nil
 }

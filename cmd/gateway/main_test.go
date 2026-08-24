@@ -43,3 +43,17 @@ func TestShouldStartExport(t *testing.T) {
 		t.Error("仅含其他功能不应启动")
 	}
 }
+
+func TestShouldStartTamper(t *testing.T) {
+	if ok, reason := shouldStartTamper(core.NopGate(), false); ok || reason == "" {
+		t.Errorf("未启用应不启动且给出原因: ok=%v reason=%q", ok, reason)
+	}
+	ok, reason := shouldStartTamper(core.NopGate(), true)
+	if ok || reason != "授权未包含 tamper_proof 功能" {
+		t.Errorf("NopGate 应因缺 feature 不启动: ok=%v reason=%q", ok, reason)
+	}
+	licensed := featureGate{license.FeatureTamperProof: true}
+	if ok, _ := shouldStartTamper(licensed, true); !ok {
+		t.Error("启用且授权含 tamper_proof 应启动")
+	}
+}

@@ -175,6 +175,9 @@ func main() {
 		}
 	}
 
+	// 9. 审计防篡改（tamper_proof 门控，接线随构建版本）
+	stopTamper := setupTamper(gate, auditor, storage, cfg.Audit, logger)
+
 	// 8. 启动双服务（并发）
 	tlsHandler := core.NewTLSHandler(cfg.TLS.Enabled, cfg.TLS.CertFile, cfg.TLS.KeyFile, cfg.TLS.MinVersion)
 	tlsConf, err := tlsHandler.TLSConfig()
@@ -241,6 +244,9 @@ func main() {
 	} else {
 		logger.Info("管理后台已关闭", zap.String("addr", cfg.Server.AdminAddr))
 	}
+	if stopTamper != nil {
+		stopTamper() // 先停校验/清理任务，再落库尾部日志
+	}
 	if err := auditor.Shutdown(); err != nil {
 		logger.Warn("审计管道关闭异常", zap.Error(err))
 	} else {
@@ -264,6 +270,17 @@ func shouldStartExport(gate core.LicenseGate, enabled bool) (bool, string) {
 	}
 	if !gate.HasFeature(license.FeatureAuditStream) {
 		return false, "授权未包含 audit_stream 功能"
+	}
+	return true, ""
+}
+
+// shouldStartTamper 判断防篡改启动条件（配置启用 + 授权含 tamper_proof）；不满足给出原因
+func shouldStartTamper(gate core.LicenseGate, enabled bool) (bool, string) {
+	if !enabled {
+		return false, "配置未启用(enable_sha256=false)"
+	}
+	if !gate.HasFeature(license.FeatureTamperProof) {
+		return false, "授权未包含 tamper_proof 功能"
 	}
 	return true, ""
 }

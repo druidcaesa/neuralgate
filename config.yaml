@@ -23,8 +23,11 @@ audit:
   worker_count: 4            # worker数量
   batch_size: 100            # 批量写入大小
   flush_interval: 5s         # 刷新间隔
-  enable_sha256: true        # SHA256存证（Enterprise）
-  retention_days: 90         # 日志保留天数
+  enable_sha256: true        # SHA256存证（Enterprise，需 tamper_proof 授权）
+  retention_days: 90         # 日志保留天数（清理任务仅 Enterprise 启动）
+  verify_interval: 24h       # 哈希校验间隔（Enterprise）
+  verify_batch_size: 1000    # 每次校验批次大小（Enterprise）
+  fingerprint_algo: sha256   # 指纹算法：本期仅 sha256；选定后不可更换
 
 rate_limit:
   strategy: token_bucket     # token_bucket/sliding_window
