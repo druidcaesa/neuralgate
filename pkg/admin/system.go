@@ -21,12 +21,19 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// systemInfo GET /api/system:版本、DB 状态、审计与限流状态
+// systemInfo GET /api/system:版本、DB 状态、审计与限流状态、授权概览
 func (s *AdminServer) systemInfo(c *gin.Context) {
 	uptime := time.Since(s.startedAt).Round(time.Second).String()
 	dbStatus := "ok"
 	if err := s.storage.Ping(); err != nil {
 		dbStatus = "error: " + err.Error()
+	}
+	ov := s.licenseOverview()
+	licenseView := gin.H{"status": ov.Status}
+	if ov.Info != nil {
+		licenseView["customer"] = ov.Info.CustomerName
+		licenseView["expires_at"] = ov.Info.ExpiresAt.Format(time.RFC3339)
+		licenseView["features_count"] = len(ov.Info.Features)
 	}
 	OK(c, gin.H{
 		"version":             core.Version,
@@ -37,5 +44,6 @@ func (s *AdminServer) systemInfo(c *gin.Context) {
 		"db_status":           dbStatus,
 		"audit_queue_status":  gin.H{"status": "ok"},
 		"rate_limiter_status": gin.H{"status": "ok"},
+		"license":             licenseView,
 	})
 }

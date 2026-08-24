@@ -114,7 +114,7 @@ func main() {
 	acceptor := core.NewAcceptor(proxyCore.Handler(), ipf)
 
 	// 7. 初始化管理后台
-	adminServer := admin.NewAdminServer(storage, logger, edition, rateLimiter)
+	adminServer := admin.NewAdminServer(storage, logger, edition, rateLimiter, nil)
 
 	// 8. 启动双服务（并发）
 	tlsHandler := core.NewTLSHandler(cfg.TLS.Enabled, cfg.TLS.CertFile, cfg.TLS.KeyFile, cfg.TLS.MinVersion)
