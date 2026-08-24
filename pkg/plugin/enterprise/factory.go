@@ -17,6 +17,8 @@
 package enterprise
 
 import (
+	"fmt"
+
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
 	"github.com/druidcaesa/neuralgate/pkg/plugin/oss"
 )
@@ -52,5 +54,16 @@ func (f *enterpriseFactory) CreateRateLimiter() plugin.RateLimitPlugin {
 // CreateExporter 日志外推（当前未实现，返回 nil）
 func (f *enterpriseFactory) CreateExporter() plugin.LogExporter { return nil }
 
-// CreateLicenseValidator 授权校验（当前未实现，返回 nil）
-func (f *enterpriseFactory) CreateLicenseValidator() plugin.LicenseValidator { return nil }
+// CreateLicenseValidator 创建企业版授权校验器（内置供应商公钥；
+// 公钥常量非法属构建错误，启动即暴露）
+func (f *enterpriseFactory) CreateLicenseValidator() plugin.LicenseValidator {
+	pub, err := EmbeddedPublicKey()
+	if err != nil {
+		panic(fmt.Sprintf("内置授权公钥无效: %v", err))
+	}
+	v, err := NewEnterpriseLicenseValidator(pub)
+	if err != nil {
+		panic(fmt.Sprintf("创建授权校验器失败: %v", err))
+	}
+	return v
+}
