@@ -20,9 +20,9 @@ PRD 3.5 五个子功能现状：SHA256 存证(❌ 字段/DB 列/配置在，无�
 **非目标(YAGNI)**：
 - 哈希链(prev_hash)防删除检测——PRD 以 DB 权限解决"不可删除"，链式重构成本高
 - 告警外部通知(webhook/邮件/SIEM 联动)——SIEM 外推(E2)天然把被篡改记录差异带出
-- 金仓/达梦权限脚本——E8 信创迭代
+- 金仓/达梦权限脚本与国密 SM3/SM4 实现——E8 信创迭代统一落地(引入 gmsm 依赖)；本期指纹函数做算法参数化接缝，仅注册 sha256
 - audit_logs 表加"最后校验时间戳"列——校验检查时间记于告警表 `LastCheckedAt`
-- 非对称签名抵赖性——PRD 口径为 SHA256 摘要比对
+- 非对称签名抵赖性(SM2 等)——license 信任根保持 Ed25519，换签发根需客户硬性要求另立项
 
 ## 3. 关键决策(已与用户确认)
 
@@ -52,7 +52,7 @@ PRD 3.5 五个子功能现状：SHA256 存证(❌ 字段/DB 列/配置在，无�
   config.yaml                      # audit 段补 verify_interval/verify_batch_size 注释
   pkg/admin/router.go / system.go  # 告警路由;system 追加 tamper.unresolved_count
 新增:
-  pkg/plugin/enterprise/tamper.go           # Fingerprint(*AuditLog) string;NewTamperTasks 装配
+  pkg/plugin/enterprise/tamper.go           # Fingerprint(algo,*AuditLog);NewTasks 装配;算法注册表(本期仅 sha256)
   pkg/plugin/enterprise/tamper_verify.go    # Verifier:全库滚动扫描比对+告警 upsert
   pkg/plugin/enterprise/tamper_retention.go # Retainer:每小时 DeleteAuditLogsBefore(now-retention)
   pkg/admin/tamper.go                       # GET /api/tamper-alerts;PATCH /api/tamper-alerts/:id
@@ -64,12 +64,15 @@ webui:
 
 ### 4.2 指纹口径（签算两侧必须一致）
 
-对以下字段按固定顺序做「长度前缀」序列化（同 `license.CanonicalPayload` 格式）后取 sha256 hex：
+对以下字段按固定顺序做「长度前缀」序列化（同 `license.CanonicalPayload` 格式）后取摘要 hex：
 ID、RequestID、TenantID、APIKeyID、ModelName、Provider、RequestMethod、RequestPath、
 RequestHeaders(**map 按 key 字典序**)、RequestBody、ResponseStatus、ResponseBody、
 SSEChunks(逐条 Index:EventType:Data:Timestamp)、PromptTokens、CompletionTokens、TotalTokens、
 Duration、ClientIP、IsStream、Disconnected、DisconnectReason、CreatedAt(UTC RFC3339)。
 **不含** SHA256Fingerprint 自身。时间统一 UTC；Headers 排序保证 map 确定性。
+签名为 `Fingerprint(algo string, log *AuditLog) string`：algo 经注册表查实现，本期仅注册
+`sha256`；未知算法回退 sha256 并 Warn（sm3 实现随 E8 信创迭代注册）。**算法一旦选定不可更换**
+——换算法会使历史指纹全部失配，校验任务会误报篡改。
 
 ### 4.3 存储接口扩展
 
@@ -151,9 +154,10 @@ audit:
   retention_days: 90          # 日志保留天数
   verify_interval: 24h        # 哈希校验间隔（Enterprise）
   verify_batch_size: 1000     # 每次校验批次大小（Enterprise）
+  fingerprint_algo: sha256    # 指纹算法：本期仅 sha256；sm3 随 E8 信创迭代注册
 ```
 
-`config.AuditConfig` 增加 `VerifyInterval time.Duration`、`VerifyBatchSize int`；applyDefaults 回填默认（bool 例外约定不变）。
+`config.AuditConfig` 增加 `VerifyInterval time.Duration`、`VerifyBatchSize int`、`FingerprintAlgo string`；applyDefaults 回填默认（bool 例外约定不变）。未知算法值启动时 Warn 并回退 sha256——接缝就位但不在本期引入 gmsm 依赖。
 
 ## 6. 测试策略(TDD,go test -race,双编译矩阵)
 
@@ -186,3 +190,4 @@ audit:
 | 3 | 全库滚动扫描而非增量游标 | 语义简单；告警 upsert 幂等去重 |
 | 4 | 校验时间戳记于告警表 | 免给 audit_logs 加列 |
 | 5 | 清理任务仅 enterprise 启动 | PRD 留存策略属 3.5 Enterprise 功能；OSS 不动用户数据 |
+| 6 | 指纹算法参数化接缝，本期仅注册 sha256；SM3/SM4 归 E8 信创包(引入 gmsm) | 国密能力集中交付；避免本期破坏零依赖惯例；算法选定后不可更换(换则历史指纹失配) |
