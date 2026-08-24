@@ -16,11 +16,14 @@ package oss
 
 import (
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
+	"github.com/google/uuid"
 )
 
 // ErrNotFound 记录不存在
@@ -32,6 +35,7 @@ type MemStorage struct {
 	apiKeys      map[string]*plugin.APIKey          // keyHash -> key
 	modelConfigs map[string]*plugin.ModelConfig     // modelName -> config
 	auditLogs    []*plugin.AuditLog                 // 按写入顺序
+	tamperAlerts map[string]*plugin.TamperAlert     // 告警ID -> 篡改告警
 	rateLimits   map[string]*plugin.RateLimitConfig // id -> config
 	upstreams    map[string]*plugin.Upstream        // id -> upstream
 }
@@ -43,6 +47,7 @@ func NewMemStorage() *MemStorage {
 		modelConfigs: make(map[string]*plugin.ModelConfig),
 		rateLimits:   make(map[string]*plugin.RateLimitConfig),
 		upstreams:    make(map[string]*plugin.Upstream),
+		tamperAlerts: make(map[string]*plugin.TamperAlert),
 	}
 }
 
@@ -360,4 +365,91 @@ func matchAuditLog(l *plugin.AuditLog, f plugin.AuditLogFilter) bool {
 		}
 	}
 	return true
+}
+
+// DeleteAuditLogsBefore 删除 cutoff 之前的审计日志，返回删除条数
+func (s *MemStorage) DeleteAuditLogsBefore(cutoff time.Time) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	kept := s.auditLogs[:0]
+	var n int64
+	for _, l := range s.auditLogs {
+		if l.CreatedAt.Before(cutoff) {
+			n++
+			continue
+		}
+		kept = append(kept, l)
+	}
+	s.auditLogs = kept
+	return n, nil
+}
+
+// SaveTamperAlerts upsert 篡改告警：同一 AuditLogID 存在未处置告警则更新检查时间，否则插入
+func (s *MemStorage) SaveTamperAlerts(alerts []*plugin.TamperAlert) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	for _, a := range alerts {
+		if existing := s.findUnresolvedAlertLocked(a.AuditLogID); existing != nil {
+			existing.Reason = a.Reason
+			existing.LastCheckedAt = now
+			continue
+		}
+		cp := *a
+		if cp.ID == "" {
+			cp.ID = uuid.NewString()
+		}
+		if cp.FirstSeenAt.IsZero() {
+			cp.FirstSeenAt = now
+		}
+		cp.LastCheckedAt = now
+		s.tamperAlerts[cp.ID] = &cp
+	}
+	return nil
+}
+
+// findUnresolvedAlertLocked 查找指定日志的未处置告警（调用方须持锁）
+func (s *MemStorage) findUnresolvedAlertLocked(auditLogID string) *plugin.TamperAlert {
+	for _, a := range s.tamperAlerts {
+		if a.AuditLogID == auditLogID && !a.Resolved {
+			return a
+		}
+	}
+	return nil
+}
+
+// ListTamperAlerts 查询篡改告警：resolved nil=全部；按最近检查时间倒序分页
+func (s *MemStorage) ListTamperAlerts(resolved *bool, page, size int) ([]*plugin.TamperAlert, int64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	matched := make([]*plugin.TamperAlert, 0, len(s.tamperAlerts))
+	for _, a := range s.tamperAlerts {
+		if resolved != nil && a.Resolved != *resolved {
+			continue
+		}
+		matched = append(matched, a)
+	}
+	sort.Slice(matched, func(i, j int) bool { return matched[i].LastCheckedAt.After(matched[j].LastCheckedAt) })
+	page, size = normalizePage(page, size)
+	start := (page - 1) * size
+	if start > len(matched) {
+		start = len(matched)
+	}
+	end := start + size
+	if end > len(matched) {
+		end = len(matched)
+	}
+	return matched[start:end], int64(len(matched)), nil
+}
+
+// SetTamperAlertResolved 标记告警处置状态
+func (s *MemStorage) SetTamperAlertResolved(id string, resolved bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a, ok := s.tamperAlerts[id]
+	if !ok {
+		return fmt.Errorf("告警不存在: %s", id)
+	}
+	a.Resolved = resolved
+	return nil
 }

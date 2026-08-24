@@ -204,6 +204,18 @@ type StoragePlugin interface {
 	BatchSaveAuditLogs(logs []*AuditLog) error
 	QueryAuditLogs(filter AuditLogFilter, page, size int) ([]*AuditLog, int64, error)
 
+	// 留存清理：删除 cutoff 之前的审计日志，返回删除条数
+	DeleteAuditLogsBefore(cutoff time.Time) (int64, error)
+
+	// 篡改告警：同一 AuditLogID 存在未处置告警则更新检查时间，否则插入
+	SaveTamperAlerts(alerts []*TamperAlert) error
+
+	// 篡改告警查询：resolved nil=全部
+	ListTamperAlerts(resolved *bool, page, size int) ([]*TamperAlert, int64, error)
+
+	// 标记篡改告警处置状态
+	SetTamperAlertResolved(id string, resolved bool) error
+
 	// 限流配置管理
 	GetRateLimitConfig(tenantID, modelName string) (*RateLimitConfig, error)
 	SaveRateLimitConfig(cfg *RateLimitConfig) error
@@ -341,6 +353,24 @@ const (
 	ExporterTypeSyslog ExporterType = "syslog"
 	ExporterTypeKafka  ExporterType = "kafka"
 )
+
+// TamperAlert 篡改告警
+type TamperAlert struct {
+	ID            string    // 主键
+	AuditLogID    string    // 被篡改日志 ID
+	Reason        string    // 不一致描述
+	Resolved      bool      // 是否已处置
+	FirstSeenAt   time.Time // 首次发现
+	LastCheckedAt time.Time // 最近一次确认仍不一致
+}
+
+// FingerprintFunc 审计指纹计算函数（enterprise 提供，OSS 为 nil 不计算）
+type FingerprintFunc func(log *AuditLog) string
+
+// FingerprintHook 可选能力：审计器支持注入指纹计算
+type FingerprintHook interface {
+	SetFingerprintFunc(fn FingerprintFunc)
+}
 
 // LicenseValidator 授权校验接口
 type LicenseValidator interface {

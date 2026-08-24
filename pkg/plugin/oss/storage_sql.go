@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
+	"github.com/google/uuid"
 )
 
 // SQLStorage 共享 SQL 存储实现(MySQL/SQLite 共用 CRUD 逻辑)
@@ -611,6 +612,104 @@ func (s *SQLStorage) DeleteUpstream(id string) error {
 	res, err := s.db.Exec("DELETE FROM upstreams WHERE id = ?", id)
 	if err != nil {
 		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ===== 留存清理与篡改告警 =====
+
+// DeleteAuditLogsBefore 删除 cutoff 之前的审计日志，返回删除条数
+func (s *SQLStorage) DeleteAuditLogsBefore(cutoff time.Time) (int64, error) {
+	res, err := s.db.Exec("DELETE FROM audit_logs WHERE created_at < ?", timeToMS(cutoff))
+	if err != nil {
+		return 0, fmt.Errorf("delete expired audit logs: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
+// SaveTamperAlerts upsert 篡改告警：同一 AuditLogID 存在未处置告警则更新检查时间，否则插入
+func (s *SQLStorage) SaveTamperAlerts(alerts []*plugin.TamperAlert) error {
+	now := timeToMS(time.Now())
+	for _, a := range alerts {
+		var id string
+		err := s.db.QueryRow(
+			"SELECT id FROM audit_tamper_alerts WHERE audit_log_id = ? AND resolved = 0 LIMIT 1", a.AuditLogID,
+		).Scan(&id)
+		switch {
+		case err == nil:
+			if _, err := s.db.Exec(
+				"UPDATE audit_tamper_alerts SET reason = ?, last_checked_at = ? WHERE id = ?",
+				a.Reason, now, id,
+			); err != nil {
+				return fmt.Errorf("update tamper alert: %w", err)
+			}
+		case errors.Is(err, sql.ErrNoRows):
+			inserted := *a
+			if inserted.ID == "" {
+				inserted.ID = uuid.NewString()
+			}
+			if inserted.FirstSeenAt.IsZero() {
+				inserted.FirstSeenAt = msToTime(now)
+			}
+			inserted.LastCheckedAt = msToTime(now)
+			if _, err := s.db.Exec(
+				"INSERT INTO audit_tamper_alerts (id, audit_log_id, reason, resolved, first_seen_at, last_checked_at) VALUES (?, ?, ?, 0, ?, ?)",
+				inserted.ID, inserted.AuditLogID, inserted.Reason, timeToMS(inserted.FirstSeenAt), now,
+			); err != nil {
+				return fmt.Errorf("insert tamper alert: %w", err)
+			}
+		default:
+			return fmt.Errorf("query tamper alert: %w", err)
+		}
+	}
+	return nil
+}
+
+// ListTamperAlerts 查询篡改告警：resolved nil=全部；按最近检查时间倒序分页
+func (s *SQLStorage) ListTamperAlerts(resolved *bool, page, size int) ([]*plugin.TamperAlert, int64, error) {
+	where := "1=1"
+	args := []interface{}{}
+	if resolved != nil {
+		where += " AND resolved = ?"
+		args = append(args, boolToInt(*resolved))
+	}
+	var total int64
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM audit_tamper_alerts WHERE "+where, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count tamper alerts: %w", err)
+	}
+	page, size = normalizePage(page, size)
+	rows, err := s.db.Query(
+		"SELECT id, audit_log_id, reason, resolved, first_seen_at, last_checked_at FROM audit_tamper_alerts WHERE "+where+
+			" ORDER BY last_checked_at DESC LIMIT ? OFFSET ?", append(args, size, (page-1)*size)...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list tamper alerts: %w", err)
+	}
+	defer rows.Close()
+	var alerts []*plugin.TamperAlert
+	for rows.Next() {
+		a := &plugin.TamperAlert{}
+		var firstMS, checkedMS int64
+		var resolvedInt int
+		if err := rows.Scan(&a.ID, &a.AuditLogID, &a.Reason, &resolvedInt, &firstMS, &checkedMS); err != nil {
+			return nil, 0, err
+		}
+		a.Resolved = resolvedInt != 0
+		a.FirstSeenAt = msToTime(firstMS)
+		a.LastCheckedAt = msToTime(checkedMS)
+		alerts = append(alerts, a)
+	}
+	return alerts, total, rows.Err()
+}
+
+// SetTamperAlertResolved 标记告警处置状态
+func (s *SQLStorage) SetTamperAlertResolved(id string, resolved bool) error {
+	res, err := s.db.Exec("UPDATE audit_tamper_alerts SET resolved = ? WHERE id = ?", boolToInt(resolved), id)
+	if err != nil {
+		return fmt.Errorf("resolve tamper alert: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrNotFound

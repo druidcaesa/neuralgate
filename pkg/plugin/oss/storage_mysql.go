@@ -109,6 +109,15 @@ func mysqlCreateTables(db *sql.DB) error {
 			updated_at BIGINT NOT NULL,
 			KEY idx_upstreams_model (model_config_id)
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+		`CREATE TABLE IF NOT EXISTS audit_tamper_alerts (
+			id VARCHAR(36) PRIMARY KEY,
+			audit_log_id VARCHAR(64) NOT NULL,
+			reason TEXT NOT NULL,
+			resolved TINYINT NOT NULL DEFAULT 0,
+			first_seen_at BIGINT NOT NULL,
+			last_checked_at BIGINT NOT NULL,
+			KEY idx_tamper_alerts_log (audit_log_id)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {
