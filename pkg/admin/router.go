@@ -17,6 +17,7 @@ package admin
 import (
 	"net/http"
 
+	"github.com/druidcaesa/neuralgate/pkg/plugin"
 	"github.com/gin-gonic/gin"
 )
 
@@ -40,55 +41,58 @@ func (s *AdminServer) registerRoutes(r *gin.Engine) {
 		// 修改自身密码（需登录态）
 		authz.PUT("/auth/password", s.handleChangePassword)
 
-		// API Key 管理
-		authz.POST("/api-keys", s.createAPIKey)
-		authz.GET("/api-keys", s.listAPIKeys)
-		authz.PATCH("/api-keys/:id", s.updateAPIKey)
-		authz.DELETE("/api-keys/:id", s.deleteAPIKey)
+		// API Key 管理（RBAC 启用后按权限码守卫，未启用恒放行）
+		authz.POST("/api-keys", s.RequirePermission(plugin.PermAPIKeyWrite), s.createAPIKey)
+		authz.GET("/api-keys", s.RequirePermission(plugin.PermAPIKeyRead), s.listAPIKeys)
+		authz.PATCH("/api-keys/:id", s.RequirePermission(plugin.PermAPIKeyWrite), s.updateAPIKey)
+		authz.DELETE("/api-keys/:id", s.RequirePermission(plugin.PermAPIKeyWrite), s.deleteAPIKey)
 
 		// 模型配置
-		authz.POST("/models", s.createModelConfig)
-		authz.GET("/models", s.listModelConfigs)
-		authz.PUT("/models/:id", s.updateModelConfig)
-		authz.DELETE("/models/:id", s.deleteModelConfig)
-		authz.POST("/models/:id/test", s.testModelConfig)
+		authz.POST("/models", s.RequirePermission(plugin.PermModelWrite), s.createModelConfig)
+		authz.GET("/models", s.RequirePermission(plugin.PermModelRead), s.listModelConfigs)
+		authz.PUT("/models/:id", s.RequirePermission(plugin.PermModelWrite), s.updateModelConfig)
+		authz.DELETE("/models/:id", s.RequirePermission(plugin.PermModelWrite), s.deleteModelConfig)
+		authz.POST("/models/:id/test", s.RequirePermission(plugin.PermModelWrite), s.testModelConfig)
 
 		// 上游管理(负载均衡)
-		authz.POST("/models/:id/upstreams", s.createUpstream)
-		authz.GET("/models/:id/upstreams", s.listUpstreams)
-		authz.PUT("/upstreams/:uid", s.updateUpstream)
-		authz.DELETE("/upstreams/:uid", s.deleteUpstream)
+		authz.POST("/models/:id/upstreams", s.RequirePermission(plugin.PermModelWrite), s.createUpstream)
+		authz.GET("/models/:id/upstreams", s.RequirePermission(plugin.PermModelRead), s.listUpstreams)
+		authz.PUT("/upstreams/:uid", s.RequirePermission(plugin.PermModelWrite), s.updateUpstream)
+		authz.DELETE("/upstreams/:uid", s.RequirePermission(plugin.PermModelWrite), s.deleteUpstream)
 
 		// 审计日志
-		authz.GET("/audit-logs", s.queryAuditLogs)
-		authz.GET("/audit-logs/export", s.exportAuditLogs)
-		authz.GET("/audit-logs/:id", s.getAuditLog)
+		authz.GET("/audit-logs", s.RequirePermission(plugin.PermAuditRead), s.queryAuditLogs)
+		authz.GET("/audit-logs/export", s.RequirePermission(plugin.PermAuditExport), s.exportAuditLogs)
+		authz.GET("/audit-logs/:id", s.RequirePermission(plugin.PermAuditRead), s.getAuditLog)
 
 		// 系统信息
-		authz.GET("/system", s.systemInfo)
+		authz.GET("/system", s.RequirePermission(plugin.PermSystemRead), s.systemInfo)
 
 		// 授权信息
-		authz.GET("/license", s.licenseInfo)
+		authz.GET("/license", s.RequirePermission(plugin.PermSystemRead), s.licenseInfo)
 
-		// 篡改告警
-		authz.GET("/tamper-alerts", s.listTamperAlerts)
-		authz.PATCH("/tamper-alerts/:id", s.resolveTamperAlert)
+		// 篡改告警（处置属运维动作归 system:write）
+		authz.GET("/tamper-alerts", s.RequirePermission(plugin.PermAuditRead), s.listTamperAlerts)
+		authz.PATCH("/tamper-alerts/:id", s.RequirePermission(plugin.PermSystemWrite), s.resolveTamperAlert)
 
 		// 限流配置管理
-		authz.POST("/rate-limits", s.createRateLimit)
-		authz.GET("/rate-limits", s.listRateLimits)
-		authz.PUT("/rate-limits/:id", s.updateRateLimit)
-		authz.DELETE("/rate-limits/:id", s.deleteRateLimit)
+		authz.POST("/rate-limits", s.RequirePermission(plugin.PermRateLimitWrite), s.createRateLimit)
+		authz.GET("/rate-limits", s.RequirePermission(plugin.PermRateLimitRead), s.listRateLimits)
+		authz.PUT("/rate-limits/:id", s.RequirePermission(plugin.PermRateLimitWrite), s.updateRateLimit)
+		authz.DELETE("/rate-limits/:id", s.RequirePermission(plugin.PermRateLimitWrite), s.deleteRateLimit)
 
-		// 隐私合规(Enterprise)：规则库/白名单/安全事件
-		authz.POST("/privacy-rules", s.createPrivacyRule)
-		authz.GET("/privacy-rules", s.listPrivacyRules)
-		authz.PUT("/privacy-rules/:id", s.updatePrivacyRule)
-		authz.DELETE("/privacy-rules/:id", s.deletePrivacyRule)
-		authz.POST("/privacy-whitelist", s.createPrivacyWhitelistEntry)
-		authz.GET("/privacy-whitelist", s.listPrivacyWhitelistEntries)
-		authz.DELETE("/privacy-whitelist/:id", s.deletePrivacyWhitelistEntry)
-		authz.GET("/security-events", s.listSecurityEvents)
+		// 隐私合规(E4)：规则库/白名单/安全事件
+		authz.POST("/privacy-rules", s.RequirePermission(plugin.PermPrivacyWrite), s.createPrivacyRule)
+		authz.GET("/privacy-rules", s.RequirePermission(plugin.PermPrivacyRead), s.listPrivacyRules)
+		authz.PUT("/privacy-rules/:id", s.RequirePermission(plugin.PermPrivacyWrite), s.updatePrivacyRule)
+		authz.DELETE("/privacy-rules/:id", s.RequirePermission(plugin.PermPrivacyWrite), s.deletePrivacyRule)
+		authz.POST("/privacy-whitelist", s.RequirePermission(plugin.PermPrivacyWrite), s.createPrivacyWhitelistEntry)
+		authz.GET("/privacy-whitelist", s.RequirePermission(plugin.PermPrivacyRead), s.listPrivacyWhitelistEntries)
+		authz.DELETE("/privacy-whitelist/:id", s.RequirePermission(plugin.PermPrivacyWrite), s.deletePrivacyWhitelistEntry)
+		authz.GET("/security-events", s.RequirePermission(plugin.PermPrivacyRead), s.listSecurityEvents)
+
+		// RBAC 权限体系(E5)：租户/角色/用户/操作日志（handler 在 Task4 注册）
+		s.registerRBACRoutes(authz)
 	}
 
 	// 静态资源 + SPA fallback(go:embed)，页面公开加载，数据由 /api 认证保护

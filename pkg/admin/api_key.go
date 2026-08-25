@@ -52,6 +52,9 @@ func (s *AdminServer) createAPIKey(c *gin.Context) {
 	if req.RateLimit < 1 || req.RateLimit > 10000 {
 		req.RateLimit = 10
 	}
+	if forced := s.scopeTenant(c); forced != nil {
+		req.TenantID = *forced // 租户内用户创建的 Key 强制归属自身租户
+	}
 	if req.ExpiresAt != nil && req.ExpiresAt.Before(time.Now()) {
 		Error(c, http.StatusBadRequest, 400, "expires_at must be in the future")
 		return
@@ -97,11 +100,14 @@ func (s *AdminServer) createAPIKey(c *gin.Context) {
 	})
 }
 
-// listAPIKeys GET /api/api-keys:分页列表(脱敏,不返回哈希)
+// listAPIKeys GET /api/api-keys:分页列表(脱敏,不返回哈希;RBAC 启用时强制本租户)
 func (s *AdminServer) listAPIKeys(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	size, _ := strconv.Atoi(c.DefaultQuery("size", "10"))
 	tenantID := c.Query("tenant_id")
+	if forced := s.scopeTenant(c); forced != nil {
+		tenantID = *forced
+	}
 	keys, total, err := s.storage.ListAPIKeys(tenantID, page, size)
 	if err != nil {
 		Error(c, http.StatusInternalServerError, 500, "failed to list api keys")
@@ -131,7 +137,7 @@ func (s *AdminServer) listAPIKeys(c *gin.Context) {
 	OK(c, gin.H{"items": items, "total": total, "page": page, "size": size})
 }
 
-// updateAPIKey PATCH /api/api-keys/:id:禁用/启用
+// updateAPIKey PATCH /api/api-keys/:id:禁用/启用（跨租户返回 404 不暴露存在性）
 func (s *AdminServer) updateAPIKey(c *gin.Context) {
 	id := c.Param("id")
 	var req apiKeyUpdateRequest
@@ -140,7 +146,7 @@ func (s *AdminServer) updateAPIKey(c *gin.Context) {
 		return
 	}
 	key, err := s.storage.GetAPIKeyByID(id)
-	if err != nil {
+	if err != nil || s.tenantMismatch(c, key.TenantID) {
 		Error(c, http.StatusNotFound, 404, "api key not found")
 		return
 	}
@@ -153,12 +159,23 @@ func (s *AdminServer) updateAPIKey(c *gin.Context) {
 	OK(c, gin.H{"id": id, "status": key.Status})
 }
 
-// deleteAPIKey DELETE /api/api-keys/:id:软删除
+// deleteAPIKey DELETE /api/api-keys/:id:软删除（跨租户返回 404）
 func (s *AdminServer) deleteAPIKey(c *gin.Context) {
 	id := c.Param("id")
+	key, err := s.storage.GetAPIKeyByID(id)
+	if err != nil || s.tenantMismatch(c, key.TenantID) {
+		Error(c, http.StatusNotFound, 404, "api key not found")
+		return
+	}
 	if err := s.storage.DeleteAPIKey(id); err != nil {
 		Error(c, http.StatusNotFound, 404, "api key not found")
 		return
 	}
 	OK(c, gin.H{"id": id, "deleted": true})
+}
+
+// tenantMismatch 判断目标记录租户与当前会话租户不符（RBAC 关闭或超管恒为 false）
+func (s *AdminServer) tenantMismatch(c *gin.Context, recordTenantID string) bool {
+	forced := s.scopeTenant(c)
+	return forced != nil && recordTenantID != *forced
 }

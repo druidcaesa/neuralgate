@@ -224,6 +224,57 @@ func (s *AdminServer) EnableAuth(sm *SessionManager, allowedOrigins []string) {
 // NewAdminServer 默认已启用认证（fail-closed），关闭是显式行为
 func (s *AdminServer) DisableAuth() { s.sessions = nil }
 
+// EnableRBAC 启用权限体系（rbac.enabled + FeatureRBAC 双条件在 main 计算后注入）。
+// 中间件闭包动态读取开关，须在服务开始监听前调用
+func (s *AdminServer) EnableRBAC(enabled bool) { s.rbacEnabled = enabled }
+
+// currentClaims 取当前会话 claims（RequireAuth 已注入）
+func (s *AdminServer) currentClaims(c *gin.Context) *sessionClaims {
+	claims, _ := c.Get(claimsContextKey)
+	session, _ := claims.(*sessionClaims)
+	return session
+}
+
+// RequirePermission 功能权限守卫：RBAC 未启用恒放行（现状零变化）；
+// 超管或会话权限含 perm 放行，否则 403 无权限
+func (s *AdminServer) RequirePermission(perm string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if !s.rbacEnabled {
+			c.Next()
+			return
+		}
+		claims := s.currentClaims(c)
+		if claims != nil && (claims.IsSuper || containsPerm(claims.Permissions, perm)) {
+			c.Next()
+			return
+		}
+		Error(c, http.StatusForbidden, http.StatusForbidden, "无权限")
+		c.Abort()
+	}
+}
+
+func containsPerm(perms []string, perm string) bool {
+	for _, p := range perms {
+		if p == perm {
+			return true
+		}
+	}
+	return false
+}
+
+// scopeTenant 租户过滤注入：非超管且绑定租户时返回自身租户指针，其余返回 nil（不过滤）
+func (s *AdminServer) scopeTenant(c *gin.Context) *string {
+	if !s.rbacEnabled {
+		return nil
+	}
+	claims := s.currentClaims(c)
+	if claims == nil || claims.IsSuper || claims.TenantID == "" {
+		return nil
+	}
+	v := claims.TenantID
+	return &v
+}
+
 // RequireAuth 校验 X-Admin-Token（兼容 Authorization: Bearer），通过后注入 claims
 func (s *AdminServer) RequireAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {

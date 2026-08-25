@@ -42,6 +42,9 @@ func (s *AdminServer) createRateLimit(c *gin.Context) {
 		return
 	}
 	// 同维度唯一:已存在则 409
+	if forced := s.scopeTenant(c); forced != nil {
+		req.TenantID = *forced // 租户内用户创建的限流配置强制归属自身租户
+	}
 	if _, err := s.storage.GetRateLimitConfig(req.TenantID, req.ModelName); err == nil {
 		Error(c, http.StatusConflict, 409, "该维度限流配置已存在")
 		return
@@ -64,11 +67,11 @@ func (s *AdminServer) createRateLimit(c *gin.Context) {
 	OK(c, gin.H{"id": cfg.ID})
 }
 
-// listRateLimits GET /api/rate-limits
+// listRateLimits GET /api/rate-limits（RBAC 启用时强制本租户）
 func (s *AdminServer) listRateLimits(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	size, _ := strconv.Atoi(c.DefaultQuery("size", "10"))
-	cfgs, total, err := s.storage.ListRateLimitConfigs(nil, page, size)
+	cfgs, total, err := s.storage.ListRateLimitConfigs(s.scopeTenant(c), page, size)
 	if err != nil {
 		Error(c, http.StatusInternalServerError, 500, "failed to list rate limit configs")
 		return
@@ -97,7 +100,7 @@ func (s *AdminServer) updateRateLimit(c *gin.Context) {
 			break
 		}
 	}
-	if existing == nil {
+	if existing == nil || s.tenantMismatch(c, existing.TenantID) {
 		Error(c, http.StatusNotFound, 404, "rate limit config not found")
 		return
 	}
@@ -118,9 +121,19 @@ func (s *AdminServer) updateRateLimit(c *gin.Context) {
 	OK(c, gin.H{"id": id})
 }
 
-// deleteRateLimit DELETE /api/rate-limits/:id
+// deleteRateLimit DELETE /api/rate-limits/:id（跨租户返回 404）
 func (s *AdminServer) deleteRateLimit(c *gin.Context) {
 	id := c.Param("id")
+	cfgs, _, _ := s.storage.ListRateLimitConfigs(nil, 1, 100000)
+	for _, cfg := range cfgs {
+		if cfg.ID == id {
+			if s.tenantMismatch(c, cfg.TenantID) {
+				Error(c, http.StatusNotFound, 404, "rate limit config not found")
+				return
+			}
+			break
+		}
+	}
 	if err := s.storage.DeleteRateLimitConfig(id); err != nil {
 		Error(c, http.StatusNotFound, 404, "rate limit config not found")
 		return
