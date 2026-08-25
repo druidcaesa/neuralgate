@@ -31,25 +31,30 @@ var ErrNotFound = errors.New("record not found")
 
 // MemStorage 内存存储实现
 type MemStorage struct {
-	mu           sync.RWMutex
-	apiKeys      map[string]*plugin.APIKey          // keyHash -> key
-	modelConfigs map[string]*plugin.ModelConfig     // modelName -> config
-	auditLogs    []*plugin.AuditLog                 // 按写入顺序
-	tamperAlerts map[string]*plugin.TamperAlert     // 告警ID -> 篡改告警
-	rateLimits   map[string]*plugin.RateLimitConfig // id -> config
-	upstreams    map[string]*plugin.Upstream        // id -> upstream
-	adminUsers   map[string]*plugin.AdminUser       // id -> 管理后台账号
+	mu               sync.RWMutex
+	apiKeys          map[string]*plugin.APIKey                // keyHash -> key
+	modelConfigs     map[string]*plugin.ModelConfig           // modelName -> config
+	auditLogs        []*plugin.AuditLog                       // 按写入顺序
+	tamperAlerts     map[string]*plugin.TamperAlert           // 告警ID -> 篡改告警
+	rateLimits       map[string]*plugin.RateLimitConfig       // id -> config
+	upstreams        map[string]*plugin.Upstream              // id -> upstream
+	adminUsers       map[string]*plugin.AdminUser             // id -> 管理后台账号
+	privacyRules     map[string]*plugin.PrivacyRule           // id -> 隐私规则
+	privacyWhitelist map[string]*plugin.PrivacyWhitelistEntry // id -> 白名单条目
+	securityEvents   []*plugin.SecurityEvent                  // 按写入顺序
 }
 
 // NewMemStorage 创建内存存储
 func NewMemStorage() *MemStorage {
 	return &MemStorage{
-		apiKeys:      make(map[string]*plugin.APIKey),
-		modelConfigs: make(map[string]*plugin.ModelConfig),
-		rateLimits:   make(map[string]*plugin.RateLimitConfig),
-		upstreams:    make(map[string]*plugin.Upstream),
-		tamperAlerts: make(map[string]*plugin.TamperAlert),
-		adminUsers:   make(map[string]*plugin.AdminUser),
+		apiKeys:          make(map[string]*plugin.APIKey),
+		modelConfigs:     make(map[string]*plugin.ModelConfig),
+		rateLimits:       make(map[string]*plugin.RateLimitConfig),
+		upstreams:        make(map[string]*plugin.Upstream),
+		tamperAlerts:     make(map[string]*plugin.TamperAlert),
+		adminUsers:       make(map[string]*plugin.AdminUser),
+		privacyRules:     make(map[string]*plugin.PrivacyRule),
+		privacyWhitelist: make(map[string]*plugin.PrivacyWhitelistEntry),
 	}
 }
 
@@ -490,4 +495,115 @@ func (s *MemStorage) SetTamperAlertResolved(id string, resolved bool) error {
 	}
 	a.Resolved = resolved
 	return nil
+}
+
+// ===== 隐私合规(规则库/白名单/安全事件) =====
+
+func (s *MemStorage) SavePrivacyRule(rule *plugin.PrivacyRule) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	if rule.ID == "" {
+		rule.ID = uuid.NewString()
+		rule.CreatedAt = now
+	}
+	stored := *rule
+	stored.UpdatedAt = now
+	s.privacyRules[stored.ID] = &stored
+	return nil
+}
+
+func (s *MemStorage) DeletePrivacyRule(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.privacyRules[id]; !ok {
+		return ErrNotFound
+	}
+	delete(s.privacyRules, id)
+	return nil
+}
+
+func (s *MemStorage) ListPrivacyRules(ruleType *string) ([]*plugin.PrivacyRule, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var rules []*plugin.PrivacyRule
+	for _, r := range s.privacyRules {
+		if ruleType != nil && r.RuleType != *ruleType {
+			continue
+		}
+		cp := *r
+		rules = append(rules, &cp)
+	}
+	sort.Slice(rules, func(i, j int) bool {
+		if rules[i].CreatedAt.Equal(rules[j].CreatedAt) {
+			return rules[i].ID < rules[j].ID
+		}
+		return rules[i].CreatedAt.Before(rules[j].CreatedAt)
+	})
+	return rules, nil
+}
+
+func (s *MemStorage) SavePrivacyWhitelistEntry(entry *plugin.PrivacyWhitelistEntry) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if entry.ID == "" {
+		entry.ID = uuid.NewString()
+	}
+	if entry.CreatedAt.IsZero() {
+		entry.CreatedAt = time.Now()
+	}
+	stored := *entry
+	s.privacyWhitelist[stored.ID] = &stored
+	return nil
+}
+
+func (s *MemStorage) DeletePrivacyWhitelistEntry(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.privacyWhitelist[id]; !ok {
+		return ErrNotFound
+	}
+	delete(s.privacyWhitelist, id)
+	return nil
+}
+
+func (s *MemStorage) ListPrivacyWhitelistEntries() ([]*plugin.PrivacyWhitelistEntry, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var entries []*plugin.PrivacyWhitelistEntry
+	for _, e := range s.privacyWhitelist {
+		cp := *e
+		entries = append(entries, &cp)
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].CreatedAt.Before(entries[j].CreatedAt) })
+	return entries, nil
+}
+
+func (s *MemStorage) SaveSecurityEvent(event *plugin.SecurityEvent) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if event.ID == "" {
+		event.ID = uuid.NewString()
+	}
+	if event.CreatedAt.IsZero() {
+		event.CreatedAt = time.Now()
+	}
+	stored := *event
+	s.securityEvents = append(s.securityEvents, &stored)
+	return nil
+}
+
+// ListSecurityEvents 安全事件分页查询：按写入时间倒序（最近优先）
+func (s *MemStorage) ListSecurityEvents(page, size int) ([]*plugin.SecurityEvent, int64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	page, size = normalizePage(page, size)
+	total := int64(len(s.securityEvents))
+	out := make([]*plugin.SecurityEvent, 0, size)
+	// 第 p 页取倒数第 (p-1)*size+1 .. p*size 条
+	for i := len(s.securityEvents) - 1 - (page-1)*size; i >= 0 && i >= len(s.securityEvents)-page*size; i-- {
+		cp := *s.securityEvents[i]
+		out = append(out, &cp)
+	}
+	return out, total, nil
 }

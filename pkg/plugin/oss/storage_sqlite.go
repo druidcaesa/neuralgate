@@ -127,6 +127,35 @@ func sqliteCreateTables(db *sql.DB) error {
 			updated_at INTEGER NOT NULL,
 			last_login_at INTEGER
 		)`,
+		`CREATE TABLE IF NOT EXISTS privacy_rules (
+			id TEXT PRIMARY KEY,
+			rule_type TEXT NOT NULL,
+			name TEXT NOT NULL,
+			pattern TEXT NOT NULL,
+			replacement TEXT NOT NULL DEFAULT '',
+			scope TEXT NOT NULL DEFAULT 'both',
+			enabled INTEGER NOT NULL DEFAULT 1,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_privacy_rules_type ON privacy_rules(rule_type)`,
+		`CREATE TABLE IF NOT EXISTS privacy_whitelist (
+			id TEXT PRIMARY KEY,
+			pattern TEXT NOT NULL,
+			note TEXT NOT NULL DEFAULT '',
+			enabled INTEGER NOT NULL DEFAULT 1,
+			created_at INTEGER NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS security_events (
+			id TEXT PRIMARY KEY,
+			request_id TEXT NOT NULL,
+			rule_name TEXT NOT NULL DEFAULT '',
+			snippet TEXT NOT NULL DEFAULT '',
+			client_ip TEXT NOT NULL DEFAULT '',
+			model_name TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_security_events_created ON security_events(created_at)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {

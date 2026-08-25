@@ -173,6 +173,52 @@ type RateLimitConfig struct {
 	UpdatedAt      time.Time // 更新时间
 }
 
+// 隐私规则类型取值（privacy_rules.rule_type）
+const (
+	PrivacyRuleTypePII       = "pii"
+	PrivacyRuleTypeInjection = "injection"
+)
+
+// 隐私规则作用域取值（privacy_rules.scope；injection 恒 request）
+const (
+	PrivacyScopeRequest  = "request"
+	PrivacyScopeResponse = "response"
+	PrivacyScopeBoth     = "both"
+)
+
+// PrivacyRule 脱敏/注入检测规则（rule_type=pii/injection 统一存取）
+type PrivacyRule struct {
+	ID          string    `json:"id"`
+	RuleType    string    `json:"rule_type"`   // pii | injection
+	Name        string    `json:"name"`        // 1-64 字符
+	Pattern     string    `json:"pattern"`     // 合法正则
+	Replacement string    `json:"replacement"` // 1-128 字符(injection 忽略)
+	Scope       string    `json:"scope"`       // request|response|both(pii 有效,injection 恒 request)
+	Enabled     bool      `json:"enabled"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// PrivacyWhitelistEntry 白名单：请求内容命中 pattern 则整体跳过脱敏与注入检测
+type PrivacyWhitelistEntry struct {
+	ID        string    `json:"id"`
+	Pattern   string    `json:"pattern"`
+	Note      string    `json:"note"`
+	Enabled   bool      `json:"enabled"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// SecurityEvent 注入拦截安全事件
+type SecurityEvent struct {
+	ID        string    `json:"id"`
+	RequestID string    `json:"request_id"`
+	RuleName  string    `json:"rule_name"`
+	Snippet   string    `json:"snippet"` // 截断 256 字符
+	ClientIP  string    `json:"client_ip"`
+	ModelName string    `json:"model_name"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // LicenseInfo 商业授权信息（license.json 的结构）
 type LicenseInfo struct {
 	LicenseKey   string    `json:"license_key"`   // 授权码
@@ -251,6 +297,16 @@ type StoragePlugin interface {
 	GetUpstreamByID(id string) (*Upstream, error)
 	SaveUpstream(up *Upstream) error
 	DeleteUpstream(id string) error
+
+	// 隐私合规(Enterprise)：规则库 CRUD + 白名单 + 安全事件留痕
+	SavePrivacyRule(rule *PrivacyRule) error
+	DeletePrivacyRule(id string) error
+	ListPrivacyRules(ruleType *string) ([]*PrivacyRule, error)
+	SavePrivacyWhitelistEntry(entry *PrivacyWhitelistEntry) error
+	DeletePrivacyWhitelistEntry(id string) error
+	ListPrivacyWhitelistEntries() ([]*PrivacyWhitelistEntry, error)
+	SaveSecurityEvent(event *SecurityEvent) error
+	ListSecurityEvents(page, size int) ([]*SecurityEvent, int64, error)
 
 	// 健康检查
 	Ping() error

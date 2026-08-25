@@ -128,6 +128,35 @@ func mysqlCreateTables(db *sql.DB) error {
 			updated_at BIGINT NOT NULL,
 			last_login_at BIGINT NULL
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+		`CREATE TABLE IF NOT EXISTS privacy_rules (
+			id VARCHAR(64) PRIMARY KEY,
+			rule_type VARCHAR(16) NOT NULL,
+			name VARCHAR(64) NOT NULL,
+			pattern TEXT NOT NULL,
+			replacement VARCHAR(128) NOT NULL DEFAULT '',
+			scope VARCHAR(16) NOT NULL DEFAULT 'both',
+			enabled TINYINT NOT NULL DEFAULT 1,
+			created_at BIGINT NOT NULL,
+			updated_at BIGINT NOT NULL,
+			KEY idx_privacy_rules_type (rule_type)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+		`CREATE TABLE IF NOT EXISTS privacy_whitelist (
+			id VARCHAR(64) PRIMARY KEY,
+			pattern TEXT NOT NULL,
+			note VARCHAR(255) NOT NULL DEFAULT '',
+			enabled TINYINT NOT NULL DEFAULT 1,
+			created_at BIGINT NOT NULL
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+		`CREATE TABLE IF NOT EXISTS security_events (
+			id VARCHAR(64) PRIMARY KEY,
+			request_id VARCHAR(64) NOT NULL,
+			rule_name VARCHAR(64) NOT NULL DEFAULT '',
+			snippet VARCHAR(1024) NOT NULL DEFAULT '',
+			client_ip VARCHAR(64) NOT NULL DEFAULT '',
+			model_name VARCHAR(64) NOT NULL DEFAULT '',
+			created_at BIGINT NOT NULL,
+			KEY idx_security_events_created (created_at)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {

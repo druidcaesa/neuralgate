@@ -131,3 +131,30 @@ func (d *dynamicStorage) ListTamperAlerts(resolved *bool, page, size int) ([]*pl
 func (d *dynamicStorage) SetTamperAlertResolved(id string, resolved bool) error {
 	return d.impl.SetTamperAlertResolved(id, resolved)
 }
+
+// ===== 隐私合规(规则库/白名单/安全事件,委托底层实现) =====
+
+func (d *dynamicStorage) SavePrivacyRule(rule *plugin.PrivacyRule) error {
+	return d.impl.SavePrivacyRule(rule)
+}
+func (d *dynamicStorage) DeletePrivacyRule(id string) error {
+	return d.impl.DeletePrivacyRule(id)
+}
+func (d *dynamicStorage) ListPrivacyRules(ruleType *string) ([]*plugin.PrivacyRule, error) {
+	return d.impl.ListPrivacyRules(ruleType)
+}
+func (d *dynamicStorage) SavePrivacyWhitelistEntry(entry *plugin.PrivacyWhitelistEntry) error {
+	return d.impl.SavePrivacyWhitelistEntry(entry)
+}
+func (d *dynamicStorage) DeletePrivacyWhitelistEntry(id string) error {
+	return d.impl.DeletePrivacyWhitelistEntry(id)
+}
+func (d *dynamicStorage) ListPrivacyWhitelistEntries() ([]*plugin.PrivacyWhitelistEntry, error) {
+	return d.impl.ListPrivacyWhitelistEntries()
+}
+func (d *dynamicStorage) SaveSecurityEvent(event *plugin.SecurityEvent) error {
+	return d.impl.SaveSecurityEvent(event)
+}
+func (d *dynamicStorage) ListSecurityEvents(page, size int) ([]*plugin.SecurityEvent, int64, error) {
+	return d.impl.ListSecurityEvents(page, size)
+}
