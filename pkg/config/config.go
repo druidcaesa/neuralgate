@@ -91,10 +91,11 @@ type RateLimitConfig struct {
 }
 
 type ExportConfig struct {
-	Enabled       bool          `yaml:"enabled"` // 是否启用外推(bool 不参与 applyDefaults)
-	Type          string        `yaml:"type"`
-	Endpoint      string        `yaml:"endpoint"`
-	APIKey        string        `yaml:"api_key"`
+	Enabled       bool          `yaml:"enabled"`  // 是否启用外推(bool 不参与 applyDefaults)
+	Type          string        `yaml:"type"`     // siem/syslog/kafka
+	Endpoint      string        `yaml:"endpoint"` // kafka 为逗号分隔 broker 列表
+	APIKey        string        `yaml:"api_key"`  // SIEM 认证密钥(kafka 本期忽略)
+	Topic         string        `yaml:"topic"`    // Kafka 目标 topic(空=neuralgate-audit)
 	BatchSize     int           `yaml:"batch_size"`
 	FlushInterval time.Duration `yaml:"flush_interval"`
 }
