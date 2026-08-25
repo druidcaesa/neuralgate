@@ -1324,3 +1324,101 @@ func (s *SQLStorage) CountActiveAdminUsersByRoleID(roleID string) (int64, error)
 	).Scan(&total)
 	return total, err
 }
+
+// ===== 合规报表(E6) =====
+
+const complianceReportCols = "id, period_type, period_start, period_end, generated_at, content"
+
+func scanComplianceReport(row interface{ Scan(...interface{}) error }) (*plugin.ComplianceReport, error) {
+	r := &plugin.ComplianceReport{}
+	var contentJSON string
+	var startMS, endMS, genMS int64
+	if err := row.Scan(&r.ID, &r.PeriodType, &startMS, &endMS, &genMS, &contentJSON); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	r.PeriodStart = msToTime(startMS)
+	r.PeriodEnd = msToTime(endMS)
+	r.GeneratedAt = msToTime(genMS)
+	content := &plugin.ReportContent{}
+	if err := json.Unmarshal([]byte(contentJSON), content); err != nil {
+		return nil, fmt.Errorf("解析报表内容: %w", err)
+	}
+	r.Content = content
+	return r, nil
+}
+
+// SaveComplianceReport UPSERT：按 (period_type, period_start) 业务键覆盖，保留原 id。
+// MySQL 用 VALUES(col)，SQLite 用 excluded.col
+func (s *SQLStorage) SaveComplianceReport(report *plugin.ComplianceReport) error {
+	now := time.Now()
+	if report.ID == "" {
+		report.ID = uuid.NewString()
+	}
+	if report.GeneratedAt.IsZero() {
+		report.GeneratedAt = now
+	}
+	contentJSON, err := json.Marshal(report.Content)
+	if err != nil {
+		return fmt.Errorf("序列化报表内容: %w", err)
+	}
+	upsert := ""
+	if s.isMySQL() {
+		upsert = " ON DUPLICATE KEY UPDATE id=VALUES(id), period_end=VALUES(period_end), generated_at=VALUES(generated_at), content=VALUES(content)"
+	} else {
+		upsert = " ON CONFLICT(period_type, period_start) DO UPDATE SET id=excluded.id, period_end=excluded.period_end, generated_at=excluded.generated_at, content=excluded.content"
+	}
+	if _, err := s.db.Exec(
+		"INSERT INTO compliance_reports ("+complianceReportCols+") VALUES (?, ?, ?, ?, ?, ?)"+upsert,
+		report.ID, report.PeriodType, timeToMS(report.PeriodStart),
+		timeToMS(report.PeriodEnd), timeToMS(report.GeneratedAt), string(contentJSON),
+	); err != nil {
+		return fmt.Errorf("save compliance report: %w", err)
+	}
+	return nil
+}
+
+// ListComplianceReports 报表分页：period_start 倒序（最近优先）
+func (s *SQLStorage) ListComplianceReports(page, size int) ([]*plugin.ComplianceReport, int64, error) {
+	page, size = normalizePage(page, size)
+	var total int64
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM compliance_reports").Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count compliance reports: %w", err)
+	}
+	rows, err := s.db.Query(
+		"SELECT "+complianceReportCols+" FROM compliance_reports ORDER BY period_start DESC LIMIT ? OFFSET ?",
+		size, (page-1)*size)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list compliance reports: %w", err)
+	}
+	defer rows.Close()
+	reports := make([]*plugin.ComplianceReport, 0, size)
+	for rows.Next() {
+		r, err := scanComplianceReport(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		reports = append(reports, r)
+	}
+	return reports, total, rows.Err()
+}
+
+func (s *SQLStorage) GetComplianceReport(id string) (*plugin.ComplianceReport, error) {
+	row := s.db.QueryRow("SELECT "+complianceReportCols+" FROM compliance_reports WHERE id = ?", id)
+	return scanComplianceReport(row)
+}
+
+func (s *SQLStorage) FindComplianceReportByPeriod(periodType string, periodStart time.Time) (*plugin.ComplianceReport, error) {
+	row := s.db.QueryRow(
+		"SELECT "+complianceReportCols+" FROM compliance_reports WHERE period_type = ? AND period_start = ?",
+		periodType, timeToMS(periodStart))
+	return scanComplianceReport(row)
+}
+
+func (s *SQLStorage) CountComplianceReports() (int64, error) {
+	var total int64
+	err := s.db.QueryRow("SELECT COUNT(*) FROM compliance_reports").Scan(&total)
+	return total, err
+}

@@ -212,3 +212,21 @@ func (d *dynamicStorage) ListAdminUsers() ([]*plugin.AdminUser, error) {
 func (d *dynamicStorage) CountActiveAdminUsersByRoleID(roleID string) (int64, error) {
 	return d.impl.CountActiveAdminUsersByRoleID(roleID)
 }
+
+// ===== 合规报表(委托底层实现) =====
+
+func (d *dynamicStorage) SaveComplianceReport(report *plugin.ComplianceReport) error {
+	return d.impl.SaveComplianceReport(report)
+}
+func (d *dynamicStorage) ListComplianceReports(page, size int) ([]*plugin.ComplianceReport, int64, error) {
+	return d.impl.ListComplianceReports(page, size)
+}
+func (d *dynamicStorage) GetComplianceReport(id string) (*plugin.ComplianceReport, error) {
+	return d.impl.GetComplianceReport(id)
+}
+func (d *dynamicStorage) FindComplianceReportByPeriod(periodType string, periodStart time.Time) (*plugin.ComplianceReport, error) {
+	return d.impl.FindComplianceReportByPeriod(periodType, periodStart)
+}
+func (d *dynamicStorage) CountComplianceReports() (int64, error) {
+	return d.impl.CountComplianceReports()
+}
