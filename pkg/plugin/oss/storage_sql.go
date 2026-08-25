@@ -82,6 +82,33 @@ func (s *SQLStorage) Init(config map[string]interface{}) error {
 		s.db = nil
 		return fmt.Errorf("create tables: %w", err)
 	}
+	if err := seedPrivacyRules(db); err != nil {
+		_ = db.Close()
+		s.driver = ""
+		s.db = nil
+		return fmt.Errorf("seed privacy rules: %w", err)
+	}
+	return nil
+}
+
+// seedPrivacyRules privacy_rules 空表时写入内置规则种子；已有数据则跳过（重启不重复插入）
+func seedPrivacyRules(db *sql.DB) error {
+	var count int
+	if err := db.QueryRow("SELECT COUNT(*) FROM privacy_rules").Scan(&count); err != nil {
+		return fmt.Errorf("count privacy rules: %w", err)
+	}
+	if count > 0 {
+		return nil
+	}
+	now := timeToMS(time.Now())
+	for _, r := range plugin.DefaultPrivacyRules() {
+		if _, err := db.Exec(
+			"INSERT INTO privacy_rules (id, rule_type, name, pattern, replacement, scope, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			uuid.NewString(), r.RuleType, r.Name, r.Pattern, r.Replacement, r.Scope, boolToInt(r.Enabled), now, now,
+		); err != nil {
+			return fmt.Errorf("seed privacy rule %s: %w", r.Name, err)
+		}
+	}
 	return nil
 }
 
@@ -790,4 +817,188 @@ func (s *SQLStorage) SetTamperAlertResolved(id string, resolved bool) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// ===== 隐私合规(规则库/白名单/安全事件) =====
+
+const privacyRuleCols = "id, rule_type, name, pattern, replacement, scope, enabled, created_at, updated_at"
+
+func scanPrivacyRule(row interface{ Scan(...interface{}) error }) (*plugin.PrivacyRule, error) {
+	r := &plugin.PrivacyRule{}
+	var enabledInt int
+	var createdMS, updatedMS int64
+	if err := row.Scan(&r.ID, &r.RuleType, &r.Name, &r.Pattern, &r.Replacement, &r.Scope, &enabledInt, &createdMS, &updatedMS); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	r.Enabled = enabledInt != 0
+	r.CreatedAt = msToTime(createdMS)
+	r.UpdatedAt = msToTime(updatedMS)
+	return r, nil
+}
+
+// SavePrivacyRule UPSERT：MySQL 用 VALUES(col)，SQLite 用 excluded.col
+func (s *SQLStorage) SavePrivacyRule(rule *plugin.PrivacyRule) error {
+	now := time.Now()
+	if rule.ID == "" {
+		rule.ID = uuid.NewString()
+		rule.CreatedAt = now
+	}
+	rule.UpdatedAt = now
+	upsert := ""
+	if s.isMySQL() {
+		upsert = " ON DUPLICATE KEY UPDATE rule_type=VALUES(rule_type), name=VALUES(name), pattern=VALUES(pattern), replacement=VALUES(replacement), scope=VALUES(scope), enabled=VALUES(enabled), updated_at=VALUES(updated_at)"
+	} else {
+		upsert = " ON CONFLICT(id) DO UPDATE SET rule_type=excluded.rule_type, name=excluded.name, pattern=excluded.pattern, replacement=excluded.replacement, scope=excluded.scope, enabled=excluded.enabled, updated_at=excluded.updated_at"
+	}
+	if _, err := s.db.Exec(
+		"INSERT INTO privacy_rules ("+privacyRuleCols+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"+upsert,
+		rule.ID, rule.RuleType, rule.Name, rule.Pattern, rule.Replacement, rule.Scope,
+		boolToInt(rule.Enabled), timeToMS(rule.CreatedAt), timeToMS(rule.UpdatedAt),
+	); err != nil {
+		return fmt.Errorf("save privacy rule: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLStorage) DeletePrivacyRule(id string) error {
+	res, err := s.db.Exec("DELETE FROM privacy_rules WHERE id = ?", id)
+	if err != nil {
+		return fmt.Errorf("delete privacy rule: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ListPrivacyRules 全量规则（引擎缓存加载用，不分页）；ruleType nil=全部，按创建序返回保证确定性
+func (s *SQLStorage) ListPrivacyRules(ruleType *string) ([]*plugin.PrivacyRule, error) {
+	where := "1=1"
+	args := []interface{}{}
+	if ruleType != nil {
+		where += " AND rule_type = ?"
+		args = append(args, *ruleType)
+	}
+	rows, err := s.db.Query(
+		"SELECT "+privacyRuleCols+" FROM privacy_rules WHERE "+where+" ORDER BY created_at ASC, id ASC", args...)
+	if err != nil {
+		return nil, fmt.Errorf("list privacy rules: %w", err)
+	}
+	defer rows.Close()
+	var rules []*plugin.PrivacyRule
+	for rows.Next() {
+		r, err := scanPrivacyRule(rows)
+		if err != nil {
+			return nil, err
+		}
+		rules = append(rules, r)
+	}
+	return rules, rows.Err()
+}
+
+const privacyWhitelistCols = "id, pattern, note, enabled, created_at"
+
+// SavePrivacyWhitelistEntry UPSERT：MySQL 用 VALUES(col)，SQLite 用 excluded.col
+func (s *SQLStorage) SavePrivacyWhitelistEntry(entry *plugin.PrivacyWhitelistEntry) error {
+	if entry.ID == "" {
+		entry.ID = uuid.NewString()
+	}
+	if entry.CreatedAt.IsZero() {
+		entry.CreatedAt = time.Now()
+	}
+	upsert := ""
+	if s.isMySQL() {
+		upsert = " ON DUPLICATE KEY UPDATE pattern=VALUES(pattern), note=VALUES(note), enabled=VALUES(enabled)"
+	} else {
+		upsert = " ON CONFLICT(id) DO UPDATE SET pattern=excluded.pattern, note=excluded.note, enabled=excluded.enabled"
+	}
+	if _, err := s.db.Exec(
+		"INSERT INTO privacy_whitelist ("+privacyWhitelistCols+") VALUES (?, ?, ?, ?, ?)"+upsert,
+		entry.ID, entry.Pattern, entry.Note, boolToInt(entry.Enabled), timeToMS(entry.CreatedAt),
+	); err != nil {
+		return fmt.Errorf("save privacy whitelist entry: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLStorage) DeletePrivacyWhitelistEntry(id string) error {
+	res, err := s.db.Exec("DELETE FROM privacy_whitelist WHERE id = ?", id)
+	if err != nil {
+		return fmt.Errorf("delete privacy whitelist entry: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *SQLStorage) ListPrivacyWhitelistEntries() ([]*plugin.PrivacyWhitelistEntry, error) {
+	rows, err := s.db.Query(
+		"SELECT " + privacyWhitelistCols + " FROM privacy_whitelist ORDER BY created_at ASC, id ASC")
+	if err != nil {
+		return nil, fmt.Errorf("list privacy whitelist: %w", err)
+	}
+	defer rows.Close()
+	var entries []*plugin.PrivacyWhitelistEntry
+	for rows.Next() {
+		e := &plugin.PrivacyWhitelistEntry{}
+		var enabledInt int
+		var createdMS int64
+		if err := rows.Scan(&e.ID, &e.Pattern, &e.Note, &enabledInt, &createdMS); err != nil {
+			return nil, err
+		}
+		e.Enabled = enabledInt != 0
+		e.CreatedAt = msToTime(createdMS)
+		entries = append(entries, e)
+	}
+	return entries, rows.Err()
+}
+
+const securityEventCols = "id, request_id, rule_name, snippet, client_ip, model_name, created_at"
+
+func (s *SQLStorage) SaveSecurityEvent(event *plugin.SecurityEvent) error {
+	if event.ID == "" {
+		event.ID = uuid.NewString()
+	}
+	if event.CreatedAt.IsZero() {
+		event.CreatedAt = time.Now()
+	}
+	if _, err := s.db.Exec(
+		"INSERT INTO security_events ("+securityEventCols+") VALUES (?, ?, ?, ?, ?, ?, ?)",
+		event.ID, event.RequestID, event.RuleName, event.Snippet, event.ClientIP, event.ModelName,
+		timeToMS(event.CreatedAt),
+	); err != nil {
+		return fmt.Errorf("save security event: %w", err)
+	}
+	return nil
+}
+
+// ListSecurityEvents 安全事件分页查询：按发生时间倒序（最近优先）
+func (s *SQLStorage) ListSecurityEvents(page, size int) ([]*plugin.SecurityEvent, int64, error) {
+	var total int64
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM security_events").Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count security events: %w", err)
+	}
+	page, size = normalizePage(page, size)
+	rows, err := s.db.Query(
+		"SELECT "+securityEventCols+" FROM security_events ORDER BY created_at DESC LIMIT ? OFFSET ?",
+		size, (page-1)*size)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list security events: %w", err)
+	}
+	defer rows.Close()
+	events := make([]*plugin.SecurityEvent, 0, size)
+	for rows.Next() {
+		e := &plugin.SecurityEvent{}
+		var createdMS int64
+		if err := rows.Scan(&e.ID, &e.RequestID, &e.RuleName, &e.Snippet, &e.ClientIP, &e.ModelName, &createdMS); err != nil {
+			return nil, 0, err
+		}
+		e.CreatedAt = msToTime(createdMS)
+		events = append(events, e)
+	}
+	return events, total, rows.Err()
 }
