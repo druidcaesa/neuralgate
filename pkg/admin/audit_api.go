@@ -37,6 +37,9 @@ func (s *AdminServer) queryAuditLogs(c *gin.Context) {
 		Status:    parseInt(c.Query("response_status")),
 		Keyword:   c.Query("keyword"),
 	}
+	if forced := s.scopeTenant(c); forced != nil {
+		filter.TenantID = *forced // RBAC 启用时强制本租户，忽略查询参数
+	}
 	if v := c.Query("start_time"); v != "" {
 		if t, err := time.Parse(time.RFC3339, v); err == nil {
 			filter.StartTime = &t

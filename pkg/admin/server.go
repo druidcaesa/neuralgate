@@ -34,6 +34,7 @@ type AdminServer struct {
 	sessions       *SessionManager  // 认证默认开启（fail-closed）；DisableAuth 仅限测试
 	loginGuard     *loginGuard
 	allowedOrigins []string // CORS 白名单（空=不发送跨域头）
+	rbacEnabled    bool     // 权限体系开关（EnableRBAC 注入，未启用恒放行）
 }
 
 // NewAdminServer 创建管理后台；license 为启动时校验得到的授权概要（OSS 版传 nil）。
