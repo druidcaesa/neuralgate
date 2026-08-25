@@ -9,6 +9,8 @@
         <el-menu-item index="/audit-logs"><el-icon><Document /></el-icon>审计日志</el-menu-item>
         <el-menu-item index="/rate-limits"><el-icon><Timer /></el-icon>限流配置</el-menu-item>
         <el-menu-item index="/tamper-alerts"><el-icon><Warning /></el-icon>防篡改告警</el-menu-item>
+        <el-menu-item index="/privacy-rules"><el-icon><Lock /></el-icon>隐私合规</el-menu-item>
+        <el-menu-item index="/security-events"><el-icon><Bell /></el-icon>安全事件</el-menu-item>
         <el-menu-item index="/system"><el-icon><Setting /></el-icon>系统信息</el-menu-item>
       </el-menu>
     </el-aside>
@@ -59,7 +61,7 @@
 import { computed, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Cpu, Key, Document, Timer, Setting, Warning, User, ArrowDown } from '@element-plus/icons-vue'
+import { Cpu, Key, Document, Timer, Setting, Warning, User, ArrowDown, Lock, Bell } from '@element-plus/icons-vue'
 import { changePassword, clearAdminSession, getAdminUsername } from './api/auth'
 
 const route = useRoute()
