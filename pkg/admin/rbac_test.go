@@ -262,3 +262,56 @@ func TestOperationLogsWrittenOnMutationsOnly(t *testing.T) {
 		t.Errorf("删除日志字段不符: %+v", del)
 	}
 }
+
+// TestScopedUserCannotManageOtherTenants 租户内用户即使持 tenant:write 也仅能管本租户（规格 §4.3 边界）
+func TestScopedUserCannotManageOtherTenants(t *testing.T) {
+	f := newRBACFixture(t, true)
+	// 给租户A用户追加 tenant/rbac 写权限(模拟误配)
+	scoped, _ := f.storage.GetAdminUserByID("u-scoped")
+	wide := &plugin.Role{Name: "越权角色", TenantID: rbacTestTenantA,
+		Permissions: plugin.AllPermissions}
+	_ = f.storage.SaveRole(wide)
+	scoped.RoleID = wide.ID
+	_ = f.storage.SaveAdminUser(scoped)
+	// 重新签发带全权限的会话(仍非超管: 角色挂租户A且…注意全权限+租户内≠超管)
+	sm := NewSessionManager([]byte("rbac-test-secret"), time.Hour)
+	tok, _, _ := sm.Mint(scoped, plugin.AllPermissions, false, time.Now())
+
+	// 建/改/删其他租户 → 应被拒
+	if rec := f.do(tok, http.MethodPost, "/api/tenants", `{"name":"越权","code":"yuequan1"}`); rec.Code != http.StatusForbidden {
+		t.Errorf("租户内用户建租户应 403, got %d", rec.Code)
+	}
+
+	// 改删他租户的角色 → 404 不暴露存在性
+	foreignRole := &plugin.Role{Name: "B租户角色", TenantID: rbacTestTenantB, Permissions: []string{plugin.PermModelRead}}
+	_ = f.storage.SaveRole(foreignRole)
+	if rec := f.do(tok, http.MethodDelete, "/api/roles/"+foreignRole.ID, ""); rec.Code != http.StatusNotFound {
+		t.Errorf("跨租户删角色应 404, got %d", rec.Code)
+	}
+
+	// 改删他租户的用户 → 404
+	foreignUser := &plugin.AdminUser{ID: "u-foreign", Username: "foreign",
+		TenantID: rbacTestTenantB, RoleID: foreignRole.ID, Status: plugin.AdminUserStatusActive}
+	_ = f.storage.SaveAdminUser(foreignUser)
+	if rec := f.do(tok, http.MethodDelete, "/api/admin-users/"+foreignUser.ID, ""); rec.Code != http.StatusNotFound {
+		t.Errorf("跨租户删用户应 404, got %d", rec.Code)
+	}
+
+	// 列表只见本租户
+	var rolesResp struct {
+		Data struct {
+			Items []struct {
+				TenantID string `json:"tenant_id"`
+			} `json:"items"`
+		} `json:"data"`
+	}
+	rec := f.do(tok, http.MethodGet, "/api/roles", "")
+	if err := json.Unmarshal(rec.Body.Bytes(), &rolesResp); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rolesResp.Data.Items {
+		if r.TenantID != "" && r.TenantID != rbacTestTenantA {
+			t.Errorf("租户内用户不应看到他租户角色: %s", r.TenantID)
+		}
+	}
+}
