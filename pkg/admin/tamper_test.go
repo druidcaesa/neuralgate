@@ -65,6 +65,7 @@ func fetchJSON(t *testing.T, s *AdminServer, method, path string) map[string]int
 
 func TestListTamperAlertsAPI(t *testing.T) {
 	s := NewAdminServer(seedAlerts(t), zap.NewNop(), "enterprise", newTestRateLimiter(), nil)
+	s.DisableAuth()
 
 	data := fetchJSON(t, s, http.MethodGet, "/api/tamper-alerts")
 	if data["total"].(float64) != 2 {
@@ -84,6 +85,7 @@ func TestListTamperAlertsAPI(t *testing.T) {
 
 func TestResolveTamperAlertAPI(t *testing.T) {
 	s := NewAdminServer(seedAlerts(t), zap.NewNop(), "enterprise", newTestRateLimiter(), nil)
+	s.DisableAuth()
 	data := fetchJSON(t, s, http.MethodGet, "/api/tamper-alerts?resolved=false")
 	id := data["items"].([]interface{})[0].(map[string]interface{})["id"].(string)
 
@@ -111,6 +113,7 @@ func TestResolveTamperAlertAPI(t *testing.T) {
 
 func TestSystemInfoIncludesTamperCount(t *testing.T) {
 	s := NewAdminServer(seedAlerts(t), zap.NewNop(), "enterprise", newTestRateLimiter(), nil)
+	s.DisableAuth()
 	data := fetchSystemData(t, s)
 	tamper, ok := data["tamper"].(map[string]interface{})
 	if !ok {

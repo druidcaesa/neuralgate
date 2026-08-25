@@ -30,9 +30,17 @@ type Config struct {
 	RateLimit RateLimitConfig `yaml:"rate_limit"`
 	Export    ExportConfig    `yaml:"export"`
 	License   LicenseConfig   `yaml:"license"`
+	Admin     AdminConfig     `yaml:"admin"`
 	Log       LogConfig       `yaml:"log"`
 	IPFilter  IPFilterConfig  `yaml:"ip_filter"`
 	TLS       TLSConfig       `yaml:"tls"`
+}
+
+// AdminConfig 管理后台配置：bootstrap 密码仅用于首个管理员账号的种子（登录凭证存数据库），
+// allowed_origins 为 CORS 白名单（空=不发送跨域头，同源部署）
+type AdminConfig struct {
+	BootstrapPassword string   `yaml:"bootstrap_password"` // 为空则首次启动随机生成并打印日志
+	AllowedOrigins    []string `yaml:"allowed_origins"`
 }
 
 type ServerConfig struct {

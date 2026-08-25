@@ -32,6 +32,7 @@ import (
 
 func TestHealthz(t *testing.T) {
 	s := NewAdminServer(oss.NewMemStorage(), zap.NewNop(), "oss", oss.NewRateLimiter(oss.NewMemStorage(), 100, 100000, "token_bucket"), nil)
+	s.DisableAuth()
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/healthz", nil)
 	s.Router().ServeHTTP(rec, req)
@@ -42,6 +43,7 @@ func TestHealthz(t *testing.T) {
 
 func TestAPIPing(t *testing.T) {
 	s := NewAdminServer(oss.NewMemStorage(), zap.NewNop(), "oss", oss.NewRateLimiter(oss.NewMemStorage(), 100, 100000, "token_bucket"), nil)
+	s.DisableAuth()
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/ping", nil)
 	s.Router().ServeHTTP(rec, req)
@@ -52,6 +54,7 @@ func TestAPIPing(t *testing.T) {
 
 func TestCORSMiddleware(t *testing.T) {
 	s := NewAdminServer(oss.NewMemStorage(), zap.NewNop(), "oss", oss.NewRateLimiter(oss.NewMemStorage(), 100, 100000, "token_bucket"), nil)
+	s.DisableAuth()
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodOptions, "/healthz", nil)
 	s.Router().ServeHTTP(rec, req)
@@ -62,7 +65,9 @@ func TestCORSMiddleware(t *testing.T) {
 
 func TestAdminAPIKeyCRUD(t *testing.T) {
 	s := oss.NewMemStorage()
-	router := NewAdminServer(s, nil, "oss", oss.NewRateLimiter(s, 100, 100000, "token_bucket"), nil).Router()
+	svr := NewAdminServer(s, nil, "oss", oss.NewRateLimiter(s, 100, 100000, "token_bucket"), nil)
+	svr.DisableAuth()
+	router := svr.Router()
 
 	// 创建
 	w := httptest.NewRecorder()
@@ -138,7 +143,9 @@ func TestAdminAPIKeyCRUD(t *testing.T) {
 // TestAdminAPIKeyDefaultQuota 创建 Key 不传 quota 时应默认 -1(无限,PRD 3.2)
 func TestAdminAPIKeyDefaultQuota(t *testing.T) {
 	s := oss.NewMemStorage()
-	router := NewAdminServer(s, nil, "oss", oss.NewRateLimiter(s, 100, 100000, "token_bucket"), nil).Router()
+	svr := NewAdminServer(s, nil, "oss", oss.NewRateLimiter(s, 100, 100000, "token_bucket"), nil)
+	svr.DisableAuth()
+	router := svr.Router()
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/api-keys",
@@ -171,7 +178,9 @@ func TestAdminAPIKeyDefaultQuota(t *testing.T) {
 
 func TestAdminModelConfigCRUD(t *testing.T) {
 	s := oss.NewMemStorage()
-	router := NewAdminServer(s, nil, "oss", oss.NewRateLimiter(s, 100, 100000, "token_bucket"), nil).Router()
+	svr := NewAdminServer(s, nil, "oss", oss.NewRateLimiter(s, 100, 100000, "token_bucket"), nil)
+	svr.DisableAuth()
+	router := svr.Router()
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/models",
@@ -212,7 +221,9 @@ func TestAdminModelConfigCRUD(t *testing.T) {
 
 func TestAdminModelConfigRenameConflict(t *testing.T) {
 	s := oss.NewMemStorage()
-	router := NewAdminServer(s, nil, "oss", oss.NewRateLimiter(s, 100, 100000, "token_bucket"), nil).Router()
+	svr := NewAdminServer(s, nil, "oss", oss.NewRateLimiter(s, 100, 100000, "token_bucket"), nil)
+	svr.DisableAuth()
+	router := svr.Router()
 	postModel := func(name string) (string, string) {
 		w := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodPost, "/api/models",
@@ -264,7 +275,9 @@ func TestAdminAuditExportAll(t *testing.T) {
 			CreatedAt: now.Add(time.Duration(i) * time.Second),
 		})
 	}
-	router := NewAdminServer(s, nil, "oss", oss.NewRateLimiter(s, 100, 100000, "token_bucket"), nil).Router()
+	svr := NewAdminServer(s, nil, "oss", oss.NewRateLimiter(s, 100, 100000, "token_bucket"), nil)
+	svr.DisableAuth()
+	router := svr.Router()
 
 	// JSON 导出应拉全量(>100 条不受单页上限截断)
 	w := httptest.NewRecorder()
@@ -292,7 +305,9 @@ func TestAdminAuditQuery(t *testing.T) {
 		ID: "a1", RequestID: "r1", ModelName: "gpt-4", ResponseStatus: 200,
 		TotalTokens: 15, CreatedAt: now,
 	})
-	router := NewAdminServer(s, nil, "oss", oss.NewRateLimiter(s, 100, 100000, "token_bucket"), nil).Router()
+	svr := NewAdminServer(s, nil, "oss", oss.NewRateLimiter(s, 100, 100000, "token_bucket"), nil)
+	svr.DisableAuth()
+	router := svr.Router()
 
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/audit-logs?model_name=gpt-4&page=1&size=10", nil))
@@ -310,7 +325,9 @@ func TestAdminAuditQuery(t *testing.T) {
 
 func TestAdminSystem(t *testing.T) {
 	s := oss.NewMemStorage()
-	router := NewAdminServer(s, nil, "oss", oss.NewRateLimiter(s, 100, 100000, "token_bucket"), nil).Router()
+	svr := NewAdminServer(s, nil, "oss", oss.NewRateLimiter(s, 100, 100000, "token_bucket"), nil)
+	svr.DisableAuth()
+	router := svr.Router()
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/system", nil))
 	if w.Code != http.StatusOK {
@@ -325,7 +342,9 @@ func TestAdminUpstreamCRUD(t *testing.T) {
 	s := oss.NewMemStorage()
 	now := time.Now()
 	_ = s.SaveModelConfig(&plugin.ModelConfig{ID: "m1", ModelName: "gpt-4", Provider: "openai", ProviderModel: "x", BaseURL: "https://x", APIKey: "sk", Enabled: true, CreatedAt: now, UpdatedAt: now})
-	router := NewAdminServer(s, zap.NewNop(), "oss", oss.NewRateLimiter(s, 100, 100000, "token_bucket"), nil).Router()
+	svrAuth := NewAdminServer(s, zap.NewNop(), "oss", oss.NewRateLimiter(s, 100, 100000, "token_bucket"), nil)
+	svrAuth.DisableAuth()
+	router := svrAuth.Router()
 
 	// 创建上游
 	w := httptest.NewRecorder()
@@ -350,7 +369,9 @@ func TestAdminUpstreamCRUD(t *testing.T) {
 func TestAdminRateLimitCRUD(t *testing.T) {
 	s := oss.NewMemStorage()
 	rl := oss.NewRateLimiter(s, 100, 100000, "token_bucket")
-	router := NewAdminServer(s, zap.NewNop(), "oss", rl, nil).Router()
+	svrAuth := NewAdminServer(s, zap.NewNop(), "oss", rl, nil)
+	svrAuth.DisableAuth()
+	router := svrAuth.Router()
 
 	// 创建
 	w := httptest.NewRecorder()
@@ -379,7 +400,9 @@ func TestAdminRateLimitCRUD(t *testing.T) {
 }
 
 func TestAdminServeWebUI(t *testing.T) {
-	router := NewAdminServer(oss.NewMemStorage(), zap.NewNop(), "oss", oss.NewRateLimiter(oss.NewMemStorage(), 100, 100000, "token_bucket"), nil).Router()
+	svrAuth := NewAdminServer(oss.NewMemStorage(), zap.NewNop(), "oss", oss.NewRateLimiter(oss.NewMemStorage(), 100, 100000, "token_bucket"), nil)
+	svrAuth.DisableAuth()
+	router := svrAuth.Router()
 
 	// 首页 → index.html
 	w := httptest.NewRecorder()
@@ -431,7 +454,9 @@ func TestAdminUpdateModelKeepAPIKeyWhenEmpty(t *testing.T) {
 	s := oss.NewMemStorage()
 	now := time.Now()
 	_ = s.SaveModelConfig(&plugin.ModelConfig{ID: "m1", ModelName: "gpt-4", Provider: "openai", ProviderModel: "gpt-4o", BaseURL: "https://a", APIKey: "sk-original", Enabled: true, CreatedAt: now, UpdatedAt: now})
-	router := NewAdminServer(s, zap.NewNop(), "oss", oss.NewRateLimiter(s, 100, 100000, "token_bucket"), nil).Router()
+	svrAuth := NewAdminServer(s, zap.NewNop(), "oss", oss.NewRateLimiter(s, 100, 100000, "token_bucket"), nil)
+	svrAuth.DisableAuth()
+	router := svrAuth.Router()
 
 	// PUT 时 api_key 留空 → 保留原值
 	w := httptest.NewRecorder()

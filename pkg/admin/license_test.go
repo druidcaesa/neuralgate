@@ -53,6 +53,7 @@ func fetchLicenseData(t *testing.T, s *AdminServer) (map[string]interface{}, str
 
 func TestLicenseAPIOnOSS(t *testing.T) {
 	s := NewAdminServer(oss.NewMemStorage(), zap.NewNop(), "oss", newTestRateLimiter(), nil)
+	s.DisableAuth()
 	data, _ := fetchLicenseData(t, s)
 	if data["status"] != "oss" {
 		t.Errorf("status = %v, want oss", data["status"])
@@ -82,6 +83,7 @@ func TestLicenseAPIValid(t *testing.T) {
 		},
 	}
 	s := NewAdminServer(oss.NewMemStorage(), zap.NewNop(), "enterprise", newTestRateLimiter(), ov)
+	s.DisableAuth()
 	data, raw := fetchLicenseData(t, s)
 
 	if data["status"] != "valid" {
@@ -119,6 +121,7 @@ func TestLicenseAPIExpired(t *testing.T) {
 		},
 	}
 	s := NewAdminServer(oss.NewMemStorage(), zap.NewNop(), "enterprise", newTestRateLimiter(), ov)
+	s.DisableAuth()
 	data, _ := fetchLicenseData(t, s)
 	if data["status"] != "expired" {
 		t.Errorf("status = %v, want expired", data["status"])
@@ -162,6 +165,7 @@ func TestSystemInfoIncludesLicenseOverview(t *testing.T) {
 		},
 	}
 	s := NewAdminServer(oss.NewMemStorage(), zap.NewNop(), "enterprise", newTestRateLimiter(), ov)
+	s.DisableAuth()
 	data := fetchSystemData(t, s)
 
 	lic, ok := data["license"].(map[string]interface{})
@@ -184,6 +188,7 @@ func TestSystemInfoIncludesLicenseOverview(t *testing.T) {
 
 func TestSystemInfoWithoutLicense(t *testing.T) {
 	s := NewAdminServer(oss.NewMemStorage(), zap.NewNop(), "oss", newTestRateLimiter(), nil)
+	s.DisableAuth()
 	data := fetchSystemData(t, s)
 	lic, ok := data["license"].(map[string]interface{})
 	if !ok {

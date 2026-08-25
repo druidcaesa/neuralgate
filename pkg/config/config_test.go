@@ -54,6 +54,9 @@ export:
 license:
   file_path: "/tmp/license.lic"
   offline_mode: true
+admin:
+  bootstrap_password: "init-pass-123"
+  allowed_origins: ["https://ops.example.com"]
 log:
   level: debug
   format: console
@@ -78,6 +81,9 @@ log:
 		{cfg.RateLimit.DefaultRPS, 100},
 		{cfg.Export.Type, "kafka"},
 		{cfg.License.OfflineMode, true},
+		{cfg.Admin.BootstrapPassword, "init-pass-123"},
+		{len(cfg.Admin.AllowedOrigins), 1},
+		{cfg.Admin.AllowedOrigins[0], "https://ops.example.com"},
 		{cfg.Log.Level, "debug"},
 	}
 	for _, w := range want {
@@ -165,6 +171,9 @@ func TestDefaultsFullyApplied(t *testing.T) {
 		// License
 		{"License.FilePath", cfg.License.FilePath, d.License.FilePath},
 		{"License.OfflineMode", cfg.License.OfflineMode, d.License.OfflineMode},
+		// Admin（bootstrap_password/allowed_origins 无默认值，缺省即空）
+		{"Admin.BootstrapPassword", cfg.Admin.BootstrapPassword, ""},
+		{"Admin.AllowedOrigins", len(cfg.Admin.AllowedOrigins), 0},
 		// Log
 		{"Log.Level", cfg.Log.Level, d.Log.Level},
 		{"Log.Format", cfg.Log.Format, d.Log.Format},
