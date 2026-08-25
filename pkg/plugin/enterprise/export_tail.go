@@ -105,7 +105,8 @@ func (e *TailExporter) Init(config map[string]interface{}) error {
 	}
 	exportType, _ := config["type"].(string)
 	apiKey, _ := config["api_key"].(string)
-	target, err := NewExportTarget(exportType, endpoint, apiKey)
+	topic, _ := config["topic"].(string)
+	target, err := NewExportTarget(exportType, endpoint, apiKey, topic)
 	if err != nil {
 		return err
 	}

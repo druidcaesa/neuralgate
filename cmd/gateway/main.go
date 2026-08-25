@@ -177,6 +177,7 @@ func main() {
 			"type":           cfg.Export.Type,
 			"endpoint":       cfg.Export.Endpoint,
 			"api_key":        cfg.Export.APIKey,
+			"topic":          cfg.Export.Topic,
 			"batch_size":     cfg.Export.BatchSize,
 			"flush_interval": cfg.Export.FlushInterval,
 			"logger":         logger,

@@ -39,13 +39,15 @@ type ExportTarget interface {
 	Close() error
 }
 
-// NewExportTarget 按类型构造外推目标（siem/syslog）
-func NewExportTarget(exportType, endpoint, apiKey string) (ExportTarget, error) {
+// NewExportTarget 按类型构造外推目标（siem/syslog/kafka）
+func NewExportTarget(exportType, endpoint, apiKey, topic string) (ExportTarget, error) {
 	switch strings.ToLower(exportType) {
 	case "siem":
 		return NewSIEMTarget(endpoint, apiKey), nil
 	case "syslog":
 		return NewSyslogTarget(endpoint)
+	case "kafka":
+		return NewKafkaTarget(endpoint, topic)
 	default:
 		return nil, fmt.Errorf("不支持的外推类型: %s", exportType)
 	}

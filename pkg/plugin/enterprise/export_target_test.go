@@ -52,7 +52,7 @@ func sampleLogs(n int) []*plugin.AuditLog {
 }
 
 func TestNewExportTargetUnknownType(t *testing.T) {
-	if _, err := NewExportTarget("kafka", "x", ""); err == nil {
+	if _, err := NewExportTarget("webhook", "x", "", ""); err == nil {
 		t.Fatal("未知类型应报错")
 	}
 }
