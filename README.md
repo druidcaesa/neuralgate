@@ -232,7 +232,28 @@ log:
 启动后：
 - 代理服务监听 `:8080`，接收 OpenAI 协议请求
 - 管理后台监听 `:8081`，提供模型配置、API Key 管理等管理功能
-- 首次启动数据库为空，需通过管理后台添加首个模型配置
+- 首次启动数据库为空时自动创建管理员账号 `admin`：若配置了 `admin.bootstrap_password` 则使用该密码（自动化场景），否则生成随机密码打印到启动日志（仅显示一次，请立即登录修改）
+- 登录后请通过页面右上角「修改密码」轮换初始密码
+
+#### 管理后台认证
+
+所有 `/api/*` 管理接口均需登录后携带会话 token 访问：
+
+```bash
+# 登录获取 token
+curl -X POST http://127.0.0.1:8081/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"<你的密码>"}'
+
+# 后续请求携带 X-Admin-Token（或 Authorization: Bearer <token>）
+curl http://127.0.0.1:8081/api/models -H 'X-Admin-Token: <token>'
+```
+
+说明：
+
+- 管理后台登录凭证保存在数据库中，配置文件不存放任何密码
+- 服务重启后需重新登录；可在页面右上角「修改密码」处轮换凭证
+- CORS 默认关闭（同源部署）；跨域场景在 `admin.allowed_origins` 配置白名单
 
 ### Docker 部署
 
@@ -322,7 +343,7 @@ neuralgate/
 │   ├── admin/                          # 管理后台 (Gin)
 │   │   ├── server.go                   # Gin 服务初始化
 │   │   ├── handler_*.go               # API Key/模型配置/审计查询 handler
-│   │   └── middleware.go               # 管理后台鉴权中间件
+│   │   └── auth.go                    # 管理面认证(会话签发/校验、登录防爆破、CORS)
 │   ├── config/                         # 配置加载
 │   │   └── config.go
 │   └── types/                          # 公共类型定义

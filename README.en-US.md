@@ -232,7 +232,28 @@ log:
 On startup:
 - Proxy service listens on `:8080`, accepting OpenAI-protocol requests
 - Admin backend listens on `:8081`, providing model config, API Key management, and more
-- First launch has an empty database; add your first model config via the admin backend
+- On first launch with an empty database, an admin account is created automatically: it uses `admin.bootstrap_password` from the config if set (for automation), otherwise a random password is printed to the startup log (shown only once — log in and change it immediately)
+- After signing in, rotate the initial password via "Change Password" in the top-right menu
+
+#### Admin Backend Authentication
+
+All `/api/*` management endpoints require a session token obtained by logging in:
+
+```bash
+# Log in to obtain a token
+curl -X POST http://127.0.0.1:8081/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"<your-password>"}'
+
+# Carry X-Admin-Token (or Authorization: Bearer <token>) on subsequent requests
+curl http://127.0.0.1:8081/api/models -H 'X-Admin-Token: <token>'
+```
+
+Notes:
+
+- Admin credentials are stored in the database; no passwords are kept in config files
+- Re-login is required after service restart; rotate your credential via "Change Password" in the top-right menu
+- CORS is disabled by default (same-origin deployment); for cross-origin access, configure the `admin.allowed_origins` whitelist
 
 ### Docker
 
@@ -322,7 +343,7 @@ neuralgate/
 │   ├── admin/                          # Admin backend (Gin)
 │   │   ├── server.go                   # Gin service init
 │   │   ├── handler_*.go               # API Key/model config/audit query handlers
-│   │   └── middleware.go               # Admin auth middleware
+│   │   └── auth.go                    # Admin-plane authentication (sessions, brute-force guard, CORS)
 │   ├── config/                         # Config loading
 │   │   └── config.go
 │   └── types/                          # Common type definitions
