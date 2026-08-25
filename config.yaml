@@ -42,6 +42,9 @@ export:                       # Enterprise only：审计日志外推(audit_strea
   batch_size: 50              # 批量大小 1-1000
   flush_interval: 10s         # 拉取/推送节奏 1-60s
 
+privacy:                      # Enterprise only：数据隐私合规(privacy 门控)
+  enabled: false              # 是否启用隐私防护(PII 双向脱敏/Prompt 注入拦截)；默认 false，需显式开启且授权包含 privacy
+
 license:                      # Enterprise only：缺失/过期/验签失败时软降级为 OSS 模式运行
   file_path: "/etc/neuralgate/license.lic"
   offline_mode: false         # 是否离线授权（当前签发的 license 均为离线授权）

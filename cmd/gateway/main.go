@@ -66,7 +66,7 @@ func main() {
 	// 3. 初始化插件工厂（BuildTag 决定实现）
 	factory := newPluginFactory()
 	storage := factory.CreateStorage()
-	if err := storage.Init(map[string]interface{}{
+	if err := storage.Init(map[string]any{
 		"driver":      cfg.Storage.Driver,
 		"dsn":         cfg.Storage.DSN,
 		"encrypt_key": cfg.Storage.EncryptKey,
@@ -85,7 +85,7 @@ func main() {
 		logger.Fatal("审计初始化失败", zap.Error(err))
 	}
 	rateLimiter := factory.CreateRateLimiter()
-	if err := rateLimiter.Init(map[string]interface{}{
+	if err := rateLimiter.Init(map[string]any{
 		"default_rps": cfg.RateLimit.DefaultRPS,
 		"default_tpm": cfg.RateLimit.DefaultTPM,
 	}); err != nil {
@@ -109,10 +109,10 @@ func main() {
 	registry.Register(adapter.NewDeepSeekAdapter())
 
 	// 6. 初始化代理内核
+	// acceptor 的创建在步骤10 setupPrivacy 之后：pipeline.Build 快照中间件链，Use 晚于 Build 不生效
 	pipeline := core.NewPipeline(storage, rateLimiter, auditor, registry)
 	proxyCore := core.NewProxyCore(pipeline, registry).WithLogger(logger)
 	ipf := core.NewIPFilter(cfg.IPFilter.Mode, cfg.IPFilter.Whitelist, cfg.IPFilter.Blacklist)
-	acceptor := core.NewAcceptor(proxyCore.Handler(), ipf)
 
 	// 7. 授权校验（失败软降级 OSS）与管理后台初始化
 	validator := factory.CreateLicenseValidator()
@@ -165,7 +165,7 @@ func main() {
 	if exporter != nil {
 		if start, reason := shouldStartExport(gate, cfg.Export.Enabled); !start {
 			logger.Info("审计日志外推未启用", zap.String("reason", reason))
-		} else if err := exporter.Init(map[string]interface{}{
+		} else if err := exporter.Init(map[string]any{
 			"type":           cfg.Export.Type,
 			"endpoint":       cfg.Export.Endpoint,
 			"api_key":        cfg.Export.APIKey,
@@ -184,6 +184,11 @@ func main() {
 
 	// 9. 审计防篡改（tamper_proof 门控，接线随构建版本）
 	stopTamper := setupTamper(gate, auditor, storage, cfg.Audit, logger)
+
+	// 10. 数据隐私合规（privacy 门控，接线随构建版本；无后台任务故无需停止函数）
+	setupPrivacy(gate, *cfg, pipeline, auditor, storage, logger)
+
+	acceptor := core.NewAcceptor(proxyCore.Handler(), ipf)
 
 	// 8. 启动双服务（并发）
 	tlsHandler := core.NewTLSHandler(cfg.TLS.Enabled, cfg.TLS.CertFile, cfg.TLS.KeyFile, cfg.TLS.MinVersion)
@@ -293,6 +298,17 @@ func shouldStartTamper(gate core.LicenseGate, enabled bool) (bool, string) {
 	}
 	if !gate.HasFeature(license.FeatureTamperProof) {
 		return false, "授权未包含 tamper_proof 功能"
+	}
+	return true, ""
+}
+
+// shouldStartPrivacy 判断隐私防护启动条件（配置启用 + 授权含 privacy）；不满足给出原因
+func shouldStartPrivacy(gate core.LicenseGate, enabled bool) (bool, string) {
+	if !enabled {
+		return false, "配置未启用(privacy.enabled=false)"
+	}
+	if !gate.HasFeature(license.FeaturePrivacy) {
+		return false, "授权未包含 privacy 功能"
 	}
 	return true, ""
 }
