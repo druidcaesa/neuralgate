@@ -123,10 +123,41 @@ func mysqlCreateTables(db *sql.DB) error {
 			id VARCHAR(64) PRIMARY KEY,
 			username VARCHAR(64) NOT NULL UNIQUE,
 			password_hash VARCHAR(255) NOT NULL,
+			tenant_id VARCHAR(64) NOT NULL DEFAULT '',
+			role_id VARCHAR(64) NOT NULL DEFAULT '',
 			status VARCHAR(16) NOT NULL DEFAULT 'active',
 			created_at BIGINT NOT NULL,
 			updated_at BIGINT NOT NULL,
 			last_login_at BIGINT NULL
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+		`CREATE TABLE IF NOT EXISTS tenants (
+			id VARCHAR(64) PRIMARY KEY,
+			name VARCHAR(64) NOT NULL,
+			code VARCHAR(32) NOT NULL UNIQUE,
+			status VARCHAR(16) NOT NULL DEFAULT 'active',
+			config TEXT NOT NULL,
+			created_at BIGINT NOT NULL,
+			updated_at BIGINT NOT NULL
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+		`CREATE TABLE IF NOT EXISTS roles (
+			id VARCHAR(64) PRIMARY KEY,
+			name VARCHAR(64) NOT NULL,
+			tenant_id VARCHAR(64) NOT NULL DEFAULT '',
+			permissions TEXT NOT NULL,
+			created_at BIGINT NOT NULL,
+			updated_at BIGINT NOT NULL
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+		`CREATE TABLE IF NOT EXISTS admin_operation_logs (
+			id VARCHAR(64) PRIMARY KEY,
+			user_id VARCHAR(64) NOT NULL,
+			username VARCHAR(64) NOT NULL DEFAULT '',
+			method VARCHAR(16) NOT NULL,
+			path VARCHAR(255) NOT NULL DEFAULT '',
+			target_id VARCHAR(64) NOT NULL DEFAULT '',
+			status_code INT NOT NULL DEFAULT 0,
+			client_ip VARCHAR(64) NOT NULL DEFAULT '',
+			created_at BIGINT NOT NULL,
+			KEY idx_admin_oplogs_created (created_at)
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 		`CREATE TABLE IF NOT EXISTS privacy_rules (
 			id VARCHAR(64) PRIMARY KEY,
@@ -195,6 +226,37 @@ func ensureAuditColumnSizes(db *sql.DB) error {
 		}
 		if _, err := db.Exec(fmt.Sprintf("ALTER TABLE audit_logs MODIFY `%s` MEDIUMTEXT NOT NULL", c)); err != nil {
 			return fmt.Errorf("widen column %s: %w", c, err)
+		}
+	}
+	return nil
+}
+
+// migrateMySQLAdminUserColumns 存量库 admin_users 补 tenant_id/role_id 列（已存在则跳过）
+func migrateMySQLAdminUserColumns(db *sql.DB) error {
+	rows, err := db.Query(`SELECT COLUMN_NAME FROM information_schema.COLUMNS
+		WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'admin_users' AND COLUMN_NAME IN ('tenant_id', 'role_id')`)
+	if err != nil {
+		return err
+	}
+	existing := map[string]bool{}
+	for rows.Next() {
+		var c string
+		if err := rows.Scan(&c); err != nil {
+			rows.Close()
+			return err
+		}
+		existing[c] = true
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, col := range []string{"tenant_id", "role_id"} {
+		if existing[col] {
+			continue
+		}
+		if _, err := db.Exec("ALTER TABLE admin_users ADD COLUMN `" + col + "` VARCHAR(64) NOT NULL DEFAULT ''"); err != nil {
+			return fmt.Errorf("add column %s: %w", col, err)
 		}
 	}
 	return nil

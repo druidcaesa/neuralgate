@@ -16,6 +16,7 @@ package oss
 
 import (
 	"database/sql"
+	"fmt"
 
 	_ "modernc.org/sqlite" // 注册 sqlite 驱动(驱动名 "sqlite",DSN 为文件路径)
 )
@@ -122,11 +123,42 @@ func sqliteCreateTables(db *sql.DB) error {
 			id TEXT PRIMARY KEY,
 			username TEXT NOT NULL UNIQUE,
 			password_hash TEXT NOT NULL,
+			tenant_id TEXT NOT NULL DEFAULT '',
+			role_id TEXT NOT NULL DEFAULT '',
 			status TEXT NOT NULL DEFAULT 'active',
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			last_login_at INTEGER
 		)`,
+		`CREATE TABLE IF NOT EXISTS tenants (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			code TEXT NOT NULL UNIQUE,
+			status TEXT NOT NULL DEFAULT 'active',
+			config TEXT NOT NULL DEFAULT '{}',
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS roles (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			tenant_id TEXT NOT NULL DEFAULT '',
+			permissions TEXT NOT NULL DEFAULT '[]',
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS admin_operation_logs (
+			id TEXT PRIMARY KEY,
+			user_id TEXT NOT NULL,
+			username TEXT NOT NULL DEFAULT '',
+			method TEXT NOT NULL,
+			path TEXT NOT NULL DEFAULT '',
+			target_id TEXT NOT NULL DEFAULT '',
+			status_code INTEGER NOT NULL DEFAULT 0,
+			client_ip TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_admin_oplogs_created ON admin_operation_logs(created_at)`,
 		`CREATE TABLE IF NOT EXISTS privacy_rules (
 			id TEXT PRIMARY KEY,
 			rule_type TEXT NOT NULL,
@@ -160,6 +192,39 @@ func sqliteCreateTables(db *sql.DB) error {
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// migrateSQLiteAdminUserColumns 存量库 admin_users 补 tenant_id/role_id 列（已存在则跳过）
+func migrateSQLiteAdminUserColumns(db *sql.DB) error {
+	rows, err := db.Query(`PRAGMA table_info(admin_users)`)
+	if err != nil {
+		return err
+	}
+	existing := map[string]bool{}
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notNull, pk int
+		var dfltValue interface{}
+		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dfltValue, &pk); err != nil {
+			rows.Close()
+			return err
+		}
+		existing[name] = true
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, col := range []string{"tenant_id", "role_id"} {
+		if existing[col] {
+			continue
+		}
+		if _, err := db.Exec("ALTER TABLE admin_users ADD COLUMN " + col + " TEXT NOT NULL DEFAULT ''"); err != nil {
+			return fmt.Errorf("add column %s: %w", col, err)
 		}
 	}
 	return nil

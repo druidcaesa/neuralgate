@@ -82,11 +82,28 @@ func (s *SQLStorage) Init(config map[string]interface{}) error {
 		s.db = nil
 		return fmt.Errorf("create tables: %w", err)
 	}
+	if driver == "mysql" {
+		err = migrateMySQLAdminUserColumns(db)
+	} else {
+		err = migrateSQLiteAdminUserColumns(db)
+	}
+	if err != nil {
+		_ = db.Close()
+		s.driver = ""
+		s.db = nil
+		return fmt.Errorf("migrate admin users: %w", err)
+	}
 	if err := seedPrivacyRules(db); err != nil {
 		_ = db.Close()
 		s.driver = ""
 		s.db = nil
 		return fmt.Errorf("seed privacy rules: %w", err)
+	}
+	if err := seedRBAC(db); err != nil {
+		_ = db.Close()
+		s.driver = ""
+		s.db = nil
+		return fmt.Errorf("seed rbac: %w", err)
 	}
 	return nil
 }
@@ -256,13 +273,13 @@ func (s *SQLStorage) DeleteAPIKey(keyID string) error {
 
 // ===== 管理后台账号 =====
 
-const adminUserCols = "id, username, password_hash, status, created_at, updated_at, last_login_at"
+const adminUserCols = "id, username, password_hash, tenant_id, role_id, status, created_at, updated_at, last_login_at"
 
 func scanAdminUser(row interface{ Scan(...interface{}) error }) (*plugin.AdminUser, error) {
 	var u plugin.AdminUser
 	var status, createdAt, updatedAt string
 	var lastLoginAt sql.NullString
-	if err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &status, &createdAt, &updatedAt, &lastLoginAt); err != nil {
+	if err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.TenantID, &u.RoleID, &status, &createdAt, &updatedAt, &lastLoginAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -303,14 +320,14 @@ func (s *SQLStorage) GetAdminUserByID(id string) (*plugin.AdminUser, error) {
 func (s *SQLStorage) SaveAdminUser(user *plugin.AdminUser) error {
 	upsert := ""
 	if s.isMySQL() {
-		upsert = " ON DUPLICATE KEY UPDATE username=VALUES(username), password_hash=VALUES(password_hash), status=VALUES(status), updated_at=VALUES(updated_at), last_login_at=VALUES(last_login_at)"
+		upsert = " ON DUPLICATE KEY UPDATE username=VALUES(username), password_hash=VALUES(password_hash), tenant_id=VALUES(tenant_id), role_id=VALUES(role_id), status=VALUES(status), updated_at=VALUES(updated_at), last_login_at=VALUES(last_login_at)"
 	} else {
-		upsert = " ON CONFLICT(id) DO UPDATE SET username=excluded.username, password_hash=excluded.password_hash, status=excluded.status, updated_at=excluded.updated_at, last_login_at=excluded.last_login_at"
+		upsert = " ON CONFLICT(id) DO UPDATE SET username=excluded.username, password_hash=excluded.password_hash, tenant_id=excluded.tenant_id, role_id=excluded.role_id, status=excluded.status, updated_at=excluded.updated_at, last_login_at=excluded.last_login_at"
 	}
 	_, err := s.db.Exec(
-		`INSERT INTO admin_users (id, username, password_hash, status, created_at, updated_at, last_login_at)
-		 VALUES (?,?,?,?,?,?,?)`+upsert,
-		user.ID, user.Username, user.PasswordHash, string(user.Status),
+		`INSERT INTO admin_users (id, username, password_hash, tenant_id, role_id, status, created_at, updated_at, last_login_at)
+		 VALUES (?,?,?,?,?,?,?,?,?)`+upsert,
+		user.ID, user.Username, user.PasswordHash, user.TenantID, user.RoleID, string(user.Status),
 		timeToMS(user.CreatedAt), timeToMS(user.UpdatedAt), timePtrToMS(user.LastLoginAt))
 	return err
 }
@@ -604,13 +621,19 @@ func (s *SQLStorage) SaveRateLimitConfig(cfg *plugin.RateLimitConfig) error {
 	return err
 }
 
-func (s *SQLStorage) ListRateLimitConfigs(page, size int) ([]*plugin.RateLimitConfig, int64, error) {
+func (s *SQLStorage) ListRateLimitConfigs(tenantID *string, page, size int) ([]*plugin.RateLimitConfig, int64, error) {
+	where := "1=1"
+	args := []interface{}{}
+	if tenantID != nil {
+		where += " AND tenant_id = ?"
+		args = append(args, *tenantID)
+	}
 	page, size = normalizePage(page, size)
 	var total int64
-	if err := s.db.QueryRow("SELECT COUNT(*) FROM rate_limit_configs").Scan(&total); err != nil {
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM rate_limit_configs WHERE "+where, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	rows, err := s.db.Query("SELECT "+rateLimitCols+" FROM rate_limit_configs ORDER BY created_at DESC LIMIT ? OFFSET ?", size, (page-1)*size)
+	rows, err := s.db.Query("SELECT "+rateLimitCols+" FROM rate_limit_configs WHERE "+where+" ORDER BY created_at DESC LIMIT ? OFFSET ?", append(args, size, (page-1)*size)...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1001,4 +1024,264 @@ func (s *SQLStorage) ListSecurityEvents(page, size int) ([]*plugin.SecurityEvent
 		events = append(events, e)
 	}
 	return events, total, rows.Err()
+}
+
+// ===== RBAC 权限体系(租户/角色/操作日志) =====
+
+const tenantCols = "id, name, code, status, config, created_at, updated_at"
+
+func scanTenant(row interface{ Scan(...interface{}) error }) (*plugin.Tenant, error) {
+	t := &plugin.Tenant{}
+	var configJSON string
+	var createdMS, updatedMS int64
+	if err := row.Scan(&t.ID, &t.Name, &t.Code, &t.Status, &configJSON, &createdMS, &updatedMS); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	_ = json.Unmarshal([]byte(configJSON), &t.Config)
+	t.CreatedAt = msToTime(createdMS)
+	t.UpdatedAt = msToTime(updatedMS)
+	return t, nil
+}
+
+// SaveTenant UPSERT：code 唯一约束冲突由调用方先查 GetTenantByCode 转 409
+func (s *SQLStorage) SaveTenant(tenant *plugin.Tenant) error {
+	now := time.Now()
+	if tenant.ID == "" {
+		tenant.ID = uuid.NewString()
+		tenant.CreatedAt = now
+	}
+	tenant.UpdatedAt = now
+	upsert := ""
+	if s.isMySQL() {
+		upsert = " ON DUPLICATE KEY UPDATE name=VALUES(name), status=VALUES(status), config=VALUES(config), updated_at=VALUES(updated_at)"
+	} else {
+		upsert = " ON CONFLICT(id) DO UPDATE SET name=excluded.name, status=excluded.status, config=excluded.config, updated_at=excluded.updated_at"
+	}
+	if _, err := s.db.Exec(
+		"INSERT INTO tenants ("+tenantCols+") VALUES (?, ?, ?, ?, ?, ?, ?)"+upsert,
+		tenant.ID, tenant.Name, tenant.Code, tenant.Status, marshalJSON(tenant.Config),
+		timeToMS(tenant.CreatedAt), timeToMS(tenant.UpdatedAt),
+	); err != nil {
+		return fmt.Errorf("save tenant: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLStorage) GetTenantByID(id string) (*plugin.Tenant, error) {
+	row := s.db.QueryRow("SELECT "+tenantCols+" FROM tenants WHERE id = ?", id)
+	return scanTenant(row)
+}
+
+func (s *SQLStorage) GetTenantByCode(code string) (*plugin.Tenant, error) {
+	row := s.db.QueryRow("SELECT "+tenantCols+" FROM tenants WHERE code = ?", code)
+	return scanTenant(row)
+}
+
+func (s *SQLStorage) ListTenants(page, size int) ([]*plugin.Tenant, int64, error) {
+	var total int64
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM tenants").Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count tenants: %w", err)
+	}
+	page, size = normalizePage(page, size)
+	rows, err := s.db.Query("SELECT "+tenantCols+" FROM tenants ORDER BY created_at ASC, id ASC LIMIT ? OFFSET ?", size, (page-1)*size)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list tenants: %w", err)
+	}
+	defer rows.Close()
+	tenants := make([]*plugin.Tenant, 0, size)
+	for rows.Next() {
+		t, err := scanTenant(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		tenants = append(tenants, t)
+	}
+	return tenants, total, rows.Err()
+}
+
+func (s *SQLStorage) DeleteTenant(id string) error {
+	res, err := s.db.Exec("DELETE FROM tenants WHERE id = ?", id)
+	if err != nil {
+		return fmt.Errorf("delete tenant: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *SQLStorage) CountTenants() (int64, error) {
+	var total int64
+	err := s.db.QueryRow("SELECT COUNT(*) FROM tenants").Scan(&total)
+	return total, err
+}
+
+func (s *SQLStorage) CountAPIKeysByTenantID(tenantID string) (int64, error) {
+	var total int64
+	err := s.db.QueryRow("SELECT COUNT(*) FROM api_keys WHERE tenant_id = ? AND deleted = 0", tenantID).Scan(&total)
+	return total, err
+}
+
+const roleCols = "id, name, tenant_id, permissions, created_at, updated_at"
+
+func scanRole(row interface{ Scan(...interface{}) error }) (*plugin.Role, error) {
+	r := &plugin.Role{}
+	var permissionsJSON string
+	var createdMS, updatedMS int64
+	if err := row.Scan(&r.ID, &r.Name, &r.TenantID, &permissionsJSON, &createdMS, &updatedMS); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	_ = json.Unmarshal([]byte(permissionsJSON), &r.Permissions)
+	r.CreatedAt = msToTime(createdMS)
+	r.UpdatedAt = msToTime(updatedMS)
+	return r, nil
+}
+
+// SaveRole UPSERT：MySQL 用 VALUES(col)，SQLite 用 excluded.col
+func (s *SQLStorage) SaveRole(role *plugin.Role) error {
+	now := time.Now()
+	if role.ID == "" {
+		role.ID = uuid.NewString()
+		role.CreatedAt = now
+	}
+	role.UpdatedAt = now
+	upsert := ""
+	if s.isMySQL() {
+		upsert = " ON DUPLICATE KEY UPDATE name=VALUES(name), tenant_id=VALUES(tenant_id), permissions=VALUES(permissions), updated_at=VALUES(updated_at)"
+	} else {
+		upsert = " ON CONFLICT(id) DO UPDATE SET name=excluded.name, tenant_id=excluded.tenant_id, permissions=excluded.permissions, updated_at=excluded.updated_at"
+	}
+	if _, err := s.db.Exec(
+		"INSERT INTO roles ("+roleCols+") VALUES (?, ?, ?, ?, ?, ?)"+upsert,
+		role.ID, role.Name, role.TenantID, marshalJSON(role.Permissions),
+		timeToMS(role.CreatedAt), timeToMS(role.UpdatedAt),
+	); err != nil {
+		return fmt.Errorf("save role: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLStorage) GetRoleByID(id string) (*plugin.Role, error) {
+	row := s.db.QueryRow("SELECT "+roleCols+" FROM roles WHERE id = ?", id)
+	return scanRole(row)
+}
+
+func (s *SQLStorage) ListRoles() ([]*plugin.Role, error) {
+	rows, err := s.db.Query("SELECT " + roleCols + " FROM roles ORDER BY created_at ASC, id ASC")
+	if err != nil {
+		return nil, fmt.Errorf("list roles: %w", err)
+	}
+	defer rows.Close()
+	var roles []*plugin.Role
+	for rows.Next() {
+		r, err := scanRole(rows)
+		if err != nil {
+			return nil, err
+		}
+		roles = append(roles, r)
+	}
+	return roles, rows.Err()
+}
+
+func (s *SQLStorage) DeleteRole(id string) error {
+	res, err := s.db.Exec("DELETE FROM roles WHERE id = ?", id)
+	if err != nil {
+		return fmt.Errorf("delete role: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *SQLStorage) CountAdminUsersByRoleID(roleID string) (int64, error) {
+	var total int64
+	err := s.db.QueryRow("SELECT COUNT(*) FROM admin_users WHERE role_id = ?", roleID).Scan(&total)
+	return total, err
+}
+
+const adminOpLogCols = "id, user_id, username, method, path, target_id, status_code, client_ip, created_at"
+
+func (s *SQLStorage) SaveAdminOperationLog(log *plugin.AdminOperationLog) error {
+	if log.ID == "" {
+		log.ID = uuid.NewString()
+	}
+	if log.CreatedAt.IsZero() {
+		log.CreatedAt = time.Now()
+	}
+	if _, err := s.db.Exec(
+		"INSERT INTO admin_operation_logs ("+adminOpLogCols+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		log.ID, log.UserID, log.Username, log.Method, log.Path, log.TargetID,
+		log.StatusCode, log.ClientIP, timeToMS(log.CreatedAt),
+	); err != nil {
+		return fmt.Errorf("save admin operation log: %w", err)
+	}
+	return nil
+}
+
+// ListAdminOperationLogs 操作日志分页：时间倒序（最近优先）
+func (s *SQLStorage) ListAdminOperationLogs(filter plugin.AdminOpLogFilter, page, size int) ([]*plugin.AdminOperationLog, int64, error) {
+	where := "1=1"
+	args := []interface{}{}
+	if filter.UserID != "" {
+		where += " AND user_id = ?"
+		args = append(args, filter.UserID)
+	}
+	var total int64
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM admin_operation_logs WHERE "+where, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count operation logs: %w", err)
+	}
+	page, size = normalizePage(page, size)
+	rows, err := s.db.Query(
+		"SELECT "+adminOpLogCols+" FROM admin_operation_logs WHERE "+where+" ORDER BY created_at DESC LIMIT ? OFFSET ?",
+		append(args, size, (page-1)*size)...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list operation logs: %w", err)
+	}
+	defer rows.Close()
+	logs := make([]*plugin.AdminOperationLog, 0, size)
+	for rows.Next() {
+		l := &plugin.AdminOperationLog{}
+		var createdMS int64
+		if err := rows.Scan(&l.ID, &l.UserID, &l.Username, &l.Method, &l.Path, &l.TargetID, &l.StatusCode, &l.ClientIP, &createdMS); err != nil {
+			return nil, 0, err
+		}
+		l.CreatedAt = msToTime(createdMS)
+		logs = append(logs, l)
+	}
+	return logs, total, rows.Err()
+}
+
+// seedRBAC roles 空表时写入超管角色，并把无角色的存量账号挂载到超管；已有数据则跳过
+func seedRBAC(db *sql.DB) error {
+	var count int
+	if err := db.QueryRow("SELECT COUNT(*) FROM roles").Scan(&count); err != nil {
+		return fmt.Errorf("count roles: %w", err)
+	}
+	superID := ""
+	if count == 0 {
+		superID = uuid.NewString()
+		now := timeToMS(time.Now())
+		if _, err := db.Exec(
+			"INSERT INTO roles (id, name, tenant_id, permissions, created_at, updated_at) VALUES (?, ?, '', ?, ?, ?)",
+			superID, plugin.SuperRoleName, marshalJSON(plugin.AllPermissions), now, now,
+		); err != nil {
+			return fmt.Errorf("seed super role: %w", err)
+		}
+	} else if err := db.QueryRow("SELECT id FROM roles WHERE name = ? AND tenant_id = ''", plugin.SuperRoleName).Scan(&superID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("find super role: %w", err)
+	}
+	if superID == "" {
+		return nil
+	}
+	if _, err := db.Exec("UPDATE admin_users SET role_id = ? WHERE role_id = ''", superID); err != nil {
+		return fmt.Errorf("backfill admin role: %w", err)
+	}
+	return nil
 }

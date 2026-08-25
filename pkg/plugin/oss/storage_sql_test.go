@@ -328,7 +328,7 @@ func TestSQLStorageRateLimitConfigCRUD(t *testing.T) {
 	if _, err := s.GetRateLimitConfig("t1", "nope"); err != ErrNotFound {
 		t.Fatalf("GetRateLimitConfig(nope) err = %v; want ErrNotFound", err)
 	}
-	if _, total, err := s.ListRateLimitConfigs(1, 10); err != nil || total != 1 {
+	if _, total, err := s.ListRateLimitConfigs(nil, 1, 10); err != nil || total != 1 {
 		t.Fatalf("ListRateLimitConfigs total = %d, err %v", total, err)
 	}
 	if err := s.DeleteRateLimitConfig("rl1"); err != nil {
