@@ -188,6 +188,15 @@ func sqliteCreateTables(db *sql.DB) error {
 			created_at INTEGER NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_security_events_created ON security_events(created_at)`,
+		`CREATE TABLE IF NOT EXISTS compliance_reports (
+			id TEXT PRIMARY KEY,
+			period_type TEXT NOT NULL,
+			period_start INTEGER NOT NULL,
+			period_end INTEGER NOT NULL,
+			generated_at INTEGER NOT NULL,
+			content TEXT NOT NULL DEFAULT '{}',
+			UNIQUE(period_type, period_start)
+		)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {

@@ -240,6 +240,41 @@ type AdminOpLogFilter struct {
 	UserID string
 }
 
+// 报表周期类型取值（compliance_reports.period_type）
+const (
+	PeriodDay   = "day"
+	PeriodWeek  = "week"
+	PeriodMonth = "month"
+)
+
+// DimensionStat 报表维度统计行
+type DimensionStat struct {
+	Key      string `json:"key"` // 模型名/租户ID;空串归 "(global)"
+	Requests int64  `json:"requests"`
+	Tokens   int64  `json:"tokens"`
+}
+
+// ReportContent 合规报表聚合快照
+type ReportContent struct {
+	TotalRequests int64           `json:"total_requests"`
+	TotalTokens   int64           `json:"total_tokens"`
+	Error4xx      int64           `json:"error_4xx"`
+	Error5xx      int64           `json:"error_5xx"`
+	StreamCount   int64           `json:"stream_count"`
+	ByModel       []DimensionStat `json:"by_model"`
+	ByTenant      []DimensionStat `json:"by_tenant"`
+}
+
+// ComplianceReport 合规报表（period_type+period_start 唯一）
+type ComplianceReport struct {
+	ID          string         `json:"id"`
+	PeriodType  string         `json:"period_type"`
+	PeriodStart time.Time      `json:"period_start"`
+	PeriodEnd   time.Time      `json:"period_end"`
+	GeneratedAt time.Time      `json:"generated_at"`
+	Content     *ReportContent `json:"content"`
+}
+
 // LicenseInfo 商业授权信息（license.json 的结构）
 type LicenseInfo struct {
 	LicenseKey   string    `json:"license_key"`   // 授权码
@@ -331,6 +366,13 @@ type StoragePlugin interface {
 	ListAdminOperationLogs(filter AdminOpLogFilter, page, size int) ([]*AdminOperationLog, int64, error)
 	ListAdminUsers() ([]*AdminUser, error)
 	CountActiveAdminUsersByRoleID(roleID string) (int64, error)
+
+	// 合规报表(E6)：period_type+period_start 业务键幂等
+	SaveComplianceReport(report *ComplianceReport) error
+	ListComplianceReports(page, size int) ([]*ComplianceReport, int64, error)
+	GetComplianceReport(id string) (*ComplianceReport, error)
+	FindComplianceReportByPeriod(periodType string, periodStart time.Time) (*ComplianceReport, error)
+	CountComplianceReports() (int64, error)
 
 	// 上游管理（负载均衡）
 	ListUpstreams(modelConfigID string) ([]*Upstream, error)

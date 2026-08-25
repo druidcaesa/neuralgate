@@ -188,6 +188,15 @@ func mysqlCreateTables(db *sql.DB) error {
 			created_at BIGINT NOT NULL,
 			KEY idx_security_events_created (created_at)
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+		`CREATE TABLE IF NOT EXISTS compliance_reports (
+			id VARCHAR(64) PRIMARY KEY,
+			period_type VARCHAR(16) NOT NULL,
+			period_start BIGINT NOT NULL,
+			period_end BIGINT NOT NULL,
+			generated_at BIGINT NOT NULL,
+			content MEDIUMTEXT NOT NULL,
+			UNIQUE KEY uq_period (period_type, period_start)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {

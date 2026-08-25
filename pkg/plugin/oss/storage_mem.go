@@ -31,20 +31,21 @@ var ErrNotFound = errors.New("record not found")
 
 // MemStorage 内存存储实现
 type MemStorage struct {
-	mu               sync.RWMutex
-	apiKeys          map[string]*plugin.APIKey                // keyHash -> key
-	modelConfigs     map[string]*plugin.ModelConfig           // modelName -> config
-	auditLogs        []*plugin.AuditLog                       // 按写入顺序
-	tamperAlerts     map[string]*plugin.TamperAlert           // 告警ID -> 篡改告警
-	rateLimits       map[string]*plugin.RateLimitConfig       // id -> config
-	upstreams        map[string]*plugin.Upstream              // id -> upstream
-	adminUsers       map[string]*plugin.AdminUser             // id -> 管理后台账号
-	privacyRules     map[string]*plugin.PrivacyRule           // id -> 隐私规则
-	privacyWhitelist map[string]*plugin.PrivacyWhitelistEntry // id -> 白名单条目
-	securityEvents   []*plugin.SecurityEvent                  // 按写入顺序
-	tenants          map[string]*plugin.Tenant                // id -> 租户
-	roles            map[string]*plugin.Role                  // id -> 角色
-	adminOpLogs      []*plugin.AdminOperationLog              // 按写入顺序
+	mu                sync.RWMutex
+	apiKeys           map[string]*plugin.APIKey                // keyHash -> key
+	modelConfigs      map[string]*plugin.ModelConfig           // modelName -> config
+	auditLogs         []*plugin.AuditLog                       // 按写入顺序
+	tamperAlerts      map[string]*plugin.TamperAlert           // 告警ID -> 篡改告警
+	rateLimits        map[string]*plugin.RateLimitConfig       // id -> config
+	upstreams         map[string]*plugin.Upstream              // id -> upstream
+	adminUsers        map[string]*plugin.AdminUser             // id -> 管理后台账号
+	privacyRules      map[string]*plugin.PrivacyRule           // id -> 隐私规则
+	privacyWhitelist  map[string]*plugin.PrivacyWhitelistEntry // id -> 白名单条目
+	securityEvents    []*plugin.SecurityEvent                  // 按写入顺序
+	tenants           map[string]*plugin.Tenant                // id -> 租户
+	roles             map[string]*plugin.Role                  // id -> 角色
+	adminOpLogs       []*plugin.AdminOperationLog              // 按写入顺序
+	complianceReports []*plugin.ComplianceReport               // 按写入顺序(查询时排序)
 }
 
 // NewMemStorage 创建内存存储
@@ -825,4 +826,77 @@ func (s *MemStorage) CountActiveAdminUsersByRoleID(roleID string) (int64, error)
 		}
 	}
 	return n, nil
+}
+
+// ===== 合规报表(E6) =====
+
+func (s *MemStorage) SaveComplianceReport(report *plugin.ComplianceReport) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if report.ID == "" {
+		report.ID = uuid.NewString()
+	}
+	if report.GeneratedAt.IsZero() {
+		report.GeneratedAt = time.Now()
+	}
+	// 同期覆盖：保留原 id 与插入位次，仅刷新内容（UPSERT 幂等语义）
+	for i, existing := range s.complianceReports {
+		if existing.PeriodType == report.PeriodType && existing.PeriodStart.Equal(report.PeriodStart) {
+			report.ID = existing.ID
+			stored := *report
+			s.complianceReports[i] = &stored
+			return nil
+		}
+	}
+	stored := *report
+	s.complianceReports = append(s.complianceReports, &stored)
+	return nil
+}
+
+// ListComplianceReports 报表分页：period_start 倒序（最近优先）
+func (s *MemStorage) ListComplianceReports(page, size int) ([]*plugin.ComplianceReport, int64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	all := make([]*plugin.ComplianceReport, len(s.complianceReports))
+	copy(all, s.complianceReports)
+	sort.Slice(all, func(i, j int) bool { return all[i].PeriodStart.After(all[j].PeriodStart) })
+	page, size = normalizePage(page, size)
+	start := min((page-1)*size, len(all))
+	end := min(start+size, len(all))
+	out := make([]*plugin.ComplianceReport, 0, end-start)
+	for _, r := range all[start:end] {
+		cp := *r
+		out = append(out, &cp)
+	}
+	return out, int64(len(all)), nil
+}
+
+func (s *MemStorage) GetComplianceReport(id string) (*plugin.ComplianceReport, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, r := range s.complianceReports {
+		if r.ID == id {
+			cp := *r
+			return &cp, nil
+		}
+	}
+	return nil, ErrNotFound
+}
+
+func (s *MemStorage) FindComplianceReportByPeriod(periodType string, periodStart time.Time) (*plugin.ComplianceReport, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, r := range s.complianceReports {
+		if r.PeriodType == periodType && r.PeriodStart.Equal(periodStart) {
+			cp := *r
+			return &cp, nil
+		}
+	}
+	return nil, ErrNotFound
+}
+
+func (s *MemStorage) CountComplianceReports() (int64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return int64(len(s.complianceReports)), nil
 }
