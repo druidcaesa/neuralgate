@@ -26,8 +26,10 @@ import (
 	"github.com/google/uuid"
 )
 
-// AuthMiddleware 鉴权中间件：提取 Bearer API Key → 查存储校验 → 写入 RequestContext
+// AuthMiddleware 鉴权中间件：提取 Bearer API Key → 查存储校验 → 写入 RequestContext。
+// 内置 TenantGate 联动租户禁用（每条链一份，空表/无租户恒放行）
 func AuthMiddleware(storage plugin.StoragePlugin) Middleware {
+	tenantGate := NewTenantGate(storage, tenantCheckInterval)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			rc := &RequestContext{
@@ -60,6 +62,11 @@ func AuthMiddleware(storage plugin.StoragePlugin) Middleware {
 			key, err := storage.GetAPIKey(hex.EncodeToString(sum[:]))
 			if err != nil || key == nil {
 				writeOpenAIError(w, http.StatusUnauthorized, "invalid_request_error", "invalid_api_key", "Incorrect API key provided")
+				return
+			}
+			// 租户禁用联动：所属租户被停用的 Key 一并拒绝(≤TTL 生效)
+			if key.TenantID != "" && !tenantGate.Allowed(key.TenantID) {
+				writeOpenAIError(w, http.StatusUnauthorized, "invalid_request_error", "api_key_disabled", "tenant is disabled")
 				return
 			}
 			rc.APIKeyID = key.ID
