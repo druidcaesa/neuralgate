@@ -13,6 +13,10 @@ const router = createRouter({
     { path: '/tamper-alerts', name: 'tamper-alerts', component: () => import('./views/TamperAlertList.vue'), meta: { title: '防篡改告警' } },
     { path: '/privacy-rules', name: 'privacy-rules', component: () => import('./views/PrivacyRules.vue'), meta: { title: '隐私合规' } },
     { path: '/security-events', name: 'security-events', component: () => import('./views/SecurityEvents.vue'), meta: { title: '安全事件' } },
+    { path: '/tenants', name: 'tenants', component: () => import('./views/Tenants.vue'), meta: { title: '租户管理' } },
+    { path: '/roles', name: 'roles', component: () => import('./views/Roles.vue'), meta: { title: '角色管理' } },
+    { path: '/users', name: 'users', component: () => import('./views/Users.vue'), meta: { title: '用户管理' } },
+    { path: '/operation-logs', name: 'operation-logs', component: () => import('./views/OperationLogs.vue'), meta: { title: '操作日志' } },
     { path: '/system', name: 'system', component: () => import('./views/SystemInfo.vue'), meta: { title: '系统信息' } }
   ]
 })
