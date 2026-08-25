@@ -38,6 +38,7 @@ type MemStorage struct {
 	tamperAlerts map[string]*plugin.TamperAlert     // 告警ID -> 篡改告警
 	rateLimits   map[string]*plugin.RateLimitConfig // id -> config
 	upstreams    map[string]*plugin.Upstream        // id -> upstream
+	adminUsers   map[string]*plugin.AdminUser       // id -> 管理后台账号
 }
 
 // NewMemStorage 创建内存存储
@@ -48,6 +49,7 @@ func NewMemStorage() *MemStorage {
 		rateLimits:   make(map[string]*plugin.RateLimitConfig),
 		upstreams:    make(map[string]*plugin.Upstream),
 		tamperAlerts: make(map[string]*plugin.TamperAlert),
+		adminUsers:   make(map[string]*plugin.AdminUser),
 	}
 }
 
@@ -80,6 +82,42 @@ func (s *MemStorage) SaveAPIKey(key *plugin.APIKey) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.apiKeys[key.KeyHash] = key
+	return nil
+}
+
+// ===== 管理后台账号 =====
+
+func (s *MemStorage) CountAdminUsers() (int64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return int64(len(s.adminUsers)), nil
+}
+
+func (s *MemStorage) GetAdminUserByUsername(username string) (*plugin.AdminUser, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, u := range s.adminUsers {
+		if u.Username == username {
+			return u, nil
+		}
+	}
+	return nil, ErrNotFound
+}
+
+func (s *MemStorage) GetAdminUserByID(id string) (*plugin.AdminUser, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if u, ok := s.adminUsers[id]; ok {
+		return u, nil
+	}
+	return nil, ErrNotFound
+}
+
+// SaveAdminUser UPSERT：按主键插入或全量更新
+func (s *MemStorage) SaveAdminUser(user *plugin.AdminUser) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.adminUsers[user.ID] = user
 	return nil
 }
 

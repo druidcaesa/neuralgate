@@ -39,6 +39,16 @@ func (s *SQLStorage) isMySQL() bool { return s.driver == "mysql" }
 // NewSQLStorage 创建 SQL 存储(不含连接,连接由 Init 建立)
 func NewSQLStorage() *SQLStorage { return &SQLStorage{} }
 
+// appendSQLitePragmas 向 DSN 追加并发写所需的连接级 PRAGMA：
+// busy_timeout 缓解写锁冲突，WAL 提升读写并行度，NORMAL 同步级别为 WAL 推荐值
+func appendSQLitePragmas(dsn string) string {
+	pragmas := "_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)"
+	if strings.Contains(dsn, "?") {
+		return dsn + "&" + pragmas
+	}
+	return dsn + "?" + pragmas
+}
+
 // Init 按 driver 打开连接并建表: driver ∈ {mysql, sqlite}
 func (s *SQLStorage) Init(config map[string]interface{}) error {
 	driver, _ := config["driver"].(string)
@@ -46,6 +56,10 @@ func (s *SQLStorage) Init(config map[string]interface{}) error {
 	s.encryptKey, _ = config["encrypt_key"].(string)
 	if driver != "mysql" && driver != "sqlite" {
 		return fmt.Errorf("unsupported sql driver: %s", driver)
+	}
+	if driver == "sqlite" {
+		// busy_timeout/WAL 为连接级参数,须经 DSN 传入才能覆盖连接池中每个新连接
+		dsn = appendSQLitePragmas(dsn)
 	}
 	db, err := sql.Open(driver, dsn)
 	if err != nil {
@@ -211,6 +225,67 @@ func (s *SQLStorage) DeleteAPIKey(keyID string) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// ===== 管理后台账号 =====
+
+const adminUserCols = "id, username, password_hash, status, created_at, updated_at, last_login_at"
+
+func scanAdminUser(row interface{ Scan(...interface{}) error }) (*plugin.AdminUser, error) {
+	var u plugin.AdminUser
+	var status, createdAt, updatedAt string
+	var lastLoginAt sql.NullString
+	if err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &status, &createdAt, &updatedAt, &lastLoginAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	u.Status = plugin.AdminUserStatus(status)
+	var cms, ums int64
+	fmt.Sscanf(createdAt, "%d", &cms)
+	fmt.Sscanf(updatedAt, "%d", &ums)
+	u.CreatedAt = msToTime(cms)
+	u.UpdatedAt = msToTime(ums)
+	if lastLoginAt.Valid {
+		var lms int64
+		fmt.Sscanf(lastLoginAt.String, "%d", &lms)
+		t := msToTime(lms)
+		u.LastLoginAt = &t
+	}
+	return &u, nil
+}
+
+func (s *SQLStorage) CountAdminUsers() (int64, error) {
+	var total int64
+	err := s.db.QueryRow("SELECT COUNT(*) FROM admin_users").Scan(&total)
+	return total, err
+}
+
+func (s *SQLStorage) GetAdminUserByUsername(username string) (*plugin.AdminUser, error) {
+	row := s.db.QueryRow("SELECT "+adminUserCols+" FROM admin_users WHERE username = ?", username)
+	return scanAdminUser(row)
+}
+
+func (s *SQLStorage) GetAdminUserByID(id string) (*plugin.AdminUser, error) {
+	row := s.db.QueryRow("SELECT "+adminUserCols+" FROM admin_users WHERE id = ?", id)
+	return scanAdminUser(row)
+}
+
+// SaveAdminUser UPSERT：MySQL 用 VALUES(col)，SQLite 用 excluded.col
+func (s *SQLStorage) SaveAdminUser(user *plugin.AdminUser) error {
+	upsert := ""
+	if s.isMySQL() {
+		upsert = " ON DUPLICATE KEY UPDATE username=VALUES(username), password_hash=VALUES(password_hash), status=VALUES(status), updated_at=VALUES(updated_at), last_login_at=VALUES(last_login_at)"
+	} else {
+		upsert = " ON CONFLICT(id) DO UPDATE SET username=excluded.username, password_hash=excluded.password_hash, status=excluded.status, updated_at=excluded.updated_at, last_login_at=excluded.last_login_at"
+	}
+	_, err := s.db.Exec(
+		`INSERT INTO admin_users (id, username, password_hash, status, created_at, updated_at, last_login_at)
+		 VALUES (?,?,?,?,?,?,?)`+upsert,
+		user.ID, user.Username, user.PasswordHash, string(user.Status),
+		timeToMS(user.CreatedAt), timeToMS(user.UpdatedAt), timePtrToMS(user.LastLoginAt))
+	return err
 }
 
 // ===== 模型配置管理 =====
