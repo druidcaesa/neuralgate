@@ -156,7 +156,7 @@ func (e *TailExporter) run() {
 		case <-e.stopCh:
 			return
 		case <-ticker.C:
-			e.drain()
+			runWithRecover(e.logger, "export-drain", e.drain)
 		}
 	}
 }
@@ -269,8 +269,10 @@ func (e *TailExporter) Close() error {
 	case <-e.doneCh:
 	case <-time.After(3 * interval):
 	}
-	e.pullNew()
-	e.flushAll()
+	runWithRecover(e.logger, "export-final", func() {
+		e.pullNew()
+		e.flushAll()
+	})
 	e.mu.Lock()
 	target := e.target
 	e.mu.Unlock()

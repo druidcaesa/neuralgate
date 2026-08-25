@@ -33,10 +33,11 @@ func NewPluginFactory() plugin.PluginFactory {
 	return &enterpriseFactory{}
 }
 
-// CreateStorage 创建存储（当前：内存存储）
+// CreateStorage 创建存储（与 OSS 工厂同款：Init 时按 driver 选择 mem/sqlite/mysql）
 func (f *enterpriseFactory) CreateStorage() plugin.StoragePlugin {
 	if f.storage == nil {
-		f.storage = oss.NewMemStorage()
+		// 惰性创建：具体驱动由 Init 的 config 决定
+		f.storage = oss.NewDynamicStorage()
 	}
 	return f.storage
 }

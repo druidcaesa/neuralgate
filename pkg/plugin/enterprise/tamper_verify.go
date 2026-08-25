@@ -104,17 +104,27 @@ func (t *Tasks) Stop() {
 	<-t.doneCh
 }
 
-// cycleLoop 启动即执行一轮，此后按 interval 周期触发直至停止
+// runWithRecover 执行 fn 并兜底 panic：后台任务崩溃不应带崩整个网关进程
+func runWithRecover(logger *zap.Logger, name string, fn func()) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("后台任务发生 panic", zap.String("task", name), zap.Any("panic", r))
+		}
+	}()
+	fn()
+}
+
+// cycleLoop 启动即执行一轮，此后按 interval 周期触发直至停止；单轮 panic 不中断循环
 func (t *Tasks) cycleLoop(interval time.Duration, fn func()) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	fn()
+	runWithRecover(t.logger, "cycle-initial", fn)
 	for {
 		select {
 		case <-t.stopCh:
 			return
 		case <-ticker.C:
-			fn()
+			runWithRecover(t.logger, "cycle-tick", fn)
 		}
 	}
 }
