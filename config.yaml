@@ -46,6 +46,10 @@ license:                      # Enterprise only：缺失/过期/验签失败时�
   file_path: "/etc/neuralgate/license.lic"
   offline_mode: false         # 是否离线授权（当前签发的 license 均为离线授权）
 
+admin:                        # 管理后台：登录凭证存数据库（admin_users 表），此处不存密码
+  bootstrap_password: ""      # 首个管理员账号(admin)的种子密码；留空则首次启动随机生成并打印日志
+  allowed_origins: []         # CORS 白名单(如 ["https://ops.example.com"])；留空=不发送跨域头(同源部署)
+
 log:
   level: info                 # debug/info/warn/error
   format: json                # json/console

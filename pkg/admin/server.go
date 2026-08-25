@@ -24,21 +24,30 @@ import (
 
 // AdminServer 管理后台（Gin）：低并发短连接，提供 CRUD 接口、配置管理、日志查询、授权展示
 type AdminServer struct {
-	storage     plugin.StoragePlugin
-	rateLimiter plugin.RateLimitPlugin
-	logger      *zap.Logger
-	engine      *gin.Engine
-	edition     string // 运行版本（授权降级后为 oss）
-	startedAt   time.Time
-	license     *LicenseOverview // 授权概要快照（nil 按 OSS 未授权处理）
+	storage        plugin.StoragePlugin
+	rateLimiter    plugin.RateLimitPlugin
+	logger         *zap.Logger
+	engine         *gin.Engine
+	edition        string // 运行版本（授权降级后为 oss）
+	startedAt      time.Time
+	license        *LicenseOverview // 授权概要快照（nil 按 OSS 未授权处理）
+	sessions       *SessionManager  // 认证默认开启（fail-closed）；DisableAuth 仅限测试
+	loginGuard     *loginGuard
+	allowedOrigins []string // CORS 白名单（空=不发送跨域头）
 }
 
-// NewAdminServer 创建管理后台；license 为启动时校验得到的授权概要（OSS 版传 nil）
+// NewAdminServer 创建管理后台；license 为启动时校验得到的授权概要（OSS 版传 nil）。
+// 默认启用管理面认证：会话密钥为进程级随机值，重启后需重新登录
 func NewAdminServer(storage plugin.StoragePlugin, logger *zap.Logger, edition string, rateLimiter plugin.RateLimitPlugin, license *LicenseOverview) *AdminServer {
 	gin.SetMode(gin.ReleaseMode)
-	s := &AdminServer{storage: storage, rateLimiter: rateLimiter, logger: logger, edition: edition, startedAt: time.Now(), license: license}
+	s := &AdminServer{
+		storage: storage, rateLimiter: rateLimiter, logger: logger,
+		edition: edition, startedAt: time.Now(), license: license,
+		sessions:   NewSessionManager(randomSecret(32), 0),
+		loginGuard: newLoginGuard(),
+	}
 	s.engine = gin.New()
-	s.engine.Use(gin.Recovery(), CORS())
+	s.engine.Use(gin.Recovery(), s.CORS())
 	s.registerRoutes(s.engine)
 	return s
 }

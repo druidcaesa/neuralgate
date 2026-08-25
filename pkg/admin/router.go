@@ -20,58 +20,67 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// registerRoutes 注册路由
+// registerRoutes 注册路由：/api/auth/login 免认证，其余 /api 全部要求管理会话
 func (s *AdminServer) registerRoutes(r *gin.Engine) {
 	r.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 	api := r.Group("/api")
 	{
-		api.GET("/ping", func(c *gin.Context) {
+		api.POST("/auth/login", s.handleLogin)
+	}
+
+	authz := api.Group("")
+	authz.Use(s.RequireAuth())
+	{
+		authz.GET("/ping", func(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"message": "pong"})
 		})
 
+		// 修改自身密码（需登录态）
+		authz.PUT("/auth/password", s.handleChangePassword)
+
 		// API Key 管理
-		api.POST("/api-keys", s.createAPIKey)
-		api.GET("/api-keys", s.listAPIKeys)
-		api.PATCH("/api-keys/:id", s.updateAPIKey)
-		api.DELETE("/api-keys/:id", s.deleteAPIKey)
+		authz.POST("/api-keys", s.createAPIKey)
+		authz.GET("/api-keys", s.listAPIKeys)
+		authz.PATCH("/api-keys/:id", s.updateAPIKey)
+		authz.DELETE("/api-keys/:id", s.deleteAPIKey)
 
 		// 模型配置
-		api.POST("/models", s.createModelConfig)
-		api.GET("/models", s.listModelConfigs)
-		api.PUT("/models/:id", s.updateModelConfig)
-		api.DELETE("/models/:id", s.deleteModelConfig)
-		api.POST("/models/:id/test", s.testModelConfig)
+		authz.POST("/models", s.createModelConfig)
+		authz.GET("/models", s.listModelConfigs)
+		authz.PUT("/models/:id", s.updateModelConfig)
+		authz.DELETE("/models/:id", s.deleteModelConfig)
+		authz.POST("/models/:id/test", s.testModelConfig)
 
 		// 上游管理(负载均衡)
-		api.POST("/models/:id/upstreams", s.createUpstream)
-		api.GET("/models/:id/upstreams", s.listUpstreams)
-		api.PUT("/upstreams/:uid", s.updateUpstream)
-		api.DELETE("/upstreams/:uid", s.deleteUpstream)
+		authz.POST("/models/:id/upstreams", s.createUpstream)
+		authz.GET("/models/:id/upstreams", s.listUpstreams)
+		authz.PUT("/upstreams/:uid", s.updateUpstream)
+		authz.DELETE("/upstreams/:uid", s.deleteUpstream)
 
 		// 审计日志
-		api.GET("/audit-logs", s.queryAuditLogs)
-		api.GET("/audit-logs/export", s.exportAuditLogs)
-		api.GET("/audit-logs/:id", s.getAuditLog)
+		authz.GET("/audit-logs", s.queryAuditLogs)
+		authz.GET("/audit-logs/export", s.exportAuditLogs)
+		authz.GET("/audit-logs/:id", s.getAuditLog)
 
 		// 系统信息
-		api.GET("/system", s.systemInfo)
+		authz.GET("/system", s.systemInfo)
 
 		// 授权信息
-		api.GET("/license", s.licenseInfo)
+		authz.GET("/license", s.licenseInfo)
 
 		// 篡改告警
-		api.GET("/tamper-alerts", s.listTamperAlerts)
-		api.PATCH("/tamper-alerts/:id", s.resolveTamperAlert)
+		authz.GET("/tamper-alerts", s.listTamperAlerts)
+		authz.PATCH("/tamper-alerts/:id", s.resolveTamperAlert)
 
 		// 限流配置管理
-		api.POST("/rate-limits", s.createRateLimit)
-		api.GET("/rate-limits", s.listRateLimits)
-		api.PUT("/rate-limits/:id", s.updateRateLimit)
-		api.DELETE("/rate-limits/:id", s.deleteRateLimit)
+		authz.POST("/rate-limits", s.createRateLimit)
+		authz.GET("/rate-limits", s.listRateLimits)
+		authz.PUT("/rate-limits/:id", s.updateRateLimit)
+		authz.DELETE("/rate-limits/:id", s.deleteRateLimit)
 	}
 
-	// 静态资源 + SPA fallback(go:embed)
+	// 静态资源 + SPA fallback(go:embed)，页面公开加载，数据由 /api 认证保护
 	s.registerWebUI(r)
 }
