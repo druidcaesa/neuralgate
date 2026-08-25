@@ -1,12 +1,22 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
+import { ADMIN_TOKEN_KEY } from './auth'
 
 export const client = axios.create({
   baseURL: '/api',
   timeout: 15000
 })
 
-// 响应拦截:统一错误处理 + 解包 data
+// 请求拦截:携带管理会话 token(登录后所有 /api 需认证)
+client.interceptors.request.use((config) => {
+  const token = localStorage.getItem(ADMIN_TOKEN_KEY)
+  if (token) {
+    config.headers.set('X-Admin-Token', token)
+  }
+  return config
+})
+
+// 响应拦截:统一错误处理 + 解包 data；401 清会话回登录页
 client.interceptors.response.use(
   (resp) => {
     const body = resp.data
@@ -17,6 +27,12 @@ client.interceptors.response.use(
     return resp
   },
   (err) => {
+    if (err.response?.status === 401 && window.location.pathname !== '/login') {
+      localStorage.removeItem(ADMIN_TOKEN_KEY)
+      ElMessage.error('登录已失效，请重新登录')
+      window.location.href = '/login'
+      return Promise.reject(err)
+    }
     const msg =
       err.response?.data?.message ||
       err.response?.data?.error?.message ||
