@@ -79,6 +79,16 @@ func (s *AdminServer) registerRoutes(r *gin.Engine) {
 		authz.GET("/rate-limits", s.listRateLimits)
 		authz.PUT("/rate-limits/:id", s.updateRateLimit)
 		authz.DELETE("/rate-limits/:id", s.deleteRateLimit)
+
+		// 隐私合规(Enterprise)：规则库/白名单/安全事件
+		authz.POST("/privacy-rules", s.createPrivacyRule)
+		authz.GET("/privacy-rules", s.listPrivacyRules)
+		authz.PUT("/privacy-rules/:id", s.updatePrivacyRule)
+		authz.DELETE("/privacy-rules/:id", s.deletePrivacyRule)
+		authz.POST("/privacy-whitelist", s.createPrivacyWhitelistEntry)
+		authz.GET("/privacy-whitelist", s.listPrivacyWhitelistEntries)
+		authz.DELETE("/privacy-whitelist/:id", s.deletePrivacyWhitelistEntry)
+		authz.GET("/security-events", s.listSecurityEvents)
 	}
 
 	// 静态资源 + SPA fallback(go:embed)，页面公开加载，数据由 /api 认证保护
