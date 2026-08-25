@@ -58,7 +58,19 @@ type tenantRequest struct {
 	Config map[string]string `json:"config"`
 }
 
+// globalOnlyGuard 租户管理属全局域：租户内用户即使持有 tenant:* 权限也不生效（规格 §4.3）
+func (s *AdminServer) globalOnlyGuard(c *gin.Context) bool {
+	if s.scopeTenant(c) != nil {
+		Error(c, http.StatusForbidden, http.StatusForbidden, "无权限")
+		return true
+	}
+	return false
+}
+
 func (s *AdminServer) createTenant(c *gin.Context) {
+	if s.globalOnlyGuard(c) {
+		return
+	}
 	var req tenantRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		Error(c, http.StatusBadRequest, 400, err.Error())
@@ -90,6 +102,9 @@ func (s *AdminServer) createTenant(c *gin.Context) {
 }
 
 func (s *AdminServer) listTenants(c *gin.Context) {
+	if s.globalOnlyGuard(c) {
+		return
+	}
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	size, _ := strconv.Atoi(c.DefaultQuery("size", "20"))
 	tenants, total, err := s.storage.ListTenants(page, size)
@@ -101,6 +116,9 @@ func (s *AdminServer) listTenants(c *gin.Context) {
 }
 
 func (s *AdminServer) updateTenant(c *gin.Context) {
+	if s.globalOnlyGuard(c) {
+		return
+	}
 	id := c.Param("id")
 	var req tenantRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -131,6 +149,9 @@ func (s *AdminServer) updateTenant(c *gin.Context) {
 }
 
 func (s *AdminServer) deleteTenant(c *gin.Context) {
+	if s.globalOnlyGuard(c) {
+		return
+	}
 	id := c.Param("id")
 	if n, err := s.storage.CountAPIKeysByTenantID(id); err == nil && n > 0 {
 		Error(c, http.StatusConflict, 409, "租户下存在 API Key，禁止删除")
@@ -196,6 +217,15 @@ func (s *AdminServer) listRoles(c *gin.Context) {
 		Error(c, http.StatusInternalServerError, 500, "failed to list roles")
 		return
 	}
+	if forced := s.scopeTenant(c); forced != nil {
+		filtered := roles[:0]
+		for _, r := range roles {
+			if r.TenantID == "" || r.TenantID == *forced { // 全局+本租户可见
+				filtered = append(filtered, r)
+			}
+		}
+		roles = filtered
+	}
 	OK(c, gin.H{"items": roles})
 }
 
@@ -216,7 +246,7 @@ func (s *AdminServer) updateRole(c *gin.Context) {
 		return
 	}
 	existing, err := s.storage.GetRoleByID(id)
-	if err != nil {
+	if err != nil || s.tenantMismatch(c, existing.TenantID) {
 		Error(c, http.StatusNotFound, 404, "role not found")
 		return
 	}
@@ -239,7 +269,7 @@ func (s *AdminServer) updateRole(c *gin.Context) {
 func (s *AdminServer) deleteRole(c *gin.Context) {
 	id := c.Param("id")
 	role, err := s.storage.GetRoleByID(id)
-	if err != nil {
+	if err != nil || s.tenantMismatch(c, role.TenantID) {
 		Error(c, http.StatusNotFound, 404, "role not found")
 		return
 	}
@@ -342,6 +372,9 @@ func (s *AdminServer) listAdminUsers(c *gin.Context) {
 	}
 	items := make([]item, 0, len(users))
 	for _, u := range users {
+		if s.tenantMismatch(c, u.TenantID) {
+			continue // 租户内用户只见本租户账号
+		}
 		items = append(items, item{
 			ID: u.ID, Username: u.Username, TenantID: u.TenantID,
 			RoleID: u.RoleID, Status: string(u.Status), CreatedAt: u.CreatedAt,
@@ -376,7 +409,7 @@ func (s *AdminServer) updateAdminUser(c *gin.Context) {
 		return
 	}
 	user, err := s.storage.GetAdminUserByID(id)
-	if err != nil {
+	if err != nil || s.tenantMismatch(c, user.TenantID) {
 		Error(c, http.StatusNotFound, 404, "user not found")
 		return
 	}
@@ -414,7 +447,7 @@ func (s *AdminServer) deleteAdminUser(c *gin.Context) {
 		return
 	}
 	user, err := s.storage.GetAdminUserByID(id)
-	if err != nil {
+	if err != nil || s.tenantMismatch(c, user.TenantID) {
 		Error(c, http.StatusNotFound, 404, "user not found")
 		return
 	}
