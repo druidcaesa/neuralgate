@@ -28,7 +28,7 @@ import (
 )
 
 // newTestEngine 构造短 TTL 引擎（20ms），便于验证 CRUD 后重载生效
-func newTestEngine(t *testing.T) (*PrivacyEngine, plugin.StoragePlugin) {
+func newTestEngine(t *testing.T) (*PrivacyEngine, *oss.MemStorage) {
 	t.Helper()
 	storage := oss.NewMemStorage()
 	for _, r := range plugin.DefaultPrivacyRules() {
