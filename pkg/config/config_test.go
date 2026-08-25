@@ -194,3 +194,35 @@ func TestLoadNonexistentFile(t *testing.T) {
 		t.Fatal("Load() expected error for missing file")
 	}
 }
+
+// TestLoadPrivacyConfig privacy 段解析；bool 字段默认 false 不参与 applyDefaults
+func TestLoadPrivacyConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := `
+privacy:
+  enabled: true
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Privacy.Enabled {
+		t.Error("enabled: true 应被解析")
+	}
+
+	// 缺失段 → 默认关闭（升级零惊扰）
+	path2 := filepath.Join(t.TempDir(), "empty.yaml")
+	if err := os.WriteFile(path2, []byte("log:\n  level: info\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg2, err := Load(path2)
+	if err != nil {
+		t.Fatalf("Load empty: %v", err)
+	}
+	if cfg2.Privacy.Enabled {
+		t.Error("未配置时 privacy.enabled 应为 false")
+	}
+}

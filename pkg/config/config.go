@@ -29,11 +29,17 @@ type Config struct {
 	Audit     AuditConfig     `yaml:"audit"`
 	RateLimit RateLimitConfig `yaml:"rate_limit"`
 	Export    ExportConfig    `yaml:"export"`
+	Privacy   PrivacyConfig   `yaml:"privacy"`
 	License   LicenseConfig   `yaml:"license"`
 	Admin     AdminConfig     `yaml:"admin"`
 	Log       LogConfig       `yaml:"log"`
 	IPFilter  IPFilterConfig  `yaml:"ip_filter"`
 	TLS       TLSConfig       `yaml:"tls"`
+}
+
+// PrivacyConfig 隐私合规配置（Enterprise：需 privacy 授权）
+type PrivacyConfig struct {
+	Enabled bool `yaml:"enabled"` // 是否启用隐私防护(PII 脱敏/注入拦截)；bool 不参与 applyDefaults
 }
 
 // AdminConfig 管理后台配置：bootstrap 密码仅用于首个管理员账号的种子（登录凭证存数据库），
