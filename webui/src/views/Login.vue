@@ -44,7 +44,7 @@ async function submit() {
   loading.value = true
   try {
     const result = await login(form.username, form.password)
-    setAdminSession(result.token, result.username)
+    setAdminSession(result.token, result.username, result.permissions ?? [], result.is_super ?? false, result.tenant_id ?? '')
     router.replace('/models')
   } catch {
     // 错误提示由 client 拦截器统一弹出(登录页 401 不跳转)

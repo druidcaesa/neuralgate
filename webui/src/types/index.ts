@@ -273,3 +273,42 @@ export interface SecurityEventItem {
   model_name: string
   created_at: string
 }
+
+// ===== RBAC 权限体系(E5) =====
+export interface TenantItem {
+  id?: string
+  name: string
+  code: string
+  status: 'active' | 'disabled'
+  config?: Record<string, string>
+  created_at?: string
+}
+
+export interface RoleItem {
+  id?: string
+  name: string
+  tenant_id: string
+  permissions: string[]
+  created_at?: string
+}
+
+export interface AdminUserItem {
+  id?: string
+  username: string
+  tenant_id: string
+  role_id: string
+  status: 'active' | 'disabled'
+  created_at?: string
+}
+
+export interface OperationLogItem {
+  id: string
+  user_id: string
+  username: string
+  method: string
+  path: string
+  target_id: string
+  status_code: number
+  client_ip: string
+  created_at: string
+}

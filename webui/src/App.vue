@@ -11,6 +11,10 @@
         <el-menu-item index="/tamper-alerts"><el-icon><Warning /></el-icon>防篡改告警</el-menu-item>
         <el-menu-item index="/privacy-rules"><el-icon><Lock /></el-icon>隐私合规</el-menu-item>
         <el-menu-item index="/security-events"><el-icon><Bell /></el-icon>安全事件</el-menu-item>
+        <el-menu-item v-if="hasPerm('tenant:read')" index="/tenants"><el-icon><OfficeBuilding /></el-icon>租户管理</el-menu-item>
+        <el-menu-item v-if="hasPerm('rbac:read')" index="/roles"><el-icon><Avatar /></el-icon>角色管理</el-menu-item>
+        <el-menu-item v-if="hasPerm('rbac:read')" index="/users"><el-icon><UserFilled /></el-icon>用户管理</el-menu-item>
+        <el-menu-item v-if="hasPerm('system:read')" index="/operation-logs"><el-icon><List /></el-icon>操作日志</el-menu-item>
         <el-menu-item index="/system"><el-icon><Setting /></el-icon>系统信息</el-menu-item>
       </el-menu>
     </el-aside>
@@ -61,8 +65,11 @@
 import { computed, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Cpu, Key, Document, Timer, Setting, Warning, User, ArrowDown, Lock, Bell } from '@element-plus/icons-vue'
-import { changePassword, clearAdminSession, getAdminUsername } from './api/auth'
+import {
+  Cpu, Key, Document, Timer, Setting, Warning, User, ArrowDown, Lock, Bell,
+  OfficeBuilding, Avatar, UserFilled, List
+} from '@element-plus/icons-vue'
+import { changePassword, clearAdminSession, getAdminUsername, hasPerm } from './api/auth'
 
 const route = useRoute()
 const router = useRouter()
