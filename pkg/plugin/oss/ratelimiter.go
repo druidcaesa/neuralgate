@@ -90,7 +90,7 @@ func (l *RateLimiter) ReloadConfig() error {
 	var all []*plugin.RateLimitConfig
 	page := 1
 	for {
-		cfgs, total, err := l.storage.ListRateLimitConfigs(page, 100)
+		cfgs, total, err := l.storage.ListRateLimitConfigs(nil, page, 100)
 		if err != nil {
 			return err
 		}

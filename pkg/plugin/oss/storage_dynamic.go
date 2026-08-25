@@ -96,8 +96,8 @@ func (d *dynamicStorage) GetRateLimitConfig(tenantID, modelName string) (*plugin
 func (d *dynamicStorage) SaveRateLimitConfig(cfg *plugin.RateLimitConfig) error {
 	return d.impl.SaveRateLimitConfig(cfg)
 }
-func (d *dynamicStorage) ListRateLimitConfigs(page, size int) ([]*plugin.RateLimitConfig, int64, error) {
-	return d.impl.ListRateLimitConfigs(page, size)
+func (d *dynamicStorage) ListRateLimitConfigs(tenantID *string, page, size int) ([]*plugin.RateLimitConfig, int64, error) {
+	return d.impl.ListRateLimitConfigs(tenantID, page, size)
 }
 func (d *dynamicStorage) DeleteRateLimitConfig(id string) error {
 	return d.impl.DeleteRateLimitConfig(id)
@@ -157,4 +157,49 @@ func (d *dynamicStorage) SaveSecurityEvent(event *plugin.SecurityEvent) error {
 }
 func (d *dynamicStorage) ListSecurityEvents(page, size int) ([]*plugin.SecurityEvent, int64, error) {
 	return d.impl.ListSecurityEvents(page, size)
+}
+
+// ===== RBAC 权限体系(委托底层实现) =====
+
+func (d *dynamicStorage) GetTenantByID(id string) (*plugin.Tenant, error) {
+	return d.impl.GetTenantByID(id)
+}
+func (d *dynamicStorage) GetTenantByCode(code string) (*plugin.Tenant, error) {
+	return d.impl.GetTenantByCode(code)
+}
+func (d *dynamicStorage) ListTenants(page, size int) ([]*plugin.Tenant, int64, error) {
+	return d.impl.ListTenants(page, size)
+}
+func (d *dynamicStorage) SaveTenant(tenant *plugin.Tenant) error {
+	return d.impl.SaveTenant(tenant)
+}
+func (d *dynamicStorage) DeleteTenant(id string) error {
+	return d.impl.DeleteTenant(id)
+}
+func (d *dynamicStorage) CountTenants() (int64, error) {
+	return d.impl.CountTenants()
+}
+func (d *dynamicStorage) CountAPIKeysByTenantID(tenantID string) (int64, error) {
+	return d.impl.CountAPIKeysByTenantID(tenantID)
+}
+func (d *dynamicStorage) GetRoleByID(id string) (*plugin.Role, error) {
+	return d.impl.GetRoleByID(id)
+}
+func (d *dynamicStorage) ListRoles() ([]*plugin.Role, error) {
+	return d.impl.ListRoles()
+}
+func (d *dynamicStorage) SaveRole(role *plugin.Role) error {
+	return d.impl.SaveRole(role)
+}
+func (d *dynamicStorage) DeleteRole(id string) error {
+	return d.impl.DeleteRole(id)
+}
+func (d *dynamicStorage) CountAdminUsersByRoleID(roleID string) (int64, error) {
+	return d.impl.CountAdminUsersByRoleID(roleID)
+}
+func (d *dynamicStorage) SaveAdminOperationLog(log *plugin.AdminOperationLog) error {
+	return d.impl.SaveAdminOperationLog(log)
+}
+func (d *dynamicStorage) ListAdminOperationLogs(filter plugin.AdminOpLogFilter, page, size int) ([]*plugin.AdminOperationLog, int64, error) {
+	return d.impl.ListAdminOperationLogs(filter, page, size)
 }

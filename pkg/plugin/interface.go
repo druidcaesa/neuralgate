@@ -80,6 +80,8 @@ type AdminUser struct {
 	ID           string          // 主键ID
 	Username     string          // 用户名（唯一）
 	PasswordHash string          // bcrypt 哈希
+	TenantID     string          // 所属租户（空=全局，仅超管可设）
+	RoleID       string          // 挂载角色ID
 	Status       AdminUserStatus // 状态：active/disabled
 	CreatedAt    time.Time       // 创建时间
 	UpdatedAt    time.Time       // 更新时间
@@ -130,25 +132,26 @@ type SSEChunk struct {
 
 // Tenant 租户
 type Tenant struct {
-	ID        string            // 租户ID
-	Name      string            // 租户名称
-	Code      string            // 租户编码
-	Status    TenantStatus      // 状态
-	Config    map[string]string // 租户配置
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID        string            `json:"id"`
+	Name      string            `json:"name"`   // 1-64 字符
+	Code      string            `json:"code"`   // 1-32 字母数字，唯一
+	Status    TenantStatus      `json:"status"` // active | disabled
+	Config    map[string]string `json:"config"` // 租户配置键值对
+	CreatedAt time.Time         `json:"created_at"`
+	UpdatedAt time.Time         `json:"updated_at"`
 }
 
-// Role 角色（RBAC）
+// Role 角色（RBAC；tenant_id 空 = 全局角色）
 type Role struct {
-	ID          string   // 角色ID
-	TenantID    string   // 所属租户
-	Name        string   // 角色名称
-	Permissions []string // 权限列表
-	CreatedAt   time.Time
+	ID          string    `json:"id"`
+	TenantID    string    `json:"tenant_id"`   // 空=全局
+	Name        string    `json:"name"`        // 1-64 字符
+	Permissions []string  `json:"permissions"` // 权限编码列表
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
-// User 管理后台用户
+// User 管理后台用户（RBAC 预留结构，当前管理面账号由 AdminUser 承载）
 type User struct {
 	ID           string     // 用户ID
 	TenantID     string     // 所属租户
@@ -219,6 +222,24 @@ type SecurityEvent struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// AdminOperationLog 管理面操作审计
+type AdminOperationLog struct {
+	ID         string    `json:"id"`
+	UserID     string    `json:"user_id"`
+	Username   string    `json:"username"`
+	Method     string    `json:"method"`
+	Path       string    `json:"path"`
+	TargetID   string    `json:"target_id"` // 路由 :id 参数，无则空
+	StatusCode int       `json:"status_code"`
+	ClientIP   string    `json:"client_ip"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// AdminOpLogFilter 操作日志查询过滤
+type AdminOpLogFilter struct {
+	UserID string
+}
+
 // LicenseInfo 商业授权信息（license.json 的结构）
 type LicenseInfo struct {
 	LicenseKey   string    `json:"license_key"`   // 授权码
@@ -286,11 +307,27 @@ type StoragePlugin interface {
 	// 标记篡改告警处置状态
 	SetTamperAlertResolved(id string, resolved bool) error
 
-	// 限流配置管理
+	// 限流配置管理（列表 tenantID 非 nil 时按租户过滤）
 	GetRateLimitConfig(tenantID, modelName string) (*RateLimitConfig, error)
 	SaveRateLimitConfig(cfg *RateLimitConfig) error
-	ListRateLimitConfigs(page, size int) ([]*RateLimitConfig, int64, error)
+	ListRateLimitConfigs(tenantID *string, page, size int) ([]*RateLimitConfig, int64, error)
 	DeleteRateLimitConfig(id string) error
+
+	// RBAC 权限体系：租户/角色/操作日志/账号角色计数
+	GetTenantByID(id string) (*Tenant, error)
+	GetTenantByCode(code string) (*Tenant, error)
+	ListTenants(page, size int) ([]*Tenant, int64, error)
+	SaveTenant(tenant *Tenant) error
+	DeleteTenant(id string) error
+	CountTenants() (int64, error)
+	CountAPIKeysByTenantID(tenantID string) (int64, error)
+	GetRoleByID(id string) (*Role, error)
+	ListRoles() ([]*Role, error)
+	SaveRole(role *Role) error
+	DeleteRole(id string) error
+	CountAdminUsersByRoleID(roleID string) (int64, error)
+	SaveAdminOperationLog(log *AdminOperationLog) error
+	ListAdminOperationLogs(filter AdminOpLogFilter, page, size int) ([]*AdminOperationLog, int64, error)
 
 	// 上游管理（负载均衡）
 	ListUpstreams(modelConfigID string) ([]*Upstream, error)

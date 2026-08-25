@@ -68,7 +68,7 @@ func (s *AdminServer) createRateLimit(c *gin.Context) {
 func (s *AdminServer) listRateLimits(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	size, _ := strconv.Atoi(c.DefaultQuery("size", "10"))
-	cfgs, total, err := s.storage.ListRateLimitConfigs(page, size)
+	cfgs, total, err := s.storage.ListRateLimitConfigs(nil, page, size)
 	if err != nil {
 		Error(c, http.StatusInternalServerError, 500, "failed to list rate limit configs")
 		return
@@ -85,7 +85,7 @@ func (s *AdminServer) updateRateLimit(c *gin.Context) {
 		return
 	}
 	// 定位现有(存储无按 id 查限流的方法,用 List 找)
-	cfgs, _, err := s.storage.ListRateLimitConfigs(1, 100000)
+	cfgs, _, err := s.storage.ListRateLimitConfigs(nil, 1, 100000)
 	if err != nil {
 		Error(c, http.StatusInternalServerError, 500, "failed to load rate limit configs")
 		return

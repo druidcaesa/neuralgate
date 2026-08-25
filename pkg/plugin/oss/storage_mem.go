@@ -42,6 +42,9 @@ type MemStorage struct {
 	privacyRules     map[string]*plugin.PrivacyRule           // id -> 隐私规则
 	privacyWhitelist map[string]*plugin.PrivacyWhitelistEntry // id -> 白名单条目
 	securityEvents   []*plugin.SecurityEvent                  // 按写入顺序
+	tenants          map[string]*plugin.Tenant                // id -> 租户
+	roles            map[string]*plugin.Role                  // id -> 角色
+	adminOpLogs      []*plugin.AdminOperationLog              // 按写入顺序
 }
 
 // NewMemStorage 创建内存存储
@@ -55,6 +58,8 @@ func NewMemStorage() *MemStorage {
 		adminUsers:       make(map[string]*plugin.AdminUser),
 		privacyRules:     make(map[string]*plugin.PrivacyRule),
 		privacyWhitelist: make(map[string]*plugin.PrivacyWhitelistEntry),
+		tenants:          make(map[string]*plugin.Tenant),
+		roles:            make(map[string]*plugin.Role),
 	}
 }
 
@@ -293,11 +298,14 @@ func (s *MemStorage) SaveRateLimitConfig(cfg *plugin.RateLimitConfig) error {
 	return nil
 }
 
-func (s *MemStorage) ListRateLimitConfigs(page, size int) ([]*plugin.RateLimitConfig, int64, error) {
+func (s *MemStorage) ListRateLimitConfigs(tenantID *string, page, size int) ([]*plugin.RateLimitConfig, int64, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	var all []*plugin.RateLimitConfig
 	for _, c := range s.rateLimits {
+		if tenantID != nil && c.TenantID != *tenantID {
+			continue
+		}
 		all = append(all, c)
 	}
 	sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
@@ -603,6 +611,180 @@ func (s *MemStorage) ListSecurityEvents(page, size int) ([]*plugin.SecurityEvent
 	// 第 p 页取倒数第 (p-1)*size+1 .. p*size 条
 	for i := len(s.securityEvents) - 1 - (page-1)*size; i >= 0 && i >= len(s.securityEvents)-page*size; i-- {
 		cp := *s.securityEvents[i]
+		out = append(out, &cp)
+	}
+	return out, total, nil
+}
+
+// ===== RBAC 权限体系(租户/角色/操作日志) =====
+
+func (s *MemStorage) SaveTenant(tenant *plugin.Tenant) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	if tenant.ID == "" {
+		tenant.ID = uuid.NewString()
+		tenant.CreatedAt = now
+	}
+	stored := *tenant
+	stored.UpdatedAt = now
+	s.tenants[stored.ID] = &stored
+	return nil
+}
+
+func (s *MemStorage) GetTenantByID(id string) (*plugin.Tenant, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if t, ok := s.tenants[id]; ok {
+		cp := *t
+		return &cp, nil
+	}
+	return nil, ErrNotFound
+}
+
+func (s *MemStorage) GetTenantByCode(code string) (*plugin.Tenant, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, t := range s.tenants {
+		if t.Code == code {
+			cp := *t
+			return &cp, nil
+		}
+	}
+	return nil, ErrNotFound
+}
+
+func (s *MemStorage) ListTenants(page, size int) ([]*plugin.Tenant, int64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	all := make([]*plugin.Tenant, 0, len(s.tenants))
+	for _, t := range s.tenants {
+		cp := *t
+		all = append(all, &cp)
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].CreatedAt.Before(all[j].CreatedAt) })
+	page, size = normalizePage(page, size)
+	start := min((page-1)*size, len(all))
+	end := min(start+size, len(all))
+	return all[start:end], int64(len(all)), nil
+}
+
+func (s *MemStorage) DeleteTenant(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.tenants[id]; !ok {
+		return ErrNotFound
+	}
+	delete(s.tenants, id)
+	return nil
+}
+
+func (s *MemStorage) CountTenants() (int64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return int64(len(s.tenants)), nil
+}
+
+func (s *MemStorage) CountAPIKeysByTenantID(tenantID string) (int64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var n int64
+	for _, k := range s.apiKeys {
+		if k.TenantID == tenantID {
+			n++
+		}
+	}
+	return n, nil
+}
+
+func (s *MemStorage) SaveRole(role *plugin.Role) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	if role.ID == "" {
+		role.ID = uuid.NewString()
+		role.CreatedAt = now
+	}
+	stored := *role
+	stored.UpdatedAt = now
+	s.roles[stored.ID] = &stored
+	return nil
+}
+
+func (s *MemStorage) GetRoleByID(id string) (*plugin.Role, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if r, ok := s.roles[id]; ok {
+		cp := *r
+		return &cp, nil
+	}
+	return nil, ErrNotFound
+}
+
+func (s *MemStorage) ListRoles() ([]*plugin.Role, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var roles []*plugin.Role
+	for _, r := range s.roles {
+		cp := *r
+		roles = append(roles, &cp)
+	}
+	sort.Slice(roles, func(i, j int) bool { return roles[i].CreatedAt.Before(roles[j].CreatedAt) })
+	return roles, nil
+}
+
+func (s *MemStorage) DeleteRole(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.roles[id]; !ok {
+		return ErrNotFound
+	}
+	delete(s.roles, id)
+	return nil
+}
+
+func (s *MemStorage) CountAdminUsersByRoleID(roleID string) (int64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var n int64
+	for _, u := range s.adminUsers {
+		if u.RoleID == roleID {
+			n++
+		}
+	}
+	return n, nil
+}
+
+func (s *MemStorage) SaveAdminOperationLog(log *plugin.AdminOperationLog) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if log.ID == "" {
+		log.ID = uuid.NewString()
+	}
+	if log.CreatedAt.IsZero() {
+		log.CreatedAt = time.Now()
+	}
+	stored := *log
+	s.adminOpLogs = append(s.adminOpLogs, &stored)
+	return nil
+}
+
+// ListAdminOperationLogs 操作日志分页：时间倒序（最近优先）
+func (s *MemStorage) ListAdminOperationLogs(filter plugin.AdminOpLogFilter, page, size int) ([]*plugin.AdminOperationLog, int64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var matched []*plugin.AdminOperationLog
+	for _, l := range s.adminOpLogs {
+		if filter.UserID != "" && l.UserID != filter.UserID {
+			continue
+		}
+		matched = append(matched, l)
+	}
+	page, size = normalizePage(page, size)
+	total := int64(len(matched))
+	out := make([]*plugin.AdminOperationLog, 0, size)
+	for i := len(matched) - 1 - (page-1)*size; i >= 0 && i >= len(matched)-page*size; i-- {
+		cp := *matched[i]
 		out = append(out, &cp)
 	}
 	return out, total, nil
