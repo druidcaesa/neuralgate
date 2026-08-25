@@ -275,6 +275,34 @@ func (s *AdminServer) scopeTenant(c *gin.Context) *string {
 	return &v
 }
 
+// OperationAudit 操作审计中间件：管理面写操作（POST/PUT/PATCH/DELETE）落库。
+// 管理面低频，同步写入换取确定性；失败仅告警不影响请求结果
+func (s *AdminServer) OperationAudit() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Next()
+		switch c.Request.Method {
+		case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		default:
+			return
+		}
+		entry := &plugin.AdminOperationLog{
+			Method:     c.Request.Method,
+			Path:       c.Request.URL.Path,
+			TargetID:   c.Param("id"),
+			StatusCode: c.Writer.Status(),
+			ClientIP:   c.ClientIP(),
+			CreatedAt:  time.Now(),
+		}
+		if claims := s.currentClaims(c); claims != nil {
+			entry.UserID = claims.Sub
+			entry.Username = claims.Name
+		}
+		if err := s.storage.SaveAdminOperationLog(entry); err != nil {
+			s.logger.Warn("操作审计落库失败", zap.String("path", entry.Path), zap.Error(err))
+		}
+	}
+}
+
 // RequireAuth 校验 X-Admin-Token（兼容 Authorization: Bearer），通过后注入 claims
 func (s *AdminServer) RequireAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {

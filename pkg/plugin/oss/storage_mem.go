@@ -789,3 +789,40 @@ func (s *MemStorage) ListAdminOperationLogs(filter plugin.AdminOpLogFilter, page
 	}
 	return out, total, nil
 }
+
+// DeleteAdminUser 删除管理后台账号（调用方负责最后一个超管守卫）
+func (s *MemStorage) DeleteAdminUser(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.adminUsers[id]; !ok {
+		return ErrNotFound
+	}
+	delete(s.adminUsers, id)
+	return nil
+}
+
+// ListAdminUsers 全量管理账号（按创建序）
+func (s *MemStorage) ListAdminUsers() ([]*plugin.AdminUser, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	all := make([]*plugin.AdminUser, 0, len(s.adminUsers))
+	for _, u := range s.adminUsers {
+		cp := *u
+		all = append(all, &cp)
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].CreatedAt.Before(all[j].CreatedAt) })
+	return all, nil
+}
+
+// CountActiveAdminUsersByRoleID 统计指定角色下的活跃账号数（最后一个超管守卫用）
+func (s *MemStorage) CountActiveAdminUsersByRoleID(roleID string) (int64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var n int64
+	for _, u := range s.adminUsers {
+		if u.RoleID == roleID && u.Status == plugin.AdminUserStatusActive {
+			n++
+		}
+	}
+	return n, nil
+}
