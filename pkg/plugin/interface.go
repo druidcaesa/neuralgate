@@ -75,6 +75,24 @@ const (
 	APIKeyStatusExpired  APIKeyStatus = "expired"
 )
 
+// AdminUser 管理后台账号（登录凭证存数据库，密码只存 bcrypt 哈希）
+type AdminUser struct {
+	ID           string          // 主键ID
+	Username     string          // 用户名（唯一）
+	PasswordHash string          // bcrypt 哈希
+	Status       AdminUserStatus // 状态：active/disabled
+	CreatedAt    time.Time       // 创建时间
+	UpdatedAt    time.Time       // 更新时间
+	LastLoginAt  *time.Time      // 最近登录时间
+}
+
+type AdminUserStatus string
+
+const (
+	AdminUserStatusActive   AdminUserStatus = "active"
+	AdminUserStatusDisabled AdminUserStatus = "disabled"
+)
+
 // AuditLog 审计日志记录
 type AuditLog struct {
 	ID                string            // 主键ID
@@ -191,6 +209,12 @@ type StoragePlugin interface {
 	IncrementAPIKeyUsage(keyID string, delta int64) error // 原子累加已用额度(并发安全)
 	ListAPIKeys(tenantID string, page, size int) ([]*APIKey, int64, error)
 	DeleteAPIKey(keyID string) error
+
+	// 管理后台账号
+	CountAdminUsers() (int64, error)
+	GetAdminUserByUsername(username string) (*AdminUser, error)
+	GetAdminUserByID(id string) (*AdminUser, error)
+	SaveAdminUser(user *AdminUser) error // UPSERT：按主键插入或全量更新
 
 	// 模型配置管理
 	GetModelConfig(modelName string) (*ModelConfig, error)

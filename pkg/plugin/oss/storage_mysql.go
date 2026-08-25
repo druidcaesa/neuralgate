@@ -16,6 +16,7 @@ package oss
 
 import (
 	"database/sql"
+	"fmt"
 
 	_ "github.com/go-sql-driver/mysql" // 注册 mysql 驱动(驱动名 "mysql")
 )
@@ -66,11 +67,11 @@ func mysqlCreateTables(db *sql.DB) error {
 			provider VARCHAR(32) NOT NULL DEFAULT '',
 			request_method VARCHAR(16) NOT NULL DEFAULT '',
 			request_path VARCHAR(255) NOT NULL DEFAULT '',
-			request_headers TEXT NOT NULL,
-			request_body TEXT NOT NULL,
+			request_headers MEDIUMTEXT NOT NULL,
+			request_body MEDIUMTEXT NOT NULL,
 			response_status INT NOT NULL DEFAULT 0,
-			response_body TEXT NOT NULL,
-			sse_chunks TEXT NOT NULL,
+			response_body MEDIUMTEXT NOT NULL,
+			sse_chunks MEDIUMTEXT NOT NULL,
 			prompt_tokens INT NOT NULL DEFAULT 0,
 			completion_tokens INT NOT NULL DEFAULT 0,
 			total_tokens INT NOT NULL DEFAULT 0,
@@ -118,10 +119,53 @@ func mysqlCreateTables(db *sql.DB) error {
 			last_checked_at BIGINT NOT NULL,
 			KEY idx_tamper_alerts_log (audit_log_id)
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+		`CREATE TABLE IF NOT EXISTS admin_users (
+			id VARCHAR(64) PRIMARY KEY,
+			username VARCHAR(64) NOT NULL UNIQUE,
+			password_hash VARCHAR(255) NOT NULL,
+			status VARCHAR(16) NOT NULL DEFAULT 'active',
+			created_at BIGINT NOT NULL,
+			updated_at BIGINT NOT NULL,
+			last_login_at BIGINT NULL
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {
 			return err
+		}
+	}
+	return ensureAuditColumnSizes(db)
+}
+
+// ensureAuditColumnSizes 存量库审计正文列从 TEXT 扩到 MEDIUMTEXT(16MB)。
+// 仅当列类型仍为 text 时 ALTER，避免每次启动对大表加锁
+func ensureAuditColumnSizes(db *sql.DB) error {
+	rows, err := db.Query(`SELECT COLUMN_NAME FROM information_schema.COLUMNS
+		WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'audit_logs' AND DATA_TYPE = 'text'`)
+	if err != nil {
+		return err
+	}
+	var cols []string
+	for rows.Next() {
+		var c string
+		if err := rows.Scan(&c); err != nil {
+			rows.Close()
+			return err
+		}
+		cols = append(cols, c)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, c := range cols {
+		switch c { // 只动本产品定义的列，防 information_schema 异常数据拼进 DDL
+		case "request_headers", "request_body", "response_body", "sse_chunks":
+		default:
+			continue
+		}
+		if _, err := db.Exec(fmt.Sprintf("ALTER TABLE audit_logs MODIFY `%s` MEDIUMTEXT NOT NULL", c)); err != nil {
+			return fmt.Errorf("widen column %s: %w", c, err)
 		}
 	}
 	return nil

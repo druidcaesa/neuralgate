@@ -26,6 +26,9 @@ type dynamicStorage struct {
 	impl plugin.StoragePlugin
 }
 
+// NewDynamicStorage 创建按 driver 分发的存储(供各版本工厂统一使用)
+func NewDynamicStorage() plugin.StoragePlugin { return &dynamicStorage{} }
+
 func (d *dynamicStorage) Init(config map[string]interface{}) error {
 	driver, _ := config["driver"].(string)
 	switch driver {
@@ -53,6 +56,18 @@ func (d *dynamicStorage) ListAPIKeys(tenantID string, page, size int) ([]*plugin
 	return d.impl.ListAPIKeys(tenantID, page, size)
 }
 func (d *dynamicStorage) DeleteAPIKey(keyID string) error { return d.impl.DeleteAPIKey(keyID) }
+func (d *dynamicStorage) CountAdminUsers() (int64, error) {
+	return d.impl.CountAdminUsers()
+}
+func (d *dynamicStorage) GetAdminUserByUsername(username string) (*plugin.AdminUser, error) {
+	return d.impl.GetAdminUserByUsername(username)
+}
+func (d *dynamicStorage) GetAdminUserByID(id string) (*plugin.AdminUser, error) {
+	return d.impl.GetAdminUserByID(id)
+}
+func (d *dynamicStorage) SaveAdminUser(user *plugin.AdminUser) error {
+	return d.impl.SaveAdminUser(user)
+}
 func (d *dynamicStorage) GetModelConfig(modelName string) (*plugin.ModelConfig, error) {
 	return d.impl.GetModelConfig(modelName)
 }

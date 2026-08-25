@@ -118,6 +118,15 @@ func sqliteCreateTables(db *sql.DB) error {
 			last_checked_at INTEGER NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_tamper_alerts_log ON audit_tamper_alerts(audit_log_id)`,
+		`CREATE TABLE IF NOT EXISTS admin_users (
+			id TEXT PRIMARY KEY,
+			username TEXT NOT NULL UNIQUE,
+			password_hash TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'active',
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			last_login_at INTEGER
+		)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {
