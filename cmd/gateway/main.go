@@ -110,7 +110,7 @@ func main() {
 
 	// 6. 初始化代理内核
 	pipeline := core.NewPipeline(storage, rateLimiter, auditor, registry)
-	proxyCore := core.NewProxyCore(pipeline, registry)
+	proxyCore := core.NewProxyCore(pipeline, registry).WithLogger(logger)
 	ipf := core.NewIPFilter(cfg.IPFilter.Mode, cfg.IPFilter.Whitelist, cfg.IPFilter.Blacklist)
 	acceptor := core.NewAcceptor(proxyCore.Handler(), ipf)
 
@@ -151,6 +151,13 @@ func main() {
 		zap.Bool("gate_enabled", gate != core.LicenseGate(core.NopGate())))
 
 	adminServer := admin.NewAdminServer(storage, logger, effectiveEdition, rateLimiter, licenseOverview)
+	// CORS 白名单（空=同源部署不发送跨域头）；首个管理员账号缺位时引导创建
+	if len(cfg.Admin.AllowedOrigins) > 0 {
+		adminServer.EnableAuth(nil, cfg.Admin.AllowedOrigins)
+	}
+	if err := admin.EnsureBootstrapAdmin(storage, logger, cfg.Admin.BootstrapPassword); err != nil {
+		logger.Fatal("初始化管理员账号失败", zap.Error(err))
+	}
 
 	// 8. 审计日志外推（audit_stream 门控）
 	exporter := factory.CreateExporter()
@@ -185,10 +192,12 @@ func main() {
 		logger.Fatal("TLS 配置加载失败", zap.Error(err))
 	}
 	proxyServer := &http.Server{
-		Addr:           cfg.Server.ProxyAddr,
-		Handler:        acceptor.Handler(),
-		ReadTimeout:    cfg.Server.ReadTimeout,
-		WriteTimeout:   cfg.Server.WriteTimeout,
+		Addr:        cfg.Server.ProxyAddr,
+		Handler:     acceptor.Handler(),
+		ReadTimeout: cfg.Server.ReadTimeout,
+		// 写超时不在 server 层设置：统一值无法兼顾长流式响应，
+		// 由 proxy handler 按请求类型经 ResponseController 设置写截止时间
+		WriteTimeout:   0,
 		IdleTimeout:    cfg.Server.IdleTimeout,
 		MaxHeaderBytes: cfg.Server.MaxHeaderBytes,
 		TLSConfig:      tlsConf, // nil 时等同普通 HTTP
@@ -196,8 +205,11 @@ func main() {
 		ConnState: func(c net.Conn, state http.ConnState) {},
 	}
 	adminHTTPServer := &http.Server{
-		Addr:    cfg.Server.AdminAddr,
-		Handler: adminServer.Router(),
+		Addr:         cfg.Server.AdminAddr,
+		Handler:      adminServer.Router(),
+		ReadTimeout:  cfg.Server.ReadTimeout,
+		WriteTimeout: cfg.Server.WriteTimeout,
+		IdleTimeout:  cfg.Server.IdleTimeout,
 	}
 
 	errCh := make(chan error, 2)
