@@ -15,6 +15,7 @@
 package admin
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -23,6 +24,7 @@ import (
 
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
 	"github.com/druidcaesa/neuralgate/pkg/plugin/oss"
+	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -65,7 +67,7 @@ func newAuthTestServer(t *testing.T) (*AdminServer, *plugin.AdminUser, string) {
 	s := NewAdminServer(oss.NewMemStorage(), nil, "oss", nil, nil)
 	s.EnableAuth(NewSessionManager(testSecret, 24*time.Hour), nil)
 	u := seedAdminUser(t, s.storage, "admin", "correct-pass", plugin.AdminUserStatusActive)
-	tok, _, err := s.sessions.Mint(u, testNow)
+	tok, _, err := s.sessions.Mint(u, nil, false, testNow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +95,7 @@ func postJSON(s *AdminServer, path, body string) *httptest.ResponseRecorder {
 func TestSessionTokenRoundTrip(t *testing.T) {
 	m := NewSessionManager(testSecret, 24*time.Hour)
 	u := &plugin.AdminUser{ID: "u1", Username: "root", PasswordHash: "$2a$10$abc", Status: plugin.AdminUserStatusActive}
-	tok, exp, err := m.Mint(u, testNow)
+	tok, exp, err := m.Mint(u, nil, false, testNow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +118,7 @@ func TestSessionTokenRoundTrip(t *testing.T) {
 func TestSessionTokenExpired(t *testing.T) {
 	m := NewSessionManager(testSecret, time.Hour)
 	u := &plugin.AdminUser{ID: "u1", Username: "root", PasswordHash: "h"}
-	tok, _, err := m.Mint(u, testNow)
+	tok, _, err := m.Mint(u, nil, false, testNow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +131,7 @@ func TestSessionTokenExpired(t *testing.T) {
 func TestSessionTokenTampered(t *testing.T) {
 	m := NewSessionManager(testSecret, 24*time.Hour)
 	u := &plugin.AdminUser{ID: "u1", Username: "root", PasswordHash: "h"}
-	tok, _, _ := m.Mint(u, testNow)
+	tok, _, _ := m.Mint(u, nil, false, testNow)
 	bad := tok[:len(tok)-3] + "xxx"
 	if _, err := m.Verify(bad, func(string) (*plugin.AdminUser, error) { return u, nil }, testNow); err == nil {
 		t.Fatal("expected tampered token rejected")
@@ -139,7 +141,7 @@ func TestSessionTokenTampered(t *testing.T) {
 func TestSessionTokenPasswordChangeInvalidates(t *testing.T) {
 	m := NewSessionManager(testSecret, 24*time.Hour)
 	u := &plugin.AdminUser{ID: "u1", Username: "root", PasswordHash: "old-hash"}
-	tok, _, _ := m.Mint(u, testNow)
+	tok, _, _ := m.Mint(u, nil, false, testNow)
 	rotated := &plugin.AdminUser{ID: "u1", Username: "root", PasswordHash: "new-hash"}
 	if _, err := m.Verify(tok, func(string) (*plugin.AdminUser, error) { return rotated, nil }, testNow); err == nil {
 		t.Fatal("old token should be invalid after password change")
@@ -149,7 +151,7 @@ func TestSessionTokenPasswordChangeInvalidates(t *testing.T) {
 func TestSessionTokenDisabledUser(t *testing.T) {
 	m := NewSessionManager(testSecret, 24*time.Hour)
 	u := &plugin.AdminUser{ID: "u1", Username: "root", PasswordHash: "h", Status: plugin.AdminUserStatusActive}
-	tok, _, _ := m.Mint(u, testNow)
+	tok, _, _ := m.Mint(u, nil, false, testNow)
 	disabled := &plugin.AdminUser{ID: "u1", Username: "root", PasswordHash: "h", Status: plugin.AdminUserStatusDisabled}
 	if _, err := m.Verify(tok, func(string) (*plugin.AdminUser, error) { return disabled, nil }, testNow); err == nil {
 		t.Fatal("disabled account should fail verification")
@@ -293,5 +295,79 @@ func TestCORSEchoesWhitelistedOriginOnly(t *testing.T) {
 		if got := rec.Header().Get("Access-Control-Allow-Origin"); got != tc.want {
 			t.Errorf("origin %q: ACAO = %q, want %q", tc.origin, got, tc.want)
 		}
+	}
+}
+
+// TestBootstrapAdminGetsSuperRole 首启账号自动挂载（或创建）超管角色
+func TestBootstrapAdminGetsSuperRole(t *testing.T) {
+	storage := oss.NewMemStorage()
+	if err := EnsureBootstrapAdmin(storage, zap.NewNop(), "password-123"); err != nil {
+		t.Fatalf("EnsureBootstrapAdmin: %v", err)
+	}
+	user, err := storage.GetAdminUserByUsername("admin")
+	if err != nil || user.RoleID == "" {
+		t.Fatalf("bootstrap 账号未挂载角色: %+v err=%v", user, err)
+	}
+	role, err := storage.GetRoleByID(user.RoleID)
+	if err != nil || !plugin.IsSuperRole(role) {
+		t.Fatalf("挂载的应为超管角色: %+v err=%v", role, err)
+	}
+}
+
+// TestLoginResponseCarriesPermissions 登录响应固化权限快照与超管标记
+func TestLoginResponseCarriesPermissions(t *testing.T) {
+	storage := oss.NewMemStorage()
+	if err := EnsureBootstrapAdmin(storage, zap.NewNop(), "password-123"); err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+	// 追加一个只读租户用户
+	readRole := &plugin.Role{Name: "只读", TenantID: "t1", Permissions: []string{plugin.PermModelRead}}
+	if err := storage.SaveRole(readRole); err != nil {
+		t.Fatal(err)
+	}
+	hash, _ := bcrypt.GenerateFromPassword([]byte("password-123"), bcrypt.MinCost)
+	if err := storage.SaveAdminUser(&plugin.AdminUser{
+		ID: "u2", Username: "viewer", PasswordHash: string(hash),
+		TenantID: "t1", RoleID: readRole.ID, Status: plugin.AdminUserStatusActive,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	s := NewAdminServer(storage, zap.NewNop(), "enterprise", oss.NewRateLimiter(oss.NewMemStorage(), 100, 100000, "token_bucket"), nil)
+
+	login := func(username string) map[string]interface{} {
+		req := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"username":"`+username+`","password":"password-123"}`))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		s.Router().ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("login %s status = %d body=%s", username, rec.Code, rec.Body.String())
+		}
+		var resp struct {
+			Data map[string]interface{} `json:"data"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatal(err)
+		}
+		return resp.Data
+	}
+
+	superData := login("admin")
+	if isSuper, _ := superData["is_super"].(bool); !isSuper {
+		t.Errorf("bootstrap 账号应标记 is_super=true: %v", superData["is_super"])
+	}
+	if perms, _ := superData["permissions"].([]interface{}); len(perms) == 0 {
+		t.Error("超管登录应携带非空 permissions")
+	}
+
+	viewerData := login("viewer")
+	if isSuper, _ := viewerData["is_super"].(bool); isSuper {
+		t.Error("只读用户不应标记 is_super")
+	}
+	if perms, _ := viewerData["permissions"].([]interface{}); len(perms) != 1 || perms[0] != plugin.PermModelRead {
+		t.Errorf("只读用户 permissions 应为 [model:read]: %v", viewerData["permissions"])
+	}
+	if tid, _ := viewerData["tenant_id"].(string); tid != "t1" {
+		t.Errorf("viewer tenant_id = %v, want t1", viewerData["tenant_id"])
 	}
 }

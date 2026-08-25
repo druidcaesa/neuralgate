@@ -46,12 +46,16 @@ const (
 // ===== 会话签发与校验 =====
 
 // sessionClaims 会话载荷；PwdDigest 绑定当前口令哈希摘要，
-// 使改密/禁用在下一次请求即生效（无需等待过期）
+// 使改密/禁用在下一次请求即生效（无需等待过期）。
+// 权限快照登录时固化：角色权限变更后须重新登录才生效（与改密失效机制对等）
 type sessionClaims struct {
-	Sub       string `json:"sub"`
-	Name      string `json:"name"`
-	PwdDigest string `json:"pwd"`
-	Exp       int64  `json:"exp"`
+	Sub         string   `json:"sub"`
+	Name        string   `json:"name"`
+	PwdDigest   string   `json:"pwd"`
+	Exp         int64    `json:"exp"`
+	TenantID    string   `json:"tid,omitempty"`
+	Permissions []string `json:"perm,omitempty"`
+	IsSuper     bool     `json:"su,omitempty"`
 }
 
 // SessionManager HMAC-SHA256 签名会话：secret 仅存内存，重启后全部会话失效（需重新登录）
@@ -70,12 +74,13 @@ func NewSessionManager(secret []byte, ttl time.Duration) *SessionManager {
 
 var b64 = base64.RawURLEncoding
 
-// Mint 为账号签发会话 token（now 由调用方注入便于测试）
-func (m *SessionManager) Mint(user *plugin.AdminUser, now time.Time) (string, time.Time, error) {
+// Mint 为账号签发会话 token；perms/isSuper 为登录时的权限快照（now 由调用方注入便于测试）
+func (m *SessionManager) Mint(user *plugin.AdminUser, perms []string, isSuper bool, now time.Time) (string, time.Time, error) {
 	exp := now.Add(m.ttl)
 	payload, err := json.Marshal(sessionClaims{
 		Sub: user.ID, Name: user.Username,
 		PwdDigest: pwdDigest(user.PasswordHash), Exp: exp.Unix(),
+		TenantID: user.TenantID, Permissions: perms, IsSuper: isSuper,
 	})
 	if err != nil {
 		return "", time.Time{}, err
@@ -305,7 +310,16 @@ func (s *AdminServer) handleLogin(c *gin.Context) {
 		return
 	}
 	s.loginGuard.Reset(guardKey)
-	token, exp, err := s.sessions.Mint(user, time.Now())
+	// 权限快照：登录时解析角色并固化进会话
+	perms := []string{}
+	isSuper := false
+	if user.RoleID != "" {
+		if role, rerr := s.storage.GetRoleByID(user.RoleID); rerr == nil && role != nil {
+			perms = role.Permissions
+			isSuper = plugin.IsSuperRole(role)
+		}
+	}
+	token, exp, err := s.sessions.Mint(user, perms, isSuper, time.Now())
 	if err != nil {
 		Error(c, http.StatusInternalServerError, http.StatusInternalServerError, "failed to issue token")
 		return
@@ -314,7 +328,11 @@ func (s *AdminServer) handleLogin(c *gin.Context) {
 	user.LastLoginAt = ptrTime(time.Now())
 	user.UpdatedAt = time.Now()
 	_ = s.storage.SaveAdminUser(user)
-	OK(c, gin.H{"token": token, "expires_at": exp.UTC().Format(time.RFC3339), "username": user.Username})
+	OK(c, gin.H{
+		"token": token, "expires_at": exp.UTC().Format(time.RFC3339),
+		"username": user.Username, "tenant_id": user.TenantID,
+		"permissions": perms, "is_super": isSuper,
+	})
 }
 
 // changePasswordRequest PUT /api/auth/password 请求体
@@ -394,6 +412,24 @@ func EnsureBootstrapAdmin(storage plugin.StoragePlugin, logger *zap.Logger, boot
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
+	// 挂载超管角色（不存在则创建），保证首启账号拥有全部权限
+	superID := ""
+	roles, rerr := storage.ListRoles()
+	if rerr == nil {
+		for _, r := range roles {
+			if plugin.IsSuperRole(r) {
+				superID = r.ID
+				break
+			}
+		}
+	}
+	if superID == "" {
+		role := &plugin.Role{Name: plugin.SuperRoleName, Permissions: plugin.AllPermissions}
+		if serr := storage.SaveRole(role); serr == nil {
+			superID = role.ID
+		}
+	}
+	user.RoleID = superID
 	if err := storage.SaveAdminUser(user); err != nil {
 		return err
 	}
