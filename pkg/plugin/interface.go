@@ -282,6 +282,7 @@ type StoragePlugin interface {
 	GetAdminUserByUsername(username string) (*AdminUser, error)
 	GetAdminUserByID(id string) (*AdminUser, error)
 	SaveAdminUser(user *AdminUser) error // UPSERT：按主键插入或全量更新
+	DeleteAdminUser(id string) error     // 物理删除（调用方负责最后一个超管守卫）
 
 	// 模型配置管理
 	GetModelConfig(modelName string) (*ModelConfig, error)
@@ -328,6 +329,8 @@ type StoragePlugin interface {
 	CountAdminUsersByRoleID(roleID string) (int64, error)
 	SaveAdminOperationLog(log *AdminOperationLog) error
 	ListAdminOperationLogs(filter AdminOpLogFilter, page, size int) ([]*AdminOperationLog, int64, error)
+	ListAdminUsers() ([]*AdminUser, error)
+	CountActiveAdminUsersByRoleID(roleID string) (int64, error)
 
 	// 上游管理（负载均衡）
 	ListUpstreams(modelConfigID string) ([]*Upstream, error)

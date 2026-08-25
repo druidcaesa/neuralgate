@@ -68,6 +68,9 @@ func (d *dynamicStorage) GetAdminUserByID(id string) (*plugin.AdminUser, error) 
 func (d *dynamicStorage) SaveAdminUser(user *plugin.AdminUser) error {
 	return d.impl.SaveAdminUser(user)
 }
+func (d *dynamicStorage) DeleteAdminUser(id string) error {
+	return d.impl.DeleteAdminUser(id)
+}
 func (d *dynamicStorage) GetModelConfig(modelName string) (*plugin.ModelConfig, error) {
 	return d.impl.GetModelConfig(modelName)
 }
@@ -202,4 +205,10 @@ func (d *dynamicStorage) SaveAdminOperationLog(log *plugin.AdminOperationLog) er
 }
 func (d *dynamicStorage) ListAdminOperationLogs(filter plugin.AdminOpLogFilter, page, size int) ([]*plugin.AdminOperationLog, int64, error) {
 	return d.impl.ListAdminOperationLogs(filter, page, size)
+}
+func (d *dynamicStorage) ListAdminUsers() ([]*plugin.AdminUser, error) {
+	return d.impl.ListAdminUsers()
+}
+func (d *dynamicStorage) CountActiveAdminUsersByRoleID(roleID string) (int64, error) {
+	return d.impl.CountActiveAdminUsersByRoleID(roleID)
 }

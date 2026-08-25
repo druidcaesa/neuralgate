@@ -332,6 +332,18 @@ func (s *SQLStorage) SaveAdminUser(user *plugin.AdminUser) error {
 	return err
 }
 
+// DeleteAdminUser 物理删除管理后台账号（调用方负责最后一个超管守卫）
+func (s *SQLStorage) DeleteAdminUser(id string) error {
+	res, err := s.db.Exec("DELETE FROM admin_users WHERE id = ?", id)
+	if err != nil {
+		return fmt.Errorf("delete admin user: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // ===== 模型配置管理 =====
 
 const modelConfigCols = "id, model_name, provider, provider_model, base_url, api_key, encrypted, timeout, max_retries, retry_interval, weight, enabled, tags, created_at, updated_at"
@@ -1284,4 +1296,31 @@ func seedRBAC(db *sql.DB) error {
 		return fmt.Errorf("backfill admin role: %w", err)
 	}
 	return nil
+}
+
+// ListAdminUsers 全量管理账号（按创建序）
+func (s *SQLStorage) ListAdminUsers() ([]*plugin.AdminUser, error) {
+	rows, err := s.db.Query("SELECT " + adminUserCols + " FROM admin_users ORDER BY created_at ASC, id ASC")
+	if err != nil {
+		return nil, fmt.Errorf("list admin users: %w", err)
+	}
+	defer rows.Close()
+	var users []*plugin.AdminUser
+	for rows.Next() {
+		u, err := scanAdminUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		users = append(users, u)
+	}
+	return users, rows.Err()
+}
+
+// CountActiveAdminUsersByRoleID 统计指定角色下的活跃账号数（最后一个超管守卫用）
+func (s *SQLStorage) CountActiveAdminUsersByRoleID(roleID string) (int64, error) {
+	var total int64
+	err := s.db.QueryRow(
+		"SELECT COUNT(*) FROM admin_users WHERE role_id = ? AND status = ?", roleID, string(plugin.AdminUserStatusActive),
+	).Scan(&total)
+	return total, err
 }

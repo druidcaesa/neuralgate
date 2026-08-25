@@ -33,6 +33,7 @@ func (s *AdminServer) registerRoutes(r *gin.Engine) {
 
 	authz := api.Group("")
 	authz.Use(s.RequireAuth())
+	authz.Use(s.OperationAudit())
 	{
 		authz.GET("/ping", func(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"message": "pong"})
