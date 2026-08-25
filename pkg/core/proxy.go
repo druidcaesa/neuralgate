@@ -29,17 +29,35 @@ import (
 
 	"github.com/druidcaesa/neuralgate/pkg/adapter"
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
+	"go.uber.org/zap"
+)
+
+// 写截止策略：server 层不设统一写超时（无法兼顾长流式），
+// 非流式按 上游超时+余量 设定，流式按分片间空闲滚动设定
+const (
+	minResponseWriteDeadline = 30 * time.Second // 非流式写截止下限
+	responseWriteGrace       = 10 * time.Second // 非流式在上游超时外追加的余量
+	streamIdleWriteDeadline  = 60 * time.Second // 流式相邻分片间允许的最大空闲
 )
 
 // ProxyCore 代理内核层：端点分类 → 本地响应或核心代理转发
 type ProxyCore struct {
 	pipeline *Pipeline
 	registry *adapter.AdapterRegistry
+	logger   *zap.Logger // 审计链路失败等静默路径的记录器（默认 Nop）
 }
 
 // NewProxyCore 创建代理内核
 func NewProxyCore(pipeline *Pipeline, registry *adapter.AdapterRegistry) *ProxyCore {
-	return &ProxyCore{pipeline: pipeline, registry: registry}
+	return &ProxyCore{pipeline: pipeline, registry: registry, logger: zap.NewNop()}
+}
+
+// WithLogger 注入日志器（生产装配调用；nil 忽略）
+func (p *ProxyCore) WithLogger(l *zap.Logger) *ProxyCore {
+	if l != nil {
+		p.logger = l
+	}
+	return p
 }
 
 // Handler 返回经管道包装的代理入口
@@ -157,7 +175,7 @@ func (p *ProxyCore) handleProxy(w http.ResponseWriter, r *http.Request, rc *Requ
 	// 0. 审计:请求开始(携带基础元数据)
 	rc.IsStream = isStreamRequest(r)
 	if p.pipeline.auditor != nil {
-		_ = p.pipeline.auditor.Submit(&plugin.AuditEvent{
+		if err := p.pipeline.auditor.Submit(&plugin.AuditEvent{
 			RequestID: rc.RequestID,
 			EventType: plugin.AuditEventRequestStart,
 			Timestamp: rc.StartTime,
@@ -170,7 +188,9 @@ func (p *ProxyCore) handleProxy(w http.ResponseWriter, r *http.Request, rc *Requ
 				ClientIP: rc.ClientIP, IsStream: rc.IsStream,
 				CreatedAt: rc.StartTime,
 			},
-		})
+		}); err != nil {
+			p.logger.Warn("审计事件投递失败", zap.String("request_id", rc.RequestID), zap.Error(err))
+		}
 	}
 
 	// 1. 构造上游请求
@@ -239,13 +259,24 @@ func (p *ProxyCore) handleProxy(w http.ResponseWriter, r *http.Request, rc *Requ
 	p.updateQuota(rc)
 	p.recordTokens(rc)
 
-	// 写回客户端(透传上游响应头)
+	// 写回客户端(透传上游响应头)；先按请求设定写截止，防止慢客户端长期占住连接
+	p.setNonStreamWriteDeadline(w, cfg)
 	copyResponseHeaders(w.Header(), resp.Header)
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(body)
 	rc.EndTime = time.Now()
 	p.finalizeAudit(rc, prompt, completion, total)
+}
+
+// setNonStreamWriteDeadline 非流式响应写截止 = max(下限, 上游超时+余量)。
+// ResponseController 不支持时(如测试 Recorder)静默忽略
+func (p *ProxyCore) setNonStreamWriteDeadline(w http.ResponseWriter, cfg *plugin.ModelConfig) {
+	deadline := minResponseWriteDeadline
+	if cfg != nil && cfg.Timeout+responseWriteGrace > deadline {
+		deadline = cfg.Timeout + responseWriteGrace
+	}
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(deadline))
 }
 
 // isStreamRequest 判断流式请求(请求体 stream=true 或 Accept: text/event-stream)
@@ -269,10 +300,13 @@ func (p *ProxyCore) handleStreaming(w http.ResponseWriter, r *http.Request, rc *
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	// 解除继承的整请求写截止：流式时长不受限，
+	// 由分片间滚动写截止(空闲上限)与客户端断开共同约束
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
 
 	done := make(chan struct{})
 	defer close(done)
-	disconnect := NewDisconnectHandler(p.pipeline.auditor)
+	disconnect := NewDisconnectHandler(p.pipeline.auditor).WithLogger(p.logger)
 	go disconnect.Watch(r.Context(), rc.RequestID, done, rc)
 
 	scanner := bufio.NewScanner(upstreamResp.Body)
@@ -298,7 +332,9 @@ func (p *ProxyCore) handleStreaming(w http.ResponseWriter, r *http.Request, rc *
 				}
 				rc.SSEChunks = append(rc.SSEChunks, chunk)
 				if p.pipeline.auditor != nil {
-					_ = p.pipeline.auditor.SubmitSSEChunk(rc.RequestID, &chunk)
+					if err := p.pipeline.auditor.SubmitSSEChunk(rc.RequestID, &chunk); err != nil {
+						p.logger.Warn("审计分片投递失败", zap.String("request_id", rc.RequestID), zap.Error(err))
+					}
 				}
 				// 解析 usage(末尾含 usage 分片 total>0 时生效;[DONE] 解析为 0 自动跳过)
 				if prompt, completion, total := adpt.ParseStreamUsage([]byte(payload)); total > 0 {
@@ -307,18 +343,22 @@ func (p *ProxyCore) handleStreaming(w http.ResponseWriter, r *http.Request, rc *
 			}
 		}
 		if f, ok := w.(http.Flusher); ok {
+			// 滚动写截止：活跃流不受总时长限制，分片间空闲超上限即回收连接
+			_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(streamIdleWriteDeadline))
 			f.Flush()
 		}
 	}
 	// 上游读取错误或单行超长(ErrTooLong):先标记断连落库(Disconnected=true),再 Finalize 防重复
 	if err := scanner.Err(); err != nil && p.pipeline.auditor != nil {
-		_ = p.pipeline.auditor.MarkDisconnect(rc.RequestID, "upstream read error: "+err.Error(), &plugin.AuditMeta{
+		if mErr := p.pipeline.auditor.MarkDisconnect(rc.RequestID, "upstream read error: "+err.Error(), &plugin.AuditMeta{
 			ResponseStatus:   rc.ResponseStatus,
 			PromptTokens:     rc.PromptTokens,
 			CompletionTokens: rc.CompletionTokens,
 			TotalTokens:      rc.TotalTokens,
 			Duration:         time.Since(rc.StartTime).Milliseconds(),
-		})
+		}); mErr != nil {
+			p.logger.Warn("审计断连标记失败", zap.String("request_id", rc.RequestID), zap.Error(mErr))
+		}
 	}
 	rc.EndTime = time.Now()
 	p.updateQuota(rc)
@@ -454,14 +494,16 @@ func (p *ProxyCore) finalizeAudit(rc *RequestContext, prompt, completion, total 
 	if p.pipeline.auditor == nil {
 		return
 	}
-	_ = p.pipeline.auditor.Finalize(rc.RequestID, &plugin.AuditMeta{
+	if err := p.pipeline.auditor.Finalize(rc.RequestID, &plugin.AuditMeta{
 		ResponseStatus:   rc.ResponseStatus,
 		ResponseBody:     string(rc.ResponseBody),
 		PromptTokens:     prompt,
 		CompletionTokens: completion,
 		TotalTokens:      total,
 		Duration:         rc.EndTime.Sub(rc.StartTime).Milliseconds(),
-	})
+	}); err != nil {
+		p.logger.Error("审计日志落库失败", zap.String("request_id", rc.RequestID), zap.Error(err))
+	}
 }
 
 // recordTokens 请求完成后回补限流器 TPM 计数(model 维度)
@@ -512,7 +554,7 @@ func (p *ProxyCore) handlePassThrough(w http.ResponseWriter, r *http.Request, rc
 	}
 	// 0. 审计:请求开始(携带基础元数据;透传不解析 body 外的语义,model/provider 取自路由配置)
 	if p.pipeline.auditor != nil {
-		_ = p.pipeline.auditor.Submit(&plugin.AuditEvent{
+		if err := p.pipeline.auditor.Submit(&plugin.AuditEvent{
 			RequestID: rc.RequestID,
 			EventType: plugin.AuditEventRequestStart,
 			Timestamp: rc.StartTime,
@@ -524,7 +566,9 @@ func (p *ProxyCore) handlePassThrough(w http.ResponseWriter, r *http.Request, rc
 				RequestHeaders: rc.RequestHeaders, RequestBody: string(body),
 				ClientIP: rc.ClientIP, CreatedAt: rc.StartTime,
 			},
-		})
+		}); err != nil {
+			p.logger.Warn("审计事件投递失败", zap.String("request_id", rc.RequestID), zap.Error(err))
+		}
 	}
 	upstreamURL := strings.TrimRight(cfg.BaseURL, "/") + r.URL.Path
 	outbound, err := http.NewRequest(r.Method, upstreamURL, bytes.NewReader(body))

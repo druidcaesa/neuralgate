@@ -19,16 +19,26 @@ import (
 	"time"
 
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
+	"go.uber.org/zap"
 )
 
 // DisconnectHandler 断连检测与补全
 type DisconnectHandler struct {
 	auditor plugin.AuditPipeline
+	logger  *zap.Logger // 断连标记落库失败记录（默认 Nop）
 }
 
 // NewDisconnectHandler 创建断连处理器
 func NewDisconnectHandler(auditor plugin.AuditPipeline) *DisconnectHandler {
-	return &DisconnectHandler{auditor: auditor}
+	return &DisconnectHandler{auditor: auditor, logger: zap.NewNop()}
+}
+
+// WithLogger 注入日志器（nil 忽略）
+func (h *DisconnectHandler) WithLogger(l *zap.Logger) *DisconnectHandler {
+	if l != nil {
+		h.logger = l
+	}
+	return h
 }
 
 // Watch 监听请求取消;done 通道在流正常结束时关闭(防止正常结束误标断连)
@@ -45,7 +55,9 @@ func (h *DisconnectHandler) Watch(ctx context.Context, requestID string, done <-
 				TotalTokens:      rc.TotalTokens,
 				Duration:         time.Since(rc.StartTime).Milliseconds(),
 			}
-			_ = h.auditor.MarkDisconnect(requestID, "client_disconnected", meta)
+			if err := h.auditor.MarkDisconnect(requestID, "client_disconnected", meta); err != nil {
+				h.logger.Warn("审计断连标记失败", zap.String("request_id", requestID), zap.Error(err))
+			}
 		}
 	case <-done:
 	}
