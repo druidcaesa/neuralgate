@@ -5,15 +5,10 @@ set -euo pipefail
 #   - sparse-checkout 只影响工作树，不影响提交内容，不能用于过滤提交
 #   - 本脚本在临时分支上直接对 index 执行 git rm --cached 删除非开源路径，
 #     提交后、推送前用 git ls-tree 允许列表校验确认提交中不含任何非 OSS 路径
-# 用法: ./push-github-oss.sh "本次提交说明"
-# 示例: ./push-github-oss.sh "fix: 修复SSE流式分片丢失问题"
+# 用法: ./push-github-oss.sh（无需参数）
+# 说明: 内容以本地既有提交为准；发布提交说明自动取自当前分支最新一次提交
 
-COMMIT_MSG="$1"
-if [ -z "$COMMIT_MSG" ]; then
-  echo "用法: ./push-github-oss.sh \"提交说明\""
-  echo "示例: ./push-github-oss.sh \"fix: 修复SSE流式分片丢失问题\""
-  exit 1
-fi
+HEAD_SUBJECT=$(git log -1 --pretty=%s)
 
 # 自动获取当前分支名，推送到同名远程分支
 CURRENT_BRANCH=$(git branch --show-current)
@@ -56,7 +51,7 @@ git rm -r --cached --ignore-unmatch \
   .superpowers \
   push-github-oss.sh
 
-git commit -m "[$TIMESTAMP] $COMMIT_MSG"
+git commit -m "[${TIMESTAMP}] sync: $(git log -1 --pretty=%s)"
 
 # 推送前断言（fail-closed 允许列表校验）：HEAD 树中任何不在 OSS 允许列表内的路径
 # 都中止推送。允许列表即上方"OSS 发布包含的内容"列表；未来新增目录若未显式加入
@@ -74,4 +69,4 @@ fi
 git push git@github.com:druidcaesa/neuralgate.git  "$TEMP_BRANCH":"$CURRENT_BRANCH" --force
 
 # 清理由 EXIT trap 统一执行（回切原分支 + 删除 temp 分支），此处仅保留成功提示
-echo "GitHub OSS repo pushed to branch [$CURRENT_BRANCH]: [$TIMESTAMP] $COMMIT_MSG (Enterprise code excluded)"
+echo "GitHub OSS repo pushed to branch [$CURRENT_BRANCH]: sync from ${HEAD_SUBJECT} (Enterprise code excluded)"
