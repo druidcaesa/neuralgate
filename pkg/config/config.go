@@ -30,6 +30,7 @@ type Config struct {
 	RateLimit RateLimitConfig `yaml:"rate_limit"`
 	Export    ExportConfig    `yaml:"export"`
 	Privacy   PrivacyConfig   `yaml:"privacy"`
+	RBAC      RBACConfig      `yaml:"rbac"`
 	License   LicenseConfig   `yaml:"license"`
 	Admin     AdminConfig     `yaml:"admin"`
 	Log       LogConfig       `yaml:"log"`
@@ -40,6 +41,11 @@ type Config struct {
 // PrivacyConfig 隐私合规配置（Enterprise：需 privacy 授权）
 type PrivacyConfig struct {
 	Enabled bool `yaml:"enabled"` // 是否启用隐私防护(PII 脱敏/注入拦截)；bool 不参与 applyDefaults
+}
+
+// RBACConfig 权限体系配置（Enterprise：需 rbac 授权）
+type RBACConfig struct {
+	Enabled bool `yaml:"enabled"` // 是否启用权限体系(RBAC/租户/操作审计)；bool 不参与 applyDefaults
 }
 
 // AdminConfig 管理后台配置：bootstrap 密码仅用于首个管理员账号的种子（登录凭证存数据库），

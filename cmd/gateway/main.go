@@ -159,6 +159,14 @@ func main() {
 		logger.Fatal("初始化管理员账号失败", zap.Error(err))
 	}
 
+	// 11. 权限体系（rbac 门控；管理面行为开关，须在服务监听前注入）
+	if start, reason := shouldStartRBAC(gate, cfg.RBAC.Enabled); !start {
+		logger.Info("权限体系未启用", zap.String("reason", reason))
+	} else {
+		adminServer.EnableRBAC(true)
+		logger.Info("权限体系已启用")
+	}
+
 	// 8. 审计日志外推（audit_stream 门控）
 	exporter := factory.CreateExporter()
 	exportStarted := false
@@ -309,6 +317,17 @@ func shouldStartPrivacy(gate core.LicenseGate, enabled bool) (bool, string) {
 	}
 	if !gate.HasFeature(license.FeaturePrivacy) {
 		return false, "授权未包含 privacy 功能"
+	}
+	return true, ""
+}
+
+// shouldStartRBAC 判断权限体系启动条件（配置启用 + 授权含 rbac）；不满足给出原因
+func shouldStartRBAC(gate core.LicenseGate, enabled bool) (bool, string) {
+	if !enabled {
+		return false, "配置未启用(rbac.enabled=false)"
+	}
+	if !gate.HasFeature(license.FeatureRBAC) {
+		return false, "授权未包含 rbac 功能"
 	}
 	return true, ""
 }
