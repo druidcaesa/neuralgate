@@ -15,12 +15,13 @@
 package plugin
 
 // DefaultPrivacyRules 内置规则种子：privacy_rules 空表初始化时批量插入（oss 存储建表流程调用）。
-// PII 四条 scope=both 双向脱敏；注入六条恒 request、replacement 为空（命中即拦截）
+// PII 四条 scope=both 双向脱敏，按号码长度降序排列且加 \b 词边界，
+// 防止短模式咬住长数字串的内部片段（如手机号命中身份证中间）；注入六条恒 request、replacement 为空（命中即拦截）
 func DefaultPrivacyRules() []*PrivacyRule {
 	return []*PrivacyRule{
-		{RuleType: PrivacyRuleTypePII, Name: "手机号脱敏", Pattern: `1[3-9]\d{9}`, Replacement: "1**********", Scope: PrivacyScopeBoth, Enabled: true},
-		{RuleType: PrivacyRuleTypePII, Name: "身份证脱敏", Pattern: `\d{17}[\dXx]`, Replacement: "******************", Scope: PrivacyScopeBoth, Enabled: true},
-		{RuleType: PrivacyRuleTypePII, Name: "银行卡脱敏", Pattern: `\d{16,19}`, Replacement: "****-****-****-****", Scope: PrivacyScopeBoth, Enabled: true},
+		{RuleType: PrivacyRuleTypePII, Name: "身份证脱敏", Pattern: `\b\d{17}[\dXx]\b`, Replacement: "******************", Scope: PrivacyScopeBoth, Enabled: true},
+		{RuleType: PrivacyRuleTypePII, Name: "银行卡脱敏", Pattern: `\b\d{16,19}\b`, Replacement: "****-****-****-****", Scope: PrivacyScopeBoth, Enabled: true},
+		{RuleType: PrivacyRuleTypePII, Name: "手机号脱敏", Pattern: `\b1[3-9]\d{9}\b`, Replacement: "1**********", Scope: PrivacyScopeBoth, Enabled: true},
 		{RuleType: PrivacyRuleTypePII, Name: "邮箱脱敏", Pattern: `[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}`, Replacement: "***@***.***", Scope: PrivacyScopeBoth, Enabled: true},
 		{RuleType: PrivacyRuleTypeInjection, Name: "忽略指令(中)", Pattern: `忽略(以上|之前|上面)(的)?(所有)?(指令|提示|设定)`, Scope: PrivacyScopeRequest, Enabled: true},
 		{RuleType: PrivacyRuleTypeInjection, Name: "忽略指令(英)", Pattern: `(?i)ignore\s+(all\s+)?(previous|prior|above)\s+(instructions|prompts|rules)`, Scope: PrivacyScopeRequest, Enabled: true},
