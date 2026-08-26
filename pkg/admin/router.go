@@ -81,6 +81,14 @@ func (s *AdminServer) registerRoutes(r *gin.Engine) {
 		authz.GET("/compliance-reports/:id", s.RequirePermission(plugin.PermSystemRead), s.getComplianceReport)
 		authz.POST("/compliance-reports/generate", s.RequirePermission(plugin.PermSystemWrite), s.generateComplianceReport)
 
+		// MCP 上游管理与工具调用审计(E7)：全局域数据，租户内用户一律 403
+		authz.GET("/mcp-servers", s.RequirePermission(plugin.PermSystemRead), s.listMCPServers)
+		authz.POST("/mcp-servers", s.RequirePermission(plugin.PermSystemWrite), s.createMCPServer)
+		authz.PUT("/mcp-servers/:id", s.RequirePermission(plugin.PermSystemWrite), s.updateMCPServer)
+		authz.DELETE("/mcp-servers/:id", s.RequirePermission(plugin.PermSystemWrite), s.deleteMCPServer)
+		authz.GET("/mcp-audit-logs", s.RequirePermission(plugin.PermSystemRead), s.listMCPAuditLogs)
+		authz.GET("/mcp-audit-logs/:id", s.RequirePermission(plugin.PermSystemRead), s.getMCPAuditLog)
+
 		// 限流配置管理
 		authz.POST("/rate-limits", s.RequirePermission(plugin.PermRateLimitWrite), s.createRateLimit)
 		authz.GET("/rate-limits", s.RequirePermission(plugin.PermRateLimitRead), s.listRateLimits)

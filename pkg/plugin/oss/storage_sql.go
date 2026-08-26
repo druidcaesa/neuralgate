@@ -1590,6 +1590,12 @@ func (s *SQLStorage) SaveMCPAuditLog(entry *plugin.MCPAuditLog) error {
 	return nil
 }
 
+// GetMCPAuditLog 按主键取单条审计记录（管理面详情）
+func (s *SQLStorage) GetMCPAuditLog(id string) (*plugin.MCPAuditLog, error) {
+	row := s.db.QueryRow("SELECT "+mcpAuditCols+" FROM mcp_audit_logs WHERE id = ?", id)
+	return scanMCPAudit(row)
+}
+
 // ListMCPAuditLogs 过滤+分页：created_at 倒序（最近优先）
 func (s *SQLStorage) ListMCPAuditLogs(filter plugin.MCPAuditLogFilter, page, size int) ([]*plugin.MCPAuditLog, int64, error) {
 	page, size = normalizePage(page, size)

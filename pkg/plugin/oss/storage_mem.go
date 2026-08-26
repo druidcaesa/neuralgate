@@ -980,6 +980,19 @@ func (s *MemStorage) SaveMCPAuditLog(entry *plugin.MCPAuditLog) error {
 	return nil
 }
 
+// GetMCPAuditLog 按主键取单条审计记录（管理面详情）
+func (s *MemStorage) GetMCPAuditLog(id string) (*plugin.MCPAuditLog, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, e := range s.mcpAuditLogs {
+		if e.ID == id {
+			cp := *e
+			return &cp, nil
+		}
+	}
+	return nil, ErrNotFound
+}
+
 // ListMCPAuditLogs 过滤+分页：created_at 倒序（最近优先）
 func (s *MemStorage) ListMCPAuditLogs(filter plugin.MCPAuditLogFilter, page, size int) ([]*plugin.MCPAuditLog, int64, error) {
 	s.mu.RLock()

@@ -447,6 +447,7 @@ type StoragePlugin interface {
 	ListMCPServers(page, size int) ([]*MCPServer, int64, error)
 	DeleteMCPServer(id string) error
 	SaveMCPAuditLog(entry *MCPAuditLog) error
+	GetMCPAuditLog(id string) (*MCPAuditLog, error)
 	ListMCPAuditLogs(filter MCPAuditLogFilter, page, size int) ([]*MCPAuditLog, int64, error)
 
 	// 健康检查
