@@ -24,17 +24,18 @@ import (
 
 // AdminServer 管理后台（Gin）：低并发短连接，提供 CRUD 接口、配置管理、日志查询、授权展示
 type AdminServer struct {
-	storage        plugin.StoragePlugin
-	rateLimiter    plugin.RateLimitPlugin
-	logger         *zap.Logger
-	engine         *gin.Engine
-	edition        string // 运行版本（授权降级后为 oss）
-	startedAt      time.Time
-	license        *LicenseOverview // 授权概要快照（nil 按 OSS 未授权处理）
-	sessions       *SessionManager  // 认证默认开启（fail-closed）；DisableAuth 仅限测试
-	loginGuard     *loginGuard
-	allowedOrigins []string // CORS 白名单（空=不发送跨域头）
-	rbacEnabled    bool     // 权限体系开关（EnableRBAC 注入，未启用恒放行）
+	storage         plugin.StoragePlugin
+	rateLimiter     plugin.RateLimitPlugin
+	logger          *zap.Logger
+	engine          *gin.Engine
+	edition         string // 运行版本（授权降级后为 oss）
+	startedAt       time.Time
+	license         *LicenseOverview // 授权概要快照（nil 按 OSS 未授权处理）
+	sessions        *SessionManager  // 认证默认开启（fail-closed）；DisableAuth 仅限测试
+	loginGuard      *loginGuard
+	allowedOrigins  []string                                                                   // CORS 白名单（空=不发送跨域头）
+	rbacEnabled     bool                                                                       // 权限体系开关（EnableRBAC 注入，未启用恒放行）
+	reportGenerator func(periodType string, start time.Time) (*plugin.ComplianceReport, error) // 合规补生成器（enterprise 装配注入，nil 时手动生成返回 503）
 }
 
 // NewAdminServer 创建管理后台；license 为启动时校验得到的授权概要（OSS 版传 nil）。
