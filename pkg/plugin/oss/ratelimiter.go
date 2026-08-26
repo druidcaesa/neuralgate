@@ -31,6 +31,7 @@ type resolvedConfig struct {
 // limitBucket 单个 (tenant|model) 的双维度限流器
 type limitBucket struct {
 	strategy string
+	lastSeen time.Time // 最近判定时间(惰性淘汰依据)
 	// token_bucket 用
 	rpsBucket *tokenBucket
 	tpmBucket *tokenBucket
@@ -47,10 +48,14 @@ type RateLimiter struct {
 	defaultStrategy string
 
 	mu      sync.Mutex
-	configs []*plugin.RateLimitConfig // 缓存(ReloadConfig 刷新)
+	visits  int                       // 惰性清扫访问计数
+	configs []*plugin.RateLimitConfig // 缓存(ReloadConfig 刷新,保留桶计数)
 	buckets map[string]*limitBucket   // key = tenant|model
 	now     func() time.Time          // 可注入(测试用),默认 time.Now
 }
+
+// bucketIdleTTL 桶空闲存活期：超过后惰性清扫删除(活跃键自动重建)
+const bucketIdleTTL = time.Hour
 
 // NewRateLimiter 创建限流器
 func NewRateLimiter(storage plugin.StoragePlugin, defaultRPS int, defaultTPM int64, defaultStrategy string) *RateLimiter {
@@ -85,7 +90,7 @@ func (l *RateLimiter) Init(config map[string]interface{}) error {
 	return l.ReloadConfig()
 }
 
-// ReloadConfig 从存储全量加载限流配置到缓存,并清空桶(下次按新配置重建)
+// ReloadConfig 从存储全量加载限流配置到缓存；既有桶计数保留(仅换阈值)
 func (l *RateLimiter) ReloadConfig() error {
 	var all []*plugin.RateLimitConfig
 	page := 1
@@ -102,7 +107,7 @@ func (l *RateLimiter) ReloadConfig() error {
 	}
 	l.mu.Lock()
 	l.configs = all
-	l.buckets = make(map[string]*limitBucket)
+	// 保留既有桶的计数只换配置：重载不再导致在途配额意外重置(C5 治理项)
 	l.mu.Unlock()
 	return nil
 }
@@ -129,15 +134,28 @@ func (l *RateLimiter) resolve(tenantID, model string) resolvedConfig {
 	return resolvedConfig{l.defaultRPS, l.defaultTPM, l.defaultStrategy}
 }
 
-// bucketFor 获取或创建 (tenant|model) 桶(调用方持锁)
+// bucketFor 获取或创建 (tenant|model) 桶(调用方持锁)。
+// 惰性淘汰：每 256 次访问全量清扫一次空闲超 1h 的桶，
+// 防止多租户/多模型长期运行下桶数量无界增长(C5 治理项)
 func (l *RateLimiter) bucketFor(tenantID, model string) *limitBucket {
+	l.visits++
+	if l.visits >= 256 {
+		l.visits = 0
+		now := l.now()
+		for k, b := range l.buckets {
+			if now.Sub(b.lastSeen) > bucketIdleTTL {
+				delete(l.buckets, k)
+			}
+		}
+	}
 	key := tenantID + "|" + model
 	if b, ok := l.buckets[key]; ok {
+		b.lastSeen = l.now()
 		return b
 	}
 	rc := l.resolve(tenantID, model)
 	now := l.now()
-	b := &limitBucket{strategy: rc.strategy}
+	b := &limitBucket{strategy: rc.strategy, lastSeen: now}
 	if rc.strategy == "sliding_window" {
 		b.rpsWindow = newSlidingWindow(int64(rc.rps), time.Second)
 		b.tpmWindow = newSlidingWindow(rc.tpm, time.Minute)

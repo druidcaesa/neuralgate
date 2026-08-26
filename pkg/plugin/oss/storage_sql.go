@@ -753,14 +753,28 @@ func (s *SQLStorage) DeleteUpstream(id string) error {
 
 // ===== 留存清理与篡改告警 =====
 
-// DeleteAuditLogsBefore 删除 cutoff 之前的审计日志，返回删除条数
+// deleteBatchSize 单批删除上限：无界单条 DELETE 会长时间持锁阻塞写入(C5 治理项)
+const deleteBatchSize = 5000
+
+// DeleteAuditLogsBefore 分批删除 cutoff 之前的审计日志，返回删除总条数。
+// 子查询定位批次(id IN SELECT ... LIMIT)，三方言通用；循环直至删净
 func (s *SQLStorage) DeleteAuditLogsBefore(cutoff time.Time) (int64, error) {
-	res, err := s.exec("DELETE FROM audit_logs WHERE created_at < ?", timeToMS(cutoff))
-	if err != nil {
-		return 0, fmt.Errorf("delete expired audit logs: %w", err)
+	cut := timeToMS(cutoff)
+	var total int64
+	for {
+		res, err := s.exec(
+			"DELETE FROM audit_logs WHERE id IN "+
+				"(SELECT id FROM audit_logs WHERE created_at < ? LIMIT ?)",
+			cut, int64(deleteBatchSize))
+		if err != nil {
+			return total, fmt.Errorf("delete expired audit logs: %w", err)
+		}
+		n, _ := res.RowsAffected()
+		total += n
+		if n < int64(deleteBatchSize) {
+			return total, nil
+		}
 	}
-	n, _ := res.RowsAffected()
-	return n, nil
 }
 
 // SaveTamperAlerts upsert 篡改告警：同一 AuditLogID 存在未处置告警则更新检查时间，否则插入
