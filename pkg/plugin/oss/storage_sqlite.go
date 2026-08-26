@@ -22,8 +22,10 @@ import (
 )
 
 // sqliteCreateTables 建 SQLite 表(与 storage_sql.go 中 CRUD 列完全对应)
-func sqliteCreateTables(db *sql.DB) error {
-	stmts := []string{
+// sqliteTableStmts 返回 SQLite 方言的全部建表/索引语句。
+// 金仓(PG 兼容)直接复用本清单；达梦经存在性检查包装后复用
+func sqliteTableStmts() []string {
+	return []string{
 		`CREATE TABLE IF NOT EXISTS api_keys (
 			id TEXT PRIMARY KEY,
 			key_hash TEXT NOT NULL UNIQUE,
@@ -224,7 +226,11 @@ func sqliteCreateTables(db *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_mcp_audit_tenant ON mcp_audit_logs(tenant_id, created_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_mcp_audit_req ON mcp_audit_logs(request_id)`,
 	}
-	for _, stmt := range stmts {
+}
+
+// sqliteCreateTables 执行 SQLite 方言建表语句
+func sqliteCreateTables(db *sql.DB) error {
+	for _, stmt := range sqliteTableStmts() {
 		if _, err := db.Exec(stmt); err != nil {
 			return err
 		}
