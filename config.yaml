@@ -39,6 +39,7 @@ export:                       # Enterprise only：审计日志外推(audit_strea
   type: siem                  # siem/syslog
   endpoint: "https://siem.example.com/api"   # syslog 形如 udp://10.0.0.1:514 或 tcp://...
   api_key: ""                 # SIEM 认证密钥(syslog 忽略)
+  topic: ""                   # Kafka 目标 topic(仅 type=kafka 使用,空=neuralgate-audit)
   batch_size: 50              # 批量大小 1-1000
   flush_interval: 10s         # 拉取/推送节奏 1-60s
 
@@ -47,6 +48,9 @@ privacy:                      # Enterprise only：数据隐私合规(privacy 门
 
 rbac:                         # Enterprise only：权限体系(rbac 门控)
   enabled: false              # 是否启用 RBAC/多租户/操作审计；默认 false，需显式开启且授权包含 rbac
+
+compliance:                   # Enterprise only：合规运维(compliance 门控)
+  enabled: false              # 是否启用合规报表调度；默认 false，需显式开启且授权包含 compliance
 
 license:                      # Enterprise only：缺失/过期/验签失败时软降级为 OSS 模式运行
   file_path: "/etc/neuralgate/license.lic"

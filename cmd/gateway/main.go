@@ -167,6 +167,9 @@ func main() {
 		logger.Info("权限体系已启用")
 	}
 
+	// 12. 合规运维（compliance 门控，接线随构建版本；报表调度 + 手动补生成注入）
+	stopCompliance := setupCompliance(gate, *cfg, storage, logger, adminServer)
+
 	// 8. 审计日志外推（audit_stream 门控）
 	exporter := factory.CreateExporter()
 	exportStarted := false
@@ -273,6 +276,9 @@ func main() {
 	if stopTamper != nil {
 		stopTamper() // 先停校验/清理任务，再落库尾部日志
 	}
+	if stopCompliance != nil {
+		stopCompliance() // 停报表调度循环，避免关闭中的存储被继续查询
+	}
 	if err := auditor.Shutdown(); err != nil {
 		logger.Warn("审计管道关闭异常", zap.Error(err))
 	} else {
@@ -329,6 +335,17 @@ func shouldStartRBAC(gate core.LicenseGate, enabled bool) (bool, string) {
 	}
 	if !gate.HasFeature(license.FeatureRBAC) {
 		return false, "授权未包含 rbac 功能"
+	}
+	return true, ""
+}
+
+// shouldStartCompliance 判断合规运维启动条件（配置启用 + 授权含 compliance）；不满足给出原因
+func shouldStartCompliance(gate core.LicenseGate, enabled bool) (bool, string) {
+	if !enabled {
+		return false, "配置未启用(compliance.enabled=false)"
+	}
+	if !gate.HasFeature(license.FeatureCompliance) {
+		return false, "授权未包含 compliance 功能"
 	}
 	return true, ""
 }

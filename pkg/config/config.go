@@ -24,18 +24,19 @@ import (
 
 // Config 系统级配置（不含模型配置，模型配置存储在数据库中）
 type Config struct {
-	Server    ServerConfig    `yaml:"server"`
-	Storage   StorageConfig   `yaml:"storage"`
-	Audit     AuditConfig     `yaml:"audit"`
-	RateLimit RateLimitConfig `yaml:"rate_limit"`
-	Export    ExportConfig    `yaml:"export"`
-	Privacy   PrivacyConfig   `yaml:"privacy"`
-	RBAC      RBACConfig      `yaml:"rbac"`
-	License   LicenseConfig   `yaml:"license"`
-	Admin     AdminConfig     `yaml:"admin"`
-	Log       LogConfig       `yaml:"log"`
-	IPFilter  IPFilterConfig  `yaml:"ip_filter"`
-	TLS       TLSConfig       `yaml:"tls"`
+	Server     ServerConfig     `yaml:"server"`
+	Storage    StorageConfig    `yaml:"storage"`
+	Audit      AuditConfig      `yaml:"audit"`
+	RateLimit  RateLimitConfig  `yaml:"rate_limit"`
+	Export     ExportConfig     `yaml:"export"`
+	Privacy    PrivacyConfig    `yaml:"privacy"`
+	RBAC       RBACConfig       `yaml:"rbac"`
+	Compliance ComplianceConfig `yaml:"compliance"`
+	License    LicenseConfig    `yaml:"license"`
+	Admin      AdminConfig      `yaml:"admin"`
+	Log        LogConfig        `yaml:"log"`
+	IPFilter   IPFilterConfig   `yaml:"ip_filter"`
+	TLS        TLSConfig        `yaml:"tls"`
 }
 
 // PrivacyConfig 隐私合规配置（Enterprise：需 privacy 授权）
@@ -46,6 +47,11 @@ type PrivacyConfig struct {
 // RBACConfig 权限体系配置（Enterprise：需 rbac 授权）
 type RBACConfig struct {
 	Enabled bool `yaml:"enabled"` // 是否启用权限体系(RBAC/租户/操作审计)；bool 不参与 applyDefaults
+}
+
+// ComplianceConfig 合规运维配置（Enterprise：需 compliance 授权）
+type ComplianceConfig struct {
+	Enabled bool `yaml:"enabled"` // 是否启用合规报表调度(日/周/月周期聚合)；bool 不参与 applyDefaults
 }
 
 // AdminConfig 管理后台配置：bootstrap 密码仅用于首个管理员账号的种子（登录凭证存数据库），

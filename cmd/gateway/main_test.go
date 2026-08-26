@@ -93,3 +93,21 @@ func TestShouldStartRBAC(t *testing.T) {
 		t.Error("仅含其他功能不应启动")
 	}
 }
+
+func TestShouldStartCompliance(t *testing.T) {
+	if ok, reason := shouldStartCompliance(core.NopGate(), false); ok || reason == "" {
+		t.Errorf("未启用应不启动且给出原因: ok=%v reason=%q", ok, reason)
+	}
+	ok, reason := shouldStartCompliance(core.NopGate(), true)
+	if ok || reason != "授权未包含 compliance 功能" {
+		t.Errorf("NopGate 应因缺 feature 不启动: ok=%v reason=%q", ok, reason)
+	}
+	licensed := featureGate{license.FeatureCompliance: true}
+	if ok, _ := shouldStartCompliance(licensed, true); !ok {
+		t.Error("启用且授权含 compliance 应启动")
+	}
+	other := featureGate{license.FeaturePrivacy: true}
+	if ok, _ := shouldStartCompliance(other, true); ok {
+		t.Error("仅含其他功能不应启动")
+	}
+}
