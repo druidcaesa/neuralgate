@@ -254,3 +254,6 @@ func (d *dynamicStorage) SaveMCPAuditLog(entry *plugin.MCPAuditLog) error {
 func (d *dynamicStorage) ListMCPAuditLogs(filter plugin.MCPAuditLogFilter, page, size int) ([]*plugin.MCPAuditLog, int64, error) {
 	return d.impl.ListMCPAuditLogs(filter, page, size)
 }
+func (d *dynamicStorage) GetMCPAuditLog(id string) (*plugin.MCPAuditLog, error) {
+	return d.impl.GetMCPAuditLog(id)
+}
