@@ -92,6 +92,13 @@ type MCPAuditLogFilter struct {
 	EndTime   *time.Time
 }
 
+// MCPAuditHook 工具调用审计旁路钩子：中继在每次 tools/call 出结果时回调一次。
+// OSS 版恒 nil（通道可用无审计，零开销直通）；enterprise 实现负责落库与失败告警。
+// 契约：实现不得 panic、不得长时间阻塞（同步调用点在响应路径上）
+type MCPAuditHook interface {
+	OnToolCall(entry *MCPAuditLog)
+}
+
 // APIKey 租户API Key
 type APIKey struct {
 	ID            string       // 主键ID

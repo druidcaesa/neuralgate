@@ -16,6 +16,7 @@ package core
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/druidcaesa/neuralgate/pkg/adapter"
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
@@ -31,6 +32,7 @@ type Pipeline struct {
 	auditor     plugin.AuditPipeline
 	registry    *adapter.AdapterRegistry
 	middlewares []Middleware
+	mcpRelay    http.Handler // MCP 中继(nil=未启用,/v1/mcp 路径走原链零变化)
 }
 
 // NewPipeline 创建管道
@@ -59,13 +61,39 @@ func (p *Pipeline) Apply(handler http.Handler) http.Handler {
 	return h
 }
 
-// fixedChain 固定顺序中间件链（不可调换）：鉴权 → 路由匹配 → 限流
-// 路由在前使限流可获取模型名（模型级限流），且 404/403 不消耗限流配额
+// SetMCPRelay 挂载 MCP 中继；main 装配阶段调用一次，nil 恢复直通
+func (p *Pipeline) SetMCPRelay(h http.Handler) { p.mcpRelay = h }
+
+// fixedChain 固定顺序中间件链（不可调换）：鉴权 → MCP 分支 → 路由匹配 → 限流
+// MCP 前缀在路由匹配前分流：模型路由与限流的模型维度对 MCP 无意义，
+// 中继内部自带 api_key 维度限流与独立错误形状
 func (p *Pipeline) fixedChain() []Middleware {
 	return []Middleware{
 		AuthMiddleware(p.storage),
+		p.mcpBranch(),
 		RouteMatchMiddleware(p.storage, p.registry),
 		RateLimitMiddleware(p.rateLimiter),
+	}
+}
+
+// mcpBranch /v1/mcp/servers/ 前缀请求短路进中继并施加 api_key 维度限流；
+// relay 未挂载时恒放行（OSS 未装配/零行为变化）
+func (p *Pipeline) mcpBranch() Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if p.mcpRelay != nil && strings.HasPrefix(r.URL.Path, MCPPathPrefix) {
+				if rc, ok := RequestContextFrom(r.Context()); ok && rc != nil && p.rateLimiter != nil {
+					allowed, _, err := p.rateLimiter.Allow(rc.TenantID, "", 0)
+					if err != nil || !allowed {
+						writeOpenAIError(w, http.StatusTooManyRequests, "rate_limit_exceeded", "rate_limit_exceeded", "rate limit exceeded")
+						return
+					}
+				}
+				p.mcpRelay.ServeHTTP(w, r)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
 	}
 }
 
