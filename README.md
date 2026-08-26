@@ -30,6 +30,8 @@ NeuralGate 是一个轻量、高性能、可商业化的私有化 AI 模型网�
 - **OpenAI SDK 零改动兼容** — 用户只需将 `OPENAI_BASE_URL` 指向网关地址，原有代码零修改即可使用
 - **多模型统一接入** — 支持 OpenAI、通义千问、智谱、DeepSeek 等模型供应商，统一 API Key 管理
 - **SSE 流式审计** — 环形队列异步落库，断连自动补全，分片不丢失
+- **MCP 智能体网关** — MCP 协议中继透传；企业版提供工具调用参数/结果全链路审计与异常告警
+- **内容安全双防** — 请求侧 PII 脱敏与 Prompt 注入拦截，响应侧输出内容风控可配置阻断
 - **信创全兼容** — 麒麟/统信 OS + 飞腾/鲲鹏 CPU + 达梦/人大金仓数据库
 - **单二进制部署** — 零外部依赖（除数据库外），支持 Docker/裸机/systemd
 - **Open-Core 架构** — 开源内核 + 商业插件，一套源码两套产物
@@ -48,8 +50,8 @@ NeuralGate 采用 Open-Core 模式，通过 Go BuildTag 条件编译，一套源
 | API Key 管理 | ✅ | ✅ |
 | 限流管理 | ✅ 内存令牌桶 | ✅ Redis 分布式限流（可降级内存） |
 | SSE 流式审计 | ✅ 同步元数据 | ✅ 异步流式 + SHA256 存证 |
-| 日志防篡改 | — | ✅ SHA256 + 独立审计权限 |
-| 隐私安全 | — | ✅ PII 动态脱敏 |
+| 日志防篡改 | — | ✅ SHA256/SM3 国密可选 + 独立审计权限 |
+| 隐私安全 | — | ✅ PII 动态脱敏 + Prompt 注入拦截 + 输出内容风控 |
 | 权限体系 | ✅ 超级管理员 | ✅ RBAC 多租户 |
 | 合规运维 | — | ✅ SIEM/Syslog/Kafka 外推 |
 | MCP 审计 | — | ✅ 工具调用全链路审计 |
@@ -184,6 +186,13 @@ storage:
   # 可选值: mysql(默认) / sqlite / dm(Enterprise) / kingbase(Enterprise)
   driver: mysql
 
+  # 必填！上游 API Key 的加密密钥，缺失时启动失败
+  # 生成方式: openssl rand -hex 32
+  encrypt_key: ""
+
+  # 环境变量覆盖(优先于本文件): NEURALGATE_PROXY_ADDR / NEURALGATE_ADMIN_ADDR /
+  # NEURALGATE_STORAGE_DSN / NEURALGATE_LOG_LEVEL / NEURALGATE_ADMIN_BOOTSTRAP_PASSWORD
+
   # ----- MySQL (默认，OSS+Enterprise 均可用) -----
   dsn: "user:pass@tcp(host:3306)/neuralgate?charset=utf8mb4"
 
@@ -214,12 +223,20 @@ rate_limit:
   strategy: token_bucket
   default_rps: 10
   default_tpm: 100000
+  # distributed:              # Enterprise: 多实例 Redis 集中计数
+  #   enabled: true
+  #   redis_addr: "127.0.0.1:6379"
 
 log:
   level: info
   format: json
-  output: stdout
+  output: stdout            # 也可为文件路径(自动按 200MB×7 轮转)
 ```
+
+> **安全提示**：`encrypt_key` 自本版本起必须显式配置（已移除内置默认值），
+> 升级部署时请在配置文件中补充该字段，否则网关将拒绝启动。
+>
+> **运维端点**：代理端口暴露 `/metrics`（Prometheus 文本格式，免鉴权）供采集。
 
 > **模型配置不在 config.yaml 中**。模型通过管理后台页面（:8081）CRUD 管理，存储在数据库中，支持热更新——增删改模型后立即生效，无需重启。
 

@@ -30,6 +30,8 @@ NeuralGate is a lightweight, high-performance, commercially viable private AI mo
 - **Zero-Change OpenAI SDK Compatibility** — Point `OPENAI_BASE_URL` at the gateway; existing code works without modification
 - **Multi-Model Unified Access** — Supports OpenAI, Tongyi Qwen, Zhipu, DeepSeek and more, with unified API Key management
 - **SSE Streaming Audit** — Ring buffer async persistence, auto-completion on disconnect, zero fragment loss
+- **MCP Agent Gateway** — MCP protocol relay passthrough; Enterprise adds full-chain tool-call audit (arguments/results) with anomaly alerting
+- **Dual-side Content Safety** — Request-side PII masking & prompt-injection blocking; response-side output content moderation with configurable blocking
 - **Full Xinchuang Compatibility** — Kylin/UOS OS + Phytiron/Kunpeng CPU + DM/Kingbase database
 - **Single Binary Deployment** — Zero external dependencies (except database); supports Docker/bare metal/systemd
 - **Open-Core Architecture** — Open-source core + commercial plugins; one source, two build outputs
@@ -48,8 +50,8 @@ NeuralGate uses an Open-Core model with Go BuildTag conditional compilation — 
 | API Key management | ✅ | ✅ |
 | Rate limiting | ✅ In-memory token bucket | ✅ Redis distributed (with in-memory fallback) |
 | SSE streaming audit | ✅ Sync metadata | ✅ Async streaming + SHA256 evidence |
-| Log tamper protection | — | ✅ SHA256 + independent audit permissions |
-| Privacy (PII masking) | — | ✅ Dynamic PII redaction |
+| Log tamper protection | — | ✅ SHA256 / SM3 (Chinese national cipher) optional + independent audit permissions |
+| Privacy & content safety | — | ✅ PII masking + prompt-injection blocking + output content moderation |
 | Permission system | ✅ Super admin | ✅ RBAC multi-tenant |
 | Compliance operations | — | ✅ SIEM/Syslog/Kafka export |
 | MCP audit | — | ✅ Full tool-call chain audit |
@@ -184,6 +186,14 @@ storage:
   # Options: mysql(default) / sqlite / dm(Enterprise) / kingbase(Enterprise)
   driver: mysql
 
+  # REQUIRED! Encryption key for upstream API keys; startup fails when missing.
+  # Generate with: openssl rand -hex 32
+  encrypt_key: ""
+
+  # Env overrides (take precedence over this file): NEURALGATE_PROXY_ADDR /
+  # NEURALGATE_ADMIN_ADDR / NEURALGATE_STORAGE_DSN / NEURALGATE_LOG_LEVEL /
+  # NEURALGATE_ADMIN_BOOTSTRAP_PASSWORD
+
   # ----- MySQL (default, OSS+Enterprise) -----
   dsn: "user:pass@tcp(host:3306)/neuralgate?charset=utf8mb4"
 
@@ -214,12 +224,22 @@ rate_limit:
   strategy: token_bucket
   default_rps: 10
   default_tpm: 100000
+  # distributed:              # Enterprise: Redis-backed counting across instances
+  #   enabled: true
+  #   redis_addr: "127.0.0.1:6379"
 
 log:
   level: info
   format: json
-  output: stdout
+  output: stdout            # or a file path (auto-rotated at 200MB, keep 7)
 ```
+
+> **Security notice**: `encrypt_key` is mandatory as of this release (built-in
+> default removed). Add it to your config before upgrading, otherwise the
+> gateway refuses to start.
+>
+> **Ops endpoint**: the proxy port serves `/metrics` (Prometheus text format,
+> unauthenticated) for scraping.
 
 > **Model configs are NOT in config.yaml.** Models are managed via the admin backend (:8081) CRUD, stored in the database, and support hot updates — add/edit/remove takes effect immediately without restart.
 
