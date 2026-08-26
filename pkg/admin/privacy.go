@@ -27,7 +27,8 @@ import (
 
 // privacyRuleRequest 规则创建/更新请求体
 type privacyRuleRequest struct {
-	RuleType    string `json:"rule_type" binding:"required,oneof=pii injection"`
+	RuleType    string `json:"rule_type" binding:"required,oneof=pii injection output"`
+	Action      string `json:"action" binding:"omitempty,oneof=redact block"` // 空=redact(默认)
 	Name        string `json:"name" binding:"required,min=1,max=64"`
 	Pattern     string `json:"pattern" binding:"required,max=512"`
 	Replacement string `json:"replacement" binding:"max=128"`
@@ -52,6 +53,13 @@ func (s *AdminServer) createPrivacyRule(c *gin.Context) {
 		req.Scope = plugin.PrivacyScopeRequest
 		req.Replacement = ""
 	}
+	if req.RuleType == plugin.PrivacyRuleTypeOutput {
+		// 输出风控恒 response 作用域
+		req.Scope = plugin.PrivacyScopeResponse
+	}
+	if req.Action == "" {
+		req.Action = plugin.PrivacyActionRedact
+	}
 	if !validPattern(req.Pattern) {
 		Error(c, http.StatusBadRequest, 400, "pattern 不是合法正则")
 		return
@@ -60,6 +68,7 @@ func (s *AdminServer) createPrivacyRule(c *gin.Context) {
 	rule := &plugin.PrivacyRule{
 		ID: uuid.NewString(), RuleType: req.RuleType, Name: req.Name,
 		Pattern: req.Pattern, Replacement: req.Replacement, Scope: req.Scope,
+		Action:  req.Action,
 		Enabled: true, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := s.storage.SavePrivacyRule(rule); err != nil {
@@ -78,6 +87,9 @@ func (s *AdminServer) listPrivacyRules(c *gin.Context) {
 		ruleType = &v
 	case plugin.PrivacyRuleTypeInjection:
 		v := plugin.PrivacyRuleTypeInjection
+		ruleType = &v
+	case plugin.PrivacyRuleTypeOutput:
+		v := plugin.PrivacyRuleTypeOutput
 		ruleType = &v
 	}
 	rules, err := s.storage.ListPrivacyRules(ruleType)
@@ -99,6 +111,12 @@ func (s *AdminServer) updatePrivacyRule(c *gin.Context) {
 	if req.RuleType == plugin.PrivacyRuleTypeInjection {
 		req.Scope = plugin.PrivacyScopeRequest
 		req.Replacement = ""
+	}
+	if req.RuleType == plugin.PrivacyRuleTypeOutput {
+		req.Scope = plugin.PrivacyScopeResponse
+	}
+	if req.Action == "" {
+		req.Action = plugin.PrivacyActionRedact
 	}
 	if !validPattern(req.Pattern) {
 		Error(c, http.StatusBadRequest, 400, "pattern 不是合法正则")
@@ -125,6 +143,7 @@ func (s *AdminServer) updatePrivacyRule(c *gin.Context) {
 	rule.Pattern = req.Pattern
 	rule.Replacement = req.Replacement
 	rule.Scope = req.Scope
+	rule.Action = req.Action
 	rule.UpdatedAt = time.Now()
 	if err := s.storage.SavePrivacyRule(rule); err != nil {
 		Error(c, http.StatusInternalServerError, 500, "failed to update privacy rule")

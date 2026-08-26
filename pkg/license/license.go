@@ -36,7 +36,7 @@ const (
 	FeatureMCPAudit    = "mcp_audit"    // MCP 调用审计
 	// FeatureDistributedRateLimit 分布式限流(Redis 集中计数,多实例共享配额)
 	FeatureDistributedRateLimit = "distributed_ratelimit"
-	FeatureDomesticDB  = "domestic_db"  // 信创数据库存储
+	FeatureDomesticDB           = "domestic_db" // 信创数据库存储
 )
 
 // CanonicalPayload 将授权信息中除签名外的全部字段做确定性序列化，作为签名载荷。

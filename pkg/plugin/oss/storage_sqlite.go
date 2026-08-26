@@ -168,6 +168,7 @@ func sqliteTableStmts() []string {
 			pattern TEXT NOT NULL,
 			replacement TEXT NOT NULL DEFAULT '',
 			scope TEXT NOT NULL DEFAULT 'both',
+			action TEXT NOT NULL DEFAULT '',
 			enabled INTEGER NOT NULL DEFAULT 1,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
@@ -266,6 +267,37 @@ func migrateSQLiteAdminUserColumns(db *sql.DB) error {
 		}
 		if _, err := db.Exec("ALTER TABLE admin_users ADD COLUMN " + col + " TEXT NOT NULL DEFAULT ''"); err != nil {
 			return fmt.Errorf("add column %s: %w", col, err)
+		}
+	}
+	return nil
+}
+
+// migrateSQLitePrivacyAction 存量库 privacy_rules 补 action 列（B3 输出风控；已存在则跳过）
+func migrateSQLitePrivacyAction(db *sql.DB) error {
+	rows, err := db.Query(`PRAGMA table_info(privacy_rules)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	hasAction := false
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dfltValue interface{}
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); err != nil {
+			return err
+		}
+		if name == "action" {
+			hasAction = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if !hasAction {
+		if _, err := db.Exec("ALTER TABLE privacy_rules ADD COLUMN action TEXT NOT NULL DEFAULT ''"); err != nil {
+			return fmt.Errorf("add column action: %w", err)
 		}
 	}
 	return nil

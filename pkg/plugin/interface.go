@@ -231,6 +231,13 @@ type RateLimitConfig struct {
 const (
 	PrivacyRuleTypePII       = "pii"
 	PrivacyRuleTypeInjection = "injection"
+	PrivacyRuleTypeOutput    = "output" // 输出内容风控：仅作用响应侧
+)
+
+// 隐私规则命中动作（privacy_rules.action；空串按 redact 处理，存量零变化）
+const (
+	PrivacyActionRedact = "redact" // 命中即替换/脱敏(默认)
+	PrivacyActionBlock  = "block"  // 命中即拦截(output 类专用)
 )
 
 // 隐私规则作用域取值（privacy_rules.scope；injection 恒 request）
@@ -243,7 +250,8 @@ const (
 // PrivacyRule 脱敏/注入检测规则（rule_type=pii/injection 统一存取）
 type PrivacyRule struct {
 	ID          string    `json:"id"`
-	RuleType    string    `json:"rule_type"`   // pii | injection
+	RuleType    string    `json:"rule_type"`   // pii | injection | output
+	Action      string    `json:"action"`      // redact|block；空串=redact(存量兼容)
 	Name        string    `json:"name"`        // 1-64 字符
 	Pattern     string    `json:"pattern"`     // 合法正则
 	Replacement string    `json:"replacement"` // 1-128 字符(injection 忽略)
