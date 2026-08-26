@@ -274,3 +274,5 @@ TestModelConfigHotReload: RouteMatchMiddleware(storage, registry) 链上两次�
 | B | kafkaRecords 拆纯函数测消息组装 | kgo.Client 无接口可 mock;真连留给 NG_KAFKA_BROKER 门控 |
 | C | dueReports 抽纯函数 | 时间触发逻辑可测,loop 仅做 ticker 驱动 |
 | D | 手动 generate 是测试唯一注入口 | 调度时间不注入,避免为测试污染构造器签名 |
+| E | catchUp 回扫跳过零审计数据周期;定时 tick 到期项无条件生成 | Step 4.1 测试断言 dayCount==3 为准;留存语义要求到期必建 |
+| F | generate 经 AdminServer 注入 ReportGenerator 函数(默认 nil→503),Task 6 企业接线注入真实现 | pkg/admin 无构建标签且不得依赖 enterprise 包(E4 解耦哲学+EnableRBAC 注入先例);否则 oss 矩阵无法编译 |
