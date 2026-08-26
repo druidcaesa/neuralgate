@@ -210,7 +210,18 @@ func main() {
 	// 10. 数据隐私合规（privacy 门控，接线随构建版本；无后台任务故无需停止函数）
 	setupPrivacy(gate, *cfg, pipeline, auditor, storage, logger)
 
+	metrics := core.NewMetrics()
+	pipeline.Use(core.ObservabilityMiddleware(metrics, logger))
+
 	acceptor := core.NewAcceptor(proxyCore.Handler(), ipf)
+	// /metrics 在管道外层伺服: 免鉴权且不被路由中间件 404(运维采集端点)
+	rootHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/metrics" {
+			core.ServeMetrics(metrics, w, r)
+			return
+		}
+		acceptor.Handler().ServeHTTP(w, r)
+	})
 
 	// 8. 启动双服务（并发）
 	tlsHandler := core.NewTLSHandler(cfg.TLS.Enabled, cfg.TLS.CertFile, cfg.TLS.KeyFile, cfg.TLS.MinVersion)
@@ -220,7 +231,7 @@ func main() {
 	}
 	proxyServer := &http.Server{
 		Addr:        cfg.Server.ProxyAddr,
-		Handler:     acceptor.Handler(),
+		Handler:     rootHandler,
 		ReadTimeout: cfg.Server.ReadTimeout,
 		// 写超时不在 server 层设置：统一值无法兼顾长流式响应，
 		// 由 proxy handler 按请求类型经 ResponseController 设置写截止时间
