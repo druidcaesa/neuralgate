@@ -13,7 +13,8 @@ license.json
 config.local.yaml
 
 # 默认 SQLite 数据库文件
-neuralgate.db
+neuralgate.db*
+/dist/
 
 # Go 构建与测试产物
 *.test
