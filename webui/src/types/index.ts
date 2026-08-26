@@ -246,11 +246,12 @@ export interface Paged<T> {
 // ===== 隐私合规(E4) =====
 export interface PrivacyRuleItem {
   id?: string
-  rule_type: 'pii' | 'injection'
+  rule_type: 'pii' | 'injection' | 'output'
   name: string
   pattern: string
   replacement: string
   scope: 'request' | 'response' | 'both'
+  action?: 'redact' | 'block'
   enabled: boolean
   created_at?: string
   updated_at?: string

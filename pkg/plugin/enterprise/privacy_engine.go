@@ -19,6 +19,7 @@ package enterprise
 import (
 	"bytes"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -115,7 +116,7 @@ func (e *PrivacyEngine) reload() {
 	}
 	e.mu.Lock()
 	if err == nil {
-		e.piiRules, e.injectionRules = pii, inj
+		e.piiRules, e.injectionRules, e.outputRules = pii, inj, output
 	}
 	if wErr == nil {
 		e.whitelist = wl
@@ -138,7 +139,7 @@ func (e *PrivacyEngine) Whitelisted(body []byte) bool {
 // Sanitize 按 scope 过滤 PII 规则做字面替换（replacement 不解释 $1 等分组引用），
 // 返回结果文本与是否变更；单条规则异常保留当前文本继续（降级放行）
 func (e *PrivacyEngine) Sanitize(body []byte, scope string) ([]byte, bool) {
-	pii, _, _, _ := e.snapshot()
+	pii, _, output, _ := e.snapshot()
 	result := body
 	for _, cr := range pii {
 		if s := cr.source.Scope; s != plugin.PrivacyScopeBoth && s != scope {
@@ -148,6 +149,19 @@ func (e *PrivacyEngine) Sanitize(body []byte, scope string) ([]byte, bool) {
 			continue
 		}
 		result = safeReplace(cr, result)
+	}
+	// 输出风控 redact：output 类规则仅作用响应侧，按 Replacement 替换命中内容；
+	// block 动作不在此处理（由中间件拦截），空替换串跳过
+	if scope == plugin.PrivacyScopeResponse {
+		for _, cr := range output {
+			if strings.EqualFold(cr.source.Action, plugin.PrivacyActionBlock) || cr.source.Replacement == "" {
+				continue
+			}
+			if !safeMatch(cr, result) {
+				continue
+			}
+			result = safeReplace(cr, result)
+		}
 	}
 	return result, !bytes.Equal(body, result)
 }

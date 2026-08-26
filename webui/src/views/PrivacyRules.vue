@@ -3,6 +3,7 @@
     <el-tabs v-model="activeTab" @tab-change="load">
       <el-tab-pane label="脱敏规则" name="pii" />
       <el-tab-pane label="注入检测" name="injection" />
+      <el-tab-pane label="输出风控" name="output" />
       <el-tab-pane label="白名单" name="whitelist" />
     </el-tabs>
 
@@ -57,6 +58,7 @@
           <el-select v-model="form.rule_type" :disabled="!!editingId">
             <el-option label="PII 脱敏" value="pii" />
             <el-option label="注入检测" value="injection" />
+            <el-option label="输出风控" value="output" />
           </el-select>
         </el-form-item>
         <el-form-item label="正则">
@@ -98,7 +100,7 @@ import {
   listPrivacyRules, listPrivacyWhitelist, updatePrivacyRule
 } from '../api/privacy'
 
-const activeTab = ref<'pii' | 'injection' | 'whitelist'>('pii')
+const activeTab = ref<'pii' | 'injection' | 'output' | 'whitelist'>('pii')
 const rules = ref<PrivacyRuleItem[]>([])
 const whitelist = ref<PrivacyWhitelistItem[]>([])
 const loading = ref(false)
