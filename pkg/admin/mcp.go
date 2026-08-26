@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
@@ -187,4 +188,14 @@ func (s *AdminServer) getMCPAuditLog(c *gin.Context) {
 		return
 	}
 	OK(c, entry)
+}
+
+// isUniqueViolation 识别三方言的唯一键冲突错误(SQLite UNIQUE constraint /
+// MySQL Duplicate entry)，用于把存储层唯一约束映射为 409
+func isUniqueViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "unique") || strings.Contains(msg, "duplicate entry")
 }
