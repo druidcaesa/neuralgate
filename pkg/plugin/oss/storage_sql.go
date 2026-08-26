@@ -1518,3 +1518,101 @@ func (s *SQLStorage) DeleteMCPServer(id string) error {
 	}
 	return nil
 }
+
+// ===== MCP 工具调用审计(E7) =====
+
+const mcpAuditCols = "id, request_id, tenant_id, api_key_id, tool_name, tool_arguments, tool_result, caller_agent, duration_ms, status, error_message, client_ip, created_at"
+
+func scanMCPAudit(row interface{ Scan(...interface{}) error }) (*plugin.MCPAuditLog, error) {
+	e := &plugin.MCPAuditLog{}
+	var createdMS int64
+	if err := row.Scan(&e.ID, &e.RequestID, &e.TenantID, &e.APIKeyID, &e.ToolName,
+		&e.ToolArguments, &e.ToolResult, &e.CallerAgent, &e.DurationMS,
+		&e.Status, &e.ErrorMessage, &e.ClientIP, &createdMS); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	e.CreatedAt = msToTime(createdMS)
+	return e, nil
+}
+
+// buildMCPAuditWhere 构建过滤条件：等值匹配+闭区间时间(与 AuditLogFilter 时间语义一致)
+func buildMCPAuditWhere(filter plugin.MCPAuditLogFilter) (string, []interface{}) {
+	conds := []string{}
+	args := []interface{}{}
+	add := func(cond string, as ...interface{}) {
+		conds = append(conds, cond)
+		args = append(args, as...)
+	}
+	if filter.TenantID != "" {
+		add("tenant_id = ?", filter.TenantID)
+	}
+	if filter.RequestID != "" {
+		add("request_id = ?", filter.RequestID)
+	}
+	if filter.ToolName != "" {
+		add("tool_name = ?", filter.ToolName)
+	}
+	if filter.Status != "" {
+		add("status = ?", filter.Status)
+	}
+	if filter.StartTime != nil {
+		add("created_at >= ?", timeToMS(*filter.StartTime))
+	}
+	if filter.EndTime != nil {
+		add("created_at <= ?", timeToMS(*filter.EndTime))
+	}
+	if len(conds) == 0 {
+		return "1=1", nil
+	}
+	return strings.Join(conds, " AND "), args
+}
+
+// SaveMCPAuditLog 追加写入审计记录；ID/CreatedAt 零值自动补齐
+func (s *SQLStorage) SaveMCPAuditLog(entry *plugin.MCPAuditLog) error {
+	now := time.Now()
+	if entry.ID == "" {
+		entry.ID = uuid.NewString()
+	}
+	if entry.CreatedAt.IsZero() {
+		entry.CreatedAt = now
+	}
+	if _, err := s.db.Exec(
+		"INSERT INTO mcp_audit_logs ("+mcpAuditCols+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		entry.ID, entry.RequestID, entry.TenantID, entry.APIKeyID, entry.ToolName,
+		entry.ToolArguments, entry.ToolResult, entry.CallerAgent, entry.DurationMS,
+		entry.Status, entry.ErrorMessage, entry.ClientIP, timeToMS(entry.CreatedAt),
+	); err != nil {
+		return fmt.Errorf("save mcp audit log: %w", err)
+	}
+	return nil
+}
+
+// ListMCPAuditLogs 过滤+分页：created_at 倒序（最近优先）
+func (s *SQLStorage) ListMCPAuditLogs(filter plugin.MCPAuditLogFilter, page, size int) ([]*plugin.MCPAuditLog, int64, error) {
+	page, size = normalizePage(page, size)
+	where, args := buildMCPAuditWhere(filter)
+	var total int64
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM mcp_audit_logs WHERE "+where, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count mcp audit logs: %w", err)
+	}
+	rows, err := s.db.Query(
+		"SELECT "+mcpAuditCols+" FROM mcp_audit_logs WHERE "+where+
+			" ORDER BY created_at DESC LIMIT ? OFFSET ?",
+		append(args, size, (page-1)*size)...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list mcp audit logs: %w", err)
+	}
+	defer rows.Close()
+	out := make([]*plugin.MCPAuditLog, 0, size)
+	for rows.Next() {
+		e, err := scanMCPAudit(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		out = append(out, e)
+	}
+	return out, total, rows.Err()
+}

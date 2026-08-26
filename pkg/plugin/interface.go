@@ -59,6 +59,39 @@ type MCPServer struct {
 	UpdatedAt time.Time         `json:"updated_at"`
 }
 
+// MCP 工具调用状态取值（mcp_audit_logs.status）
+const (
+	MCPStatusSuccess = "success"
+	MCPStatusFailed  = "failed"
+)
+
+// MCPAuditLog 工具调用审计记录（PRD 3.9 十三字段）
+type MCPAuditLog struct {
+	ID            string    `json:"id"`
+	RequestID     string    `json:"request_id"`
+	TenantID      string    `json:"tenant_id"`
+	APIKeyID      string    `json:"api_key_id"`
+	ToolName      string    `json:"tool_name"`
+	ToolArguments string    `json:"tool_arguments"`
+	ToolResult    string    `json:"tool_result"`
+	CallerAgent   string    `json:"caller_agent"`
+	DurationMS    int64     `json:"duration_ms"`
+	Status        string    `json:"status"`
+	ErrorMessage  string    `json:"error_message"`
+	ClientIP      string    `json:"client_ip"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+// MCPAuditLogFilter 审计查询过滤；时间为闭区间（与 AuditLogFilter 语义一致）
+type MCPAuditLogFilter struct {
+	TenantID  string
+	RequestID string
+	ToolName  string
+	Status    string
+	StartTime *time.Time
+	EndTime   *time.Time
+}
+
 // APIKey 租户API Key
 type APIKey struct {
 	ID            string       // 主键ID
@@ -406,6 +439,8 @@ type StoragePlugin interface {
 	GetMCPServer(id string) (*MCPServer, error)
 	ListMCPServers(page, size int) ([]*MCPServer, int64, error)
 	DeleteMCPServer(id string) error
+	SaveMCPAuditLog(entry *MCPAuditLog) error
+	ListMCPAuditLogs(filter MCPAuditLogFilter, page, size int) ([]*MCPAuditLog, int64, error)
 
 	// 健康检查
 	Ping() error

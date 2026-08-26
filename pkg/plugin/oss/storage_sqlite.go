@@ -206,6 +206,23 @@ func sqliteCreateTables(db *sql.DB) error {
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS mcp_audit_logs (
+			id TEXT PRIMARY KEY,
+			request_id TEXT NOT NULL DEFAULT '',
+			tenant_id TEXT NOT NULL DEFAULT '',
+			api_key_id TEXT NOT NULL DEFAULT '',
+			tool_name TEXT NOT NULL DEFAULT '',
+			tool_arguments TEXT NOT NULL DEFAULT '',
+			tool_result TEXT NOT NULL DEFAULT '',
+			caller_agent TEXT NOT NULL DEFAULT '',
+			duration_ms INTEGER NOT NULL DEFAULT 0,
+			status TEXT NOT NULL DEFAULT 'success',
+			error_message TEXT NOT NULL DEFAULT '',
+			client_ip TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_mcp_audit_tenant ON mcp_audit_logs(tenant_id, created_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_mcp_audit_req ON mcp_audit_logs(request_id)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {

@@ -47,6 +47,7 @@ type MemStorage struct {
 	adminOpLogs       []*plugin.AdminOperationLog              // 按写入顺序
 	complianceReports []*plugin.ComplianceReport               // 按写入顺序(查询时排序)
 	mcpServers        map[string]*plugin.MCPServer             // id -> MCP 上游配置
+	mcpAuditLogs      []*plugin.MCPAuditLog                    // 按写入顺序(查询时过滤排序)
 }
 
 // NewMemStorage 创建内存存储
@@ -962,4 +963,57 @@ func (s *MemStorage) DeleteMCPServer(id string) error {
 	}
 	delete(s.mcpServers, id)
 	return nil
+}
+
+// SaveMCPAuditLog 追加审计记录；ID/CreatedAt 零值自动补齐
+func (s *MemStorage) SaveMCPAuditLog(entry *plugin.MCPAuditLog) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if entry.ID == "" {
+		entry.ID = uuid.NewString()
+	}
+	if entry.CreatedAt.IsZero() {
+		entry.CreatedAt = time.Now()
+	}
+	stored := *entry
+	s.mcpAuditLogs = append(s.mcpAuditLogs, &stored)
+	return nil
+}
+
+// ListMCPAuditLogs 过滤+分页：created_at 倒序（最近优先）
+func (s *MemStorage) ListMCPAuditLogs(filter plugin.MCPAuditLogFilter, page, size int) ([]*plugin.MCPAuditLog, int64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	matched := make([]*plugin.MCPAuditLog, 0)
+	for _, e := range s.mcpAuditLogs {
+		if filter.TenantID != "" && e.TenantID != filter.TenantID {
+			continue
+		}
+		if filter.RequestID != "" && e.RequestID != filter.RequestID {
+			continue
+		}
+		if filter.ToolName != "" && e.ToolName != filter.ToolName {
+			continue
+		}
+		if filter.Status != "" && e.Status != filter.Status {
+			continue
+		}
+		if filter.StartTime != nil && e.CreatedAt.Before(*filter.StartTime) {
+			continue
+		}
+		if filter.EndTime != nil && e.CreatedAt.After(*filter.EndTime) {
+			continue
+		}
+		matched = append(matched, e)
+	}
+	sort.Slice(matched, func(i, j int) bool { return matched[i].CreatedAt.After(matched[j].CreatedAt) })
+	page, size = normalizePage(page, size)
+	start := min((page-1)*size, len(matched))
+	end := min(start+size, len(matched))
+	out := make([]*plugin.MCPAuditLog, 0, end-start)
+	for _, e := range matched[start:end] {
+		cp := *e
+		out = append(out, &cp)
+	}
+	return out, int64(len(matched)), nil
 }

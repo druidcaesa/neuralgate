@@ -207,6 +207,23 @@ func mysqlCreateTables(db *sql.DB) error {
 			updated_at BIGINT NOT NULL,
 			UNIQUE KEY uq_mcp_server_name (name)
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+		`CREATE TABLE IF NOT EXISTS mcp_audit_logs (
+			id VARCHAR(64) PRIMARY KEY,
+			request_id VARCHAR(64) NOT NULL DEFAULT '',
+			tenant_id VARCHAR(64) NOT NULL DEFAULT '',
+			api_key_id VARCHAR(64) NOT NULL DEFAULT '',
+			tool_name VARCHAR(256) NOT NULL DEFAULT '',
+			tool_arguments LONGTEXT NOT NULL,
+			tool_result LONGTEXT NOT NULL,
+			caller_agent VARCHAR(256) NOT NULL DEFAULT '',
+			duration_ms BIGINT NOT NULL DEFAULT 0,
+			status VARCHAR(16) NOT NULL DEFAULT 'success',
+			error_message MEDIUMTEXT NOT NULL,
+			client_ip VARCHAR(64) NOT NULL DEFAULT '',
+			created_at BIGINT NOT NULL,
+			KEY idx_mcp_audit_tenant (tenant_id, created_at),
+			KEY idx_mcp_audit_req (request_id)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {
