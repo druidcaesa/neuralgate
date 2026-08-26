@@ -62,3 +62,22 @@ func setupTamper(gate core.LicenseGate, auditor plugin.AuditPipeline,
 		zap.Duration("verify_interval", cfg.VerifyInterval))
 	return tasks.Stop
 }
+
+// setupDistributedRateLimit 分布式限流装配：门控满足时以 Redis 集中计数
+// 实现替换本地限流器；Redis 不可达时降级回本地并告警（可用性优先）
+func setupDistributedRateLimit(gate core.LicenseGate, cfg config.Config,
+	rateLimiter plugin.RateLimitPlugin, logger *zap.Logger) plugin.RateLimitPlugin {
+	start, reason := shouldStartDistributedRateLimit(gate, cfg.RateLimit.Distributed.Enabled)
+	if !start {
+		logger.Info("分布式限流未启用", zap.String("reason", reason))
+		return rateLimiter
+	}
+	dist, err := enterprise.NewDistributedRateLimiter(rateLimiter, cfg.RateLimit.Distributed, logger)
+	if err != nil {
+		logger.Warn("分布式限流启用失败，沿用本地限流", zap.Error(err))
+		return rateLimiter
+	}
+	dist.SetOverride("", "", cfg.RateLimit.DefaultRPS, cfg.RateLimit.DefaultTPM)
+	logger.Info("分布式限流已启用(Redis 集中计数)")
+	return dist
+}

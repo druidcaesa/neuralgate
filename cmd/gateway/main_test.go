@@ -129,3 +129,21 @@ func TestShouldStartMCPAudit(t *testing.T) {
 		t.Error("仅含其他功能不应启动")
 	}
 }
+
+func TestShouldStartDistributedRateLimit(t *testing.T) {
+	if ok, reason := shouldStartDistributedRateLimit(core.NopGate(), false); ok || reason == "" {
+		t.Errorf("未启用应不启动且给出原因: ok=%v reason=%q", ok, reason)
+	}
+	ok, reason := shouldStartDistributedRateLimit(core.NopGate(), true)
+	if ok || reason != "授权未包含 distributed_ratelimit 功能" {
+		t.Errorf("NopGate 应因缺 feature 不启动: ok=%v reason=%q", ok, reason)
+	}
+	licensed := featureGate{license.FeatureDistributedRateLimit: true}
+	if ok, _ := shouldStartDistributedRateLimit(licensed, true); !ok {
+		t.Error("启用且授权含 distributed_ratelimit 应启动")
+	}
+	other := featureGate{license.FeaturePrivacy: true}
+	if ok, _ := shouldStartDistributedRateLimit(other, true); ok {
+		t.Error("仅含其他功能不应启动")
+	}
+}

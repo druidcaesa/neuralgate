@@ -34,6 +34,8 @@ const (
 	FeatureRBAC        = "rbac"         // 角色权限控制
 	FeatureCompliance  = "compliance"   // 等保合规模块
 	FeatureMCPAudit    = "mcp_audit"    // MCP 调用审计
+	// FeatureDistributedRateLimit 分布式限流(Redis 集中计数,多实例共享配额)
+	FeatureDistributedRateLimit = "distributed_ratelimit"
 	FeatureDomesticDB  = "domestic_db"  // 信创数据库存储
 )
 
