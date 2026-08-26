@@ -166,3 +166,42 @@ func TestGenerateComplianceReportIdempotent(t *testing.T) {
 		t.Errorf("FindByPeriod 结果不符: %+v err=%v", found, ferr)
 	}
 }
+
+// TestGenerateComplianceReportPeriodEndBoundary 周期右端点归属回归：
+// 存储层时间过滤为闭区间，调用侧已把半开周期右端点换算为周期内最后一毫秒，
+// 故恰落在 end 时刻的日志只归下一周期、不计入本周期，防止相邻周期重复计数
+func TestGenerateComplianceReportPeriodEndBoundary(t *testing.T) {
+	storage := oss.NewMemStorage()
+	ref := at(2026, 8, 25, 10)
+	dayStart := at(2026, 8, 25, 0)
+	dayEnd := dayStart.AddDate(0, 0, 1)
+	for _, l := range []*plugin.AuditLog{
+		{RequestID: "at-end", ModelName: "m", ResponseStatus: 200,
+			TotalTokens: 10, CreatedAt: dayEnd}, // 恰在周期 end：属下一周期
+		{RequestID: "last-ms", ModelName: "m", ResponseStatus: 200,
+			TotalTokens: 20, CreatedAt: dayEnd.Add(-time.Millisecond)}, // 周期内最后一毫秒：须计入
+	} {
+		if err := storage.SaveAuditLog(l); err != nil {
+			t.Fatal(err)
+		}
+	}
+	report, err := GenerateComplianceReport(storage, zap.NewNop(), plugin.PeriodDay, ref)
+	if err != nil {
+		t.Fatalf("生成本周期: %v", err)
+	}
+	if !report.PeriodEnd.Equal(dayEnd) {
+		t.Errorf("报表元数据应保留原始半开右端点: %v", report.PeriodEnd)
+	}
+	if report.Content.TotalRequests != 1 || report.Content.TotalTokens != 20 {
+		t.Errorf("end 时刻日志不应计入本周期: requests=%d tokens=%d",
+			report.Content.TotalRequests, report.Content.TotalTokens)
+	}
+	next, err := GenerateComplianceReport(storage, zap.NewNop(), plugin.PeriodDay, dayEnd)
+	if err != nil {
+		t.Fatalf("生成下一周期: %v", err)
+	}
+	if next.Content.TotalRequests != 1 || next.Content.TotalTokens != 10 {
+		t.Errorf("end 时刻日志应计入下一周期: requests=%d tokens=%d",
+			next.Content.TotalRequests, next.Content.TotalTokens)
+	}
+}

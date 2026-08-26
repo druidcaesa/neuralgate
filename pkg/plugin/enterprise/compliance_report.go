@@ -114,7 +114,12 @@ func GenerateComplianceReport(storage plugin.StoragePlugin, logger *zap.Logger,
 	periodType string, refTime time.Time) (*plugin.ComplianceReport, error) {
 	normalized := normalizePeriod(periodType)
 	start, end := BuildRange(normalized, refTime)
-	filter := plugin.AuditLogFilter{StartTime: &start, EndTime: &end}
+	// 方案：BuildRange 定义半开周期 [start, end)，但存储层 QueryAuditLogs 的时间过滤为闭区间
+	// （mem 按 Before(start)/After(end) 排除、sql 用 >=/<=），若直接以 end 过滤，恰落在 end 时刻的
+	// 审计日志会同时计入相邻两个周期的报表。调用侧把右端点换算为周期内最后一毫秒，
+	// 使闭区间过滤等价于半开语义；PeriodEnd 与幂等业务键仍存原始 end，不受影响。
+	endExclusive := end.Add(-time.Millisecond)
+	filter := plugin.AuditLogFilter{StartTime: &start, EndTime: &endExclusive}
 	var logs []*plugin.AuditLog
 	for page := 1; ; page++ {
 		batch, total, err := storage.QueryAuditLogs(filter, page, aggReportPageSize)
