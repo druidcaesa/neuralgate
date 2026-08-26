@@ -197,6 +197,15 @@ func sqliteCreateTables(db *sql.DB) error {
 			content TEXT NOT NULL DEFAULT '{}',
 			UNIQUE(period_type, period_start)
 		)`,
+		`CREATE TABLE IF NOT EXISTS mcp_servers (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL UNIQUE,
+			endpoint TEXT NOT NULL,
+			headers TEXT NOT NULL DEFAULT '{}',
+			enabled INTEGER NOT NULL DEFAULT 1,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {

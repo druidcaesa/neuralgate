@@ -197,6 +197,16 @@ func mysqlCreateTables(db *sql.DB) error {
 			content MEDIUMTEXT NOT NULL,
 			UNIQUE KEY uq_period (period_type, period_start)
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+		`CREATE TABLE IF NOT EXISTS mcp_servers (
+			id VARCHAR(64) PRIMARY KEY,
+			name VARCHAR(128) NOT NULL,
+			endpoint VARCHAR(512) NOT NULL,
+			headers MEDIUMTEXT NOT NULL,
+			enabled TINYINT NOT NULL DEFAULT 1,
+			created_at BIGINT NOT NULL,
+			updated_at BIGINT NOT NULL,
+			UNIQUE KEY uq_mcp_server_name (name)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {

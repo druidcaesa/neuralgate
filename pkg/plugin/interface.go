@@ -48,6 +48,17 @@ type Upstream struct {
 	UpdatedAt     time.Time // 更新时间
 }
 
+// MCPServer MCP 上游服务器配置（Streamable HTTP 端点，E7 中继的转发目标）
+type MCPServer struct {
+	ID        string            `json:"id"`
+	Name      string            `json:"name"`
+	Endpoint  string            `json:"endpoint"`
+	Headers   map[string]string `json:"headers"` // 转发时附加的认证头
+	Enabled   bool              `json:"enabled"`
+	CreatedAt time.Time         `json:"created_at"`
+	UpdatedAt time.Time         `json:"updated_at"`
+}
+
 // APIKey 租户API Key
 type APIKey struct {
 	ID            string       // 主键ID
@@ -389,6 +400,12 @@ type StoragePlugin interface {
 	ListPrivacyWhitelistEntries() ([]*PrivacyWhitelistEntry, error)
 	SaveSecurityEvent(event *SecurityEvent) error
 	ListSecurityEvents(page, size int) ([]*SecurityEvent, int64, error)
+
+	// MCP 中继(E7)：上游配置 CRUD 与工具调用审计留存
+	SaveMCPServer(server *MCPServer) error
+	GetMCPServer(id string) (*MCPServer, error)
+	ListMCPServers(page, size int) ([]*MCPServer, int64, error)
+	DeleteMCPServer(id string) error
 
 	// 健康检查
 	Ping() error

@@ -230,3 +230,18 @@ func (d *dynamicStorage) FindComplianceReportByPeriod(periodType string, periodS
 func (d *dynamicStorage) CountComplianceReports() (int64, error) {
 	return d.impl.CountComplianceReports()
 }
+
+// ===== MCP 上游配置(委托底层实现) =====
+
+func (d *dynamicStorage) SaveMCPServer(server *plugin.MCPServer) error {
+	return d.impl.SaveMCPServer(server)
+}
+func (d *dynamicStorage) GetMCPServer(id string) (*plugin.MCPServer, error) {
+	return d.impl.GetMCPServer(id)
+}
+func (d *dynamicStorage) ListMCPServers(page, size int) ([]*plugin.MCPServer, int64, error) {
+	return d.impl.ListMCPServers(page, size)
+}
+func (d *dynamicStorage) DeleteMCPServer(id string) error {
+	return d.impl.DeleteMCPServer(id)
+}
