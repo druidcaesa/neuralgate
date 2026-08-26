@@ -454,8 +454,3 @@ Enterprise 额外依赖（仅 `enterprise` BuildTag 编译时引入）：达梦�
 - **Enterprise 版本**：商业授权，联系获取
 
 ---
-
-## 相关文档
-
-- [技术架构详细设计](./NeuralGate_技术架构详细设计.md) — 开发者拿到可直接进入编码
-- [产品需求文档](./NeuralGate_产品需求文档.md) — 功能、流程、字段约束完整定义

@@ -457,8 +457,3 @@ Enterprise AI Agent development team needing tool-call behavior audit. Enterpris
 - **Enterprise Edition**: Commercial license — contact to obtain
 
 ---
-
-## Documentation
-
-- [Technical Architecture Design](./NeuralGate_技术架构详细设计.md) — Developers can start coding directly
-- [Product Requirements Document](./NeuralGate_产品需求文档.md) — Complete feature, flow, and field definitions
