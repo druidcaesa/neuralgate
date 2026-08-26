@@ -76,6 +76,11 @@ func (s *AdminServer) registerRoutes(r *gin.Engine) {
 		authz.GET("/tamper-alerts", s.RequirePermission(plugin.PermAuditRead), s.listTamperAlerts)
 		authz.PATCH("/tamper-alerts/:id", s.RequirePermission(plugin.PermSystemWrite), s.resolveTamperAlert)
 
+		// 合规报表(E6)：查询/下载/手动补生成（生成器由 enterprise 装配注入，未注入时生成 503）
+		authz.GET("/compliance-reports", s.RequirePermission(plugin.PermSystemRead), s.listComplianceReports)
+		authz.GET("/compliance-reports/:id", s.RequirePermission(plugin.PermSystemRead), s.getComplianceReport)
+		authz.POST("/compliance-reports/generate", s.RequirePermission(plugin.PermSystemWrite), s.generateComplianceReport)
+
 		// 限流配置管理
 		authz.POST("/rate-limits", s.RequirePermission(plugin.PermRateLimitWrite), s.createRateLimit)
 		authz.GET("/rate-limits", s.RequirePermission(plugin.PermRateLimitRead), s.listRateLimits)
