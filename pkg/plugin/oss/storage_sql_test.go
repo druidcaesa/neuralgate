@@ -249,6 +249,52 @@ func TestSQLStorageAuditLogCRUD(t *testing.T) {
 	}
 }
 
+// TestSQLStorageQueryAuditLogsTimeBoundary 时间过滤端点契约：StartTime 与 EndTime 均为
+// 闭区间（两端点皆命中、端点外不命中）；半开周期调用方须自行换算右端点
+// （参见 enterprise.GenerateComplianceReport 的 end-1ms 换算）
+func TestSQLStorageQueryAuditLogsTimeBoundary(t *testing.T) {
+	s := newTestSQLStorage(t)
+	base := time.Date(2026, 8, 25, 12, 0, 0, 0, time.Local) // 整秒，避开毫秒截断歧义
+	stamps := []struct {
+		id string
+		at time.Time
+	}{
+		{"before", base.Add(-time.Hour)},       // StartTime 之前：不命中
+		{"at-start", base},                     // 恰在 StartTime：闭区间必须命中
+		{"interior", base.Add(time.Hour)},      // 区间内部：命中
+		{"at-end", base.Add(2 * time.Hour)},    // 恰在 EndTime：闭区间必须命中
+		{"after-end", base.Add(3 * time.Hour)}, // EndTime 之后：不命中
+	}
+	for _, st := range stamps {
+		if err := s.SaveAuditLog(&plugin.AuditLog{
+			ID: st.id, RequestID: st.id, ModelName: "gpt-boundary", CreatedAt: st.at,
+		}); err != nil {
+			t.Fatalf("SaveAuditLog %s: %v", st.id, err)
+		}
+	}
+	end := base.Add(2 * time.Hour)
+	logs, total, err := s.QueryAuditLogs(plugin.AuditLogFilter{
+		ModelName: "gpt-boundary", StartTime: &base, EndTime: &end}, 1, 10)
+	if err != nil {
+		t.Fatalf("QueryAuditLogs: %v", err)
+	}
+	if total != 3 {
+		t.Fatalf("total = %d, want 3(at-start+interior+at-end)", total)
+	}
+	got := map[string]bool{}
+	for _, l := range logs {
+		got[l.ID] = true
+	}
+	for _, id := range []string{"at-start", "interior", "at-end"} {
+		if !got[id] {
+			t.Errorf("%s 未命中: 端点应含于闭区间", id)
+		}
+	}
+	if got["before"] || got["after-end"] {
+		t.Errorf("区间外日志不应命中: %v", got)
+	}
+}
+
 func boolPtr(b bool) *bool { return &b }
 
 // TestSQLStorageModelConfigDecryptFail 密钥不匹配时读取应返回错误,而非返回密文
