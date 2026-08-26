@@ -15,6 +15,8 @@
 package admin
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -80,9 +82,8 @@ func TestAdminAPIKeyCRUD(t *testing.T) {
 	}
 	var created struct {
 		Data struct {
-			ID      string `json:"id"`
-			Key     string `json:"key"`
-			KeyHash string `json:"key_hash"`
+			ID  string `json:"id"`
+			Key string `json:"key"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
@@ -91,8 +92,9 @@ func TestAdminAPIKeyCRUD(t *testing.T) {
 	if !strings.HasPrefix(created.Data.Key, "ng-") {
 		t.Fatalf("key = %q; want ng- prefix", created.Data.Key)
 	}
-	// 密文明文在响应中,哈希已入库
-	if _, err := s.GetAPIKey(created.Data.KeyHash); err != nil {
+	// 响应不再回显哈希(C4),按明文重算哈希验证已入库
+	sum := sha256.Sum256([]byte(created.Data.Key))
+	if _, err := s.GetAPIKey(hex.EncodeToString(sum[:])); err != nil {
 		t.Fatalf("key hash not stored: %v", err)
 	}
 
@@ -107,7 +109,8 @@ func TestAdminAPIKeyCRUD(t *testing.T) {
 	if strings.Contains(listBody, created.Data.Key) {
 		t.Fatalf("list leaks plaintext key: %s", listBody)
 	}
-	if strings.Contains(listBody, created.Data.KeyHash) {
+	sumHex := hex.EncodeToString(func() []byte { s := sha256.Sum256([]byte(created.Data.Key)); return s[:] }())
+	if strings.Contains(listBody, sumHex) {
 		t.Fatalf("list leaks key hash: %s", listBody)
 	}
 	if !strings.Contains(listBody, "****") {
