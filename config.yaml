@@ -33,6 +33,11 @@ rate_limit:
   strategy: token_bucket     # token_bucket/sliding_window
   default_rps: 10            # 默认每秒请求数
   default_tpm: 100000        # 默认每分钟Token数
+  distributed:               # Enterprise only：分布式限流(distributed_ratelimit 门控)
+    enabled: false           # 多实例 Redis 集中计数；默认 false 回退本地单机限流
+    redis_addr: "127.0.0.1:6379"
+    redis_password: ""
+    redis_db: 0
 
 export:                       # Enterprise only：审计日志外推(audit_stream 门控)
   enabled: false              # 是否启用外推

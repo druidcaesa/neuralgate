@@ -175,6 +175,11 @@ func main() {
 	pipeline.SetMCPRelay(buildMCPRelay(gate, *cfg, storage, auditor, logger))
 	logger.Info("MCP 中继已就绪")
 
+	// 14. 分布式限流（distributed_ratelimit 门控，接线随构建版本；
+	// 未启用/降级时沿用本地实现）。同样必须在 Build 快照前完成替换
+	rateLimiter = setupDistributedRateLimit(gate, *cfg, rateLimiter, logger)
+	pipeline.SetRateLimiter(rateLimiter)
+
 	// 8. 审计日志外推（audit_stream 门控）
 	exporter := factory.CreateExporter()
 	exportStarted := false
@@ -363,6 +368,18 @@ func shouldStartMCPAudit(gate core.LicenseGate, enabled bool) (bool, string) {
 	}
 	if !gate.HasFeature(license.FeatureMCPAudit) {
 		return false, "授权未包含 mcp_audit 功能"
+	}
+	return true, ""
+}
+
+// shouldStartDistributedRateLimit 判断分布式限流启动条件（配置启用 + 授权含
+// distributed_ratelimit）；未满足沿用本地限流
+func shouldStartDistributedRateLimit(gate core.LicenseGate, enabled bool) (bool, string) {
+	if !enabled {
+		return false, "配置未启用(rate_limit.distributed.enabled=false)"
+	}
+	if !gate.HasFeature(license.FeatureDistributedRateLimit) {
+		return false, "授权未包含 distributed_ratelimit 功能"
 	}
 	return true, ""
 }

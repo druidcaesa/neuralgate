@@ -98,9 +98,19 @@ type AuditConfig struct {
 }
 
 type RateLimitConfig struct {
-	Strategy   string `yaml:"strategy"`
-	DefaultRPS int    `yaml:"default_rps"`
-	DefaultTPM int64  `yaml:"default_tpm"`
+	Strategy    string                     `yaml:"strategy"`
+	DefaultRPS  int                        `yaml:"default_rps"`
+	DefaultTPM  int64                      `yaml:"default_tpm"`
+	Distributed DistributedRateLimitConfig `yaml:"distributed"` // Enterprise：Redis 集中计数
+}
+
+// DistributedRateLimitConfig 分布式限流配置（Enterprise：需 distributed_ratelimit 授权）；
+// 未启用时回退本地单机限流，现状零变化；bool 不参与 applyDefaults
+type DistributedRateLimitConfig struct {
+	Enabled       bool   `yaml:"enabled"`
+	RedisAddr     string `yaml:"redis_addr"`
+	RedisPassword string `yaml:"redis_password"`
+	RedisDB       int    `yaml:"redis_db"`
 }
 
 type ExportConfig struct {

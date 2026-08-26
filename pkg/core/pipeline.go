@@ -64,6 +64,10 @@ func (p *Pipeline) Apply(handler http.Handler) http.Handler {
 // SetMCPRelay 挂载 MCP 中继；main 装配阶段调用一次，nil 恢复直通
 func (p *Pipeline) SetMCPRelay(h http.Handler) { p.mcpRelay = h }
 
+// SetRateLimiter 更换限流器实现（分布式限流装配用）；
+// 须在 pipeline.Build 快照前调用——固定链在 Build 时捕获接口值
+func (p *Pipeline) SetRateLimiter(l plugin.RateLimitPlugin) { p.rateLimiter = l }
+
 // fixedChain 固定顺序中间件链（不可调换）：鉴权 → MCP 分支 → 路由匹配 → 限流
 // MCP 前缀在路由匹配前分流：模型路由与限流的模型维度对 MCP 无意义，
 // 中继内部自带 api_key 维度限流与独立错误形状
