@@ -26,15 +26,13 @@ import (
 	"github.com/google/uuid"
 )
 
-// SQLStorage 共享 SQL 存储实现(MySQL/SQLite 共用 CRUD 逻辑)
+// SQLStorage 共享 SQL 存储实现(MySQL/SQLite/达梦/金仓 共用 CRUD 逻辑)
 type SQLStorage struct {
 	db         *sql.DB
-	driver     string // mysql / sqlite,记录以区分 UPSERT 等 SQL 方言
+	driver     string     // 驱动名,记录以区分建表等方言分支
+	dialect    sqlDialect // UPSERT/占位符等语句级差异的收拢点
 	encryptKey string
 }
-
-// isMySQL 判断当前驱动是否为 MySQL(用于 UPSERT 等方言分支)
-func (s *SQLStorage) isMySQL() bool { return s.driver == "mysql" }
 
 // NewSQLStorage 创建 SQL 存储(不含连接,连接由 Init 建立)
 func NewSQLStorage() *SQLStorage { return &SQLStorage{} }
@@ -70,6 +68,7 @@ func (s *SQLStorage) Init(config map[string]interface{}) error {
 		return fmt.Errorf("ping %s: %w", driver, err)
 	}
 	s.driver = driver
+	s.dialect = dialectFor(driver)
 	s.db = db
 	if driver == "mysql" {
 		err = mysqlCreateTables(db)
@@ -205,12 +204,8 @@ func (s *SQLStorage) SaveAPIKey(key *plugin.APIKey) error {
 	updated := timeToMS(key.UpdatedAt)
 	// UPSERT 冲突更新子句:MySQL 用 VALUES(col),SQLite 用 excluded.col;
 	// 更新列与 INSERT 列(除 id/created_at)对应,deleted 随重新保存恢复为 0。
-	upsert := ""
-	if s.isMySQL() {
-		upsert = " ON DUPLICATE KEY UPDATE key_hash=VALUES(key_hash), key_prefix=VALUES(key_prefix), tenant_id=VALUES(tenant_id), name=VALUES(name), status=VALUES(status), quota=VALUES(quota), used_quota=VALUES(used_quota), rate_limit=VALUES(rate_limit), allowed_models=VALUES(allowed_models), expires_at=VALUES(expires_at), updated_at=VALUES(updated_at), created_by=VALUES(created_by), deleted=VALUES(deleted)"
-	} else {
-		upsert = " ON CONFLICT(id) DO UPDATE SET key_hash=excluded.key_hash, key_prefix=excluded.key_prefix, tenant_id=excluded.tenant_id, name=excluded.name, status=excluded.status, quota=excluded.quota, used_quota=excluded.used_quota, rate_limit=excluded.rate_limit, allowed_models=excluded.allowed_models, expires_at=excluded.expires_at, updated_at=excluded.updated_at, created_by=excluded.created_by, deleted=excluded.deleted"
-	}
+	upsert := s.dialect.upsert([]string{"id"}, []string{
+		"key_hash", "key_prefix", "tenant_id", "name", "status", "quota", "used_quota", "rate_limit", "allowed_models", "expires_at", "updated_at", "created_by", "deleted"})
 	_, err := s.db.Exec(
 		`INSERT INTO api_keys (id, key_hash, key_prefix, tenant_id, name, status, quota, used_quota, rate_limit, allowed_models, expires_at, created_at, updated_at, created_by, deleted)
 		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`+upsert,
@@ -318,12 +313,8 @@ func (s *SQLStorage) GetAdminUserByID(id string) (*plugin.AdminUser, error) {
 
 // SaveAdminUser UPSERT：MySQL 用 VALUES(col)，SQLite 用 excluded.col
 func (s *SQLStorage) SaveAdminUser(user *plugin.AdminUser) error {
-	upsert := ""
-	if s.isMySQL() {
-		upsert = " ON DUPLICATE KEY UPDATE username=VALUES(username), password_hash=VALUES(password_hash), tenant_id=VALUES(tenant_id), role_id=VALUES(role_id), status=VALUES(status), updated_at=VALUES(updated_at), last_login_at=VALUES(last_login_at)"
-	} else {
-		upsert = " ON CONFLICT(id) DO UPDATE SET username=excluded.username, password_hash=excluded.password_hash, tenant_id=excluded.tenant_id, role_id=excluded.role_id, status=excluded.status, updated_at=excluded.updated_at, last_login_at=excluded.last_login_at"
-	}
+	upsert := s.dialect.upsert([]string{"id"}, []string{
+		"username", "password_hash", "tenant_id", "role_id", "status", "updated_at", "last_login_at"})
 	_, err := s.db.Exec(
 		`INSERT INTO admin_users (id, username, password_hash, tenant_id, role_id, status, created_at, updated_at, last_login_at)
 		 VALUES (?,?,?,?,?,?,?,?,?)`+upsert,
@@ -398,12 +389,8 @@ func (s *SQLStorage) SaveModelConfig(config *plugin.ModelConfig) error {
 	updated := timeToMS(config.UpdatedAt)
 	// UPSERT 冲突更新子句:MySQL 用 VALUES(col),SQLite 用 excluded.col;
 	// 更新列与 INSERT 列(除 id/created_at)对应。
-	upsert := ""
-	if s.isMySQL() {
-		upsert = " ON DUPLICATE KEY UPDATE model_name=VALUES(model_name), provider=VALUES(provider), provider_model=VALUES(provider_model), base_url=VALUES(base_url), api_key=VALUES(api_key), encrypted=VALUES(encrypted), timeout=VALUES(timeout), max_retries=VALUES(max_retries), retry_interval=VALUES(retry_interval), weight=VALUES(weight), enabled=VALUES(enabled), tags=VALUES(tags), updated_at=VALUES(updated_at)"
-	} else {
-		upsert = " ON CONFLICT(id) DO UPDATE SET model_name=excluded.model_name, provider=excluded.provider, provider_model=excluded.provider_model, base_url=excluded.base_url, api_key=excluded.api_key, encrypted=excluded.encrypted, timeout=excluded.timeout, max_retries=excluded.max_retries, retry_interval=excluded.retry_interval, weight=excluded.weight, enabled=excluded.enabled, tags=excluded.tags, updated_at=excluded.updated_at"
-	}
+	upsert := s.dialect.upsert([]string{"id"}, []string{
+		"model_name", "provider", "provider_model", "base_url", "api_key", "encrypted", "timeout", "max_retries", "retry_interval", "weight", "enabled", "tags", "updated_at"})
 	_, err = s.db.Exec(
 		`INSERT INTO model_configs (id, model_name, provider, provider_model, base_url, api_key, encrypted, timeout, max_retries, retry_interval, weight, enabled, tags, created_at, updated_at)
 		 VALUES (?,?,?,?,?,?,1,?,?,?,?,?,?,?,?)`+upsert,
@@ -619,12 +606,10 @@ func (s *SQLStorage) GetRateLimitConfig(tenantID, modelName string) (*plugin.Rat
 }
 
 func (s *SQLStorage) SaveRateLimitConfig(cfg *plugin.RateLimitConfig) error {
-	var upsert string
-	if s.isMySQL() {
-		upsert = " ON DUPLICATE KEY UPDATE requests_per_sec=VALUES(requests_per_sec), tokens_per_min=VALUES(tokens_per_min), strategy=VALUES(strategy), enabled=VALUES(enabled), updated_at=VALUES(updated_at)"
-	} else {
-		upsert = " ON CONFLICT(id) DO UPDATE SET tenant_id=excluded.tenant_id, model_name=excluded.model_name, requests_per_sec=excluded.requests_per_sec, tokens_per_min=excluded.tokens_per_min, strategy=excluded.strategy, enabled=excluded.enabled, updated_at=excluded.updated_at"
-	}
+	// 历史上 mysql 分支漏更 tenant_id/model_name，此处统一为全列更新(与 sqlite 对齐)
+	upsert := s.dialect.upsert([]string{"id"}, []string{
+		"tenant_id", "model_name", "requests_per_sec", "tokens_per_min",
+		"strategy", "enabled", "updated_at"})
 	_, err := s.db.Exec(
 		`INSERT INTO rate_limit_configs (id, tenant_id, model_name, requests_per_sec, tokens_per_min, strategy, enabled, created_at, updated_at)
 		 VALUES (?,?,?,?,?,?,?,?,?)`+upsert,
@@ -731,12 +716,8 @@ func (s *SQLStorage) SaveUpstream(up *plugin.Upstream) error {
 	if err != nil {
 		return fmt.Errorf("encrypt upstream api key: %w", err)
 	}
-	var upsert string
-	if s.isMySQL() {
-		upsert = " ON DUPLICATE KEY UPDATE model_config_id=VALUES(model_config_id), base_url=VALUES(base_url), api_key=VALUES(api_key), encrypted=VALUES(encrypted), weight=VALUES(weight), enabled=VALUES(enabled), updated_at=VALUES(updated_at)"
-	} else {
-		upsert = " ON CONFLICT(id) DO UPDATE SET model_config_id=excluded.model_config_id, base_url=excluded.base_url, api_key=excluded.api_key, encrypted=excluded.encrypted, weight=excluded.weight, enabled=excluded.enabled, updated_at=excluded.updated_at"
-	}
+	upsert := s.dialect.upsert([]string{"id"}, []string{
+		"model_config_id", "base_url", "api_key", "encrypted", "weight", "enabled", "updated_at"})
 	_, err = s.db.Exec(
 		`INSERT INTO upstreams (id, model_config_id, base_url, api_key, encrypted, weight, enabled, created_at, updated_at)
 		 VALUES (?,?,?,?,1,?,?,?,?)`+upsert,
@@ -882,12 +863,7 @@ func (s *SQLStorage) SavePrivacyRule(rule *plugin.PrivacyRule) error {
 		rule.CreatedAt = now
 	}
 	rule.UpdatedAt = now
-	upsert := ""
-	if s.isMySQL() {
-		upsert = " ON DUPLICATE KEY UPDATE rule_type=VALUES(rule_type), name=VALUES(name), pattern=VALUES(pattern), replacement=VALUES(replacement), scope=VALUES(scope), enabled=VALUES(enabled), updated_at=VALUES(updated_at)"
-	} else {
-		upsert = " ON CONFLICT(id) DO UPDATE SET rule_type=excluded.rule_type, name=excluded.name, pattern=excluded.pattern, replacement=excluded.replacement, scope=excluded.scope, enabled=excluded.enabled, updated_at=excluded.updated_at"
-	}
+	upsert := s.dialect.upsert([]string{"id"}, []string{"rule_type", "name", "pattern", "replacement", "scope", "enabled", "updated_at"})
 	if _, err := s.db.Exec(
 		"INSERT INTO privacy_rules ("+privacyRuleCols+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"+upsert,
 		rule.ID, rule.RuleType, rule.Name, rule.Pattern, rule.Replacement, rule.Scope,
@@ -944,12 +920,7 @@ func (s *SQLStorage) SavePrivacyWhitelistEntry(entry *plugin.PrivacyWhitelistEnt
 	if entry.CreatedAt.IsZero() {
 		entry.CreatedAt = time.Now()
 	}
-	upsert := ""
-	if s.isMySQL() {
-		upsert = " ON DUPLICATE KEY UPDATE pattern=VALUES(pattern), note=VALUES(note), enabled=VALUES(enabled)"
-	} else {
-		upsert = " ON CONFLICT(id) DO UPDATE SET pattern=excluded.pattern, note=excluded.note, enabled=excluded.enabled"
-	}
+	upsert := s.dialect.upsert([]string{"id"}, []string{"pattern", "note", "enabled"})
 	if _, err := s.db.Exec(
 		"INSERT INTO privacy_whitelist ("+privacyWhitelistCols+") VALUES (?, ?, ?, ?, ?)"+upsert,
 		entry.ID, entry.Pattern, entry.Note, boolToInt(entry.Enabled), timeToMS(entry.CreatedAt),
@@ -1066,12 +1037,7 @@ func (s *SQLStorage) SaveTenant(tenant *plugin.Tenant) error {
 		tenant.CreatedAt = now
 	}
 	tenant.UpdatedAt = now
-	upsert := ""
-	if s.isMySQL() {
-		upsert = " ON DUPLICATE KEY UPDATE name=VALUES(name), status=VALUES(status), config=VALUES(config), updated_at=VALUES(updated_at)"
-	} else {
-		upsert = " ON CONFLICT(id) DO UPDATE SET name=excluded.name, status=excluded.status, config=excluded.config, updated_at=excluded.updated_at"
-	}
+	upsert := s.dialect.upsert([]string{"id"}, []string{"name", "status", "config", "updated_at"})
 	if _, err := s.db.Exec(
 		"INSERT INTO tenants ("+tenantCols+") VALUES (?, ?, ?, ?, ?, ?, ?)"+upsert,
 		tenant.ID, tenant.Name, tenant.Code, tenant.Status, marshalJSON(tenant.Config),
@@ -1163,12 +1129,7 @@ func (s *SQLStorage) SaveRole(role *plugin.Role) error {
 		role.CreatedAt = now
 	}
 	role.UpdatedAt = now
-	upsert := ""
-	if s.isMySQL() {
-		upsert = " ON DUPLICATE KEY UPDATE name=VALUES(name), tenant_id=VALUES(tenant_id), permissions=VALUES(permissions), updated_at=VALUES(updated_at)"
-	} else {
-		upsert = " ON CONFLICT(id) DO UPDATE SET name=excluded.name, tenant_id=excluded.tenant_id, permissions=excluded.permissions, updated_at=excluded.updated_at"
-	}
+	upsert := s.dialect.upsert([]string{"id"}, []string{"name", "tenant_id", "permissions", "updated_at"})
 	if _, err := s.db.Exec(
 		"INSERT INTO roles ("+roleCols+") VALUES (?, ?, ?, ?, ?, ?)"+upsert,
 		role.ID, role.Name, role.TenantID, marshalJSON(role.Permissions),
@@ -1364,12 +1325,7 @@ func (s *SQLStorage) SaveComplianceReport(report *plugin.ComplianceReport) error
 	if err != nil {
 		return fmt.Errorf("序列化报表内容: %w", err)
 	}
-	upsert := ""
-	if s.isMySQL() {
-		upsert = " ON DUPLICATE KEY UPDATE id=VALUES(id), period_end=VALUES(period_end), generated_at=VALUES(generated_at), content=VALUES(content)"
-	} else {
-		upsert = " ON CONFLICT(period_type, period_start) DO UPDATE SET id=excluded.id, period_end=excluded.period_end, generated_at=excluded.generated_at, content=excluded.content"
-	}
+	upsert := s.dialect.upsert([]string{"period_type", "period_start"}, []string{"id", "period_end", "generated_at", "content"})
 	if _, err := s.db.Exec(
 		"INSERT INTO compliance_reports ("+complianceReportCols+") VALUES (?, ?, ?, ?, ?, ?)"+upsert,
 		report.ID, report.PeriodType, timeToMS(report.PeriodStart),
@@ -1461,12 +1417,7 @@ func (s *SQLStorage) SaveMCPServer(server *plugin.MCPServer) error {
 	if err != nil {
 		return fmt.Errorf("序列化 MCP 上游 headers: %w", err)
 	}
-	upsert := ""
-	if s.isMySQL() {
-		upsert = " ON DUPLICATE KEY UPDATE name=VALUES(name), endpoint=VALUES(endpoint), headers=VALUES(headers), enabled=VALUES(enabled), updated_at=VALUES(updated_at)"
-	} else {
-		upsert = " ON CONFLICT(id) DO UPDATE SET name=excluded.name, endpoint=excluded.endpoint, headers=excluded.headers, enabled=excluded.enabled, updated_at=excluded.updated_at"
-	}
+	upsert := s.dialect.upsert([]string{"id"}, []string{"name", "endpoint", "headers", "enabled", "updated_at"})
 	if _, err := s.db.Exec(
 		"INSERT INTO mcp_servers ("+mcpServerCols+") VALUES (?, ?, ?, ?, ?, ?, ?)"+upsert,
 		server.ID, server.Name, server.Endpoint, string(headersJSON),
