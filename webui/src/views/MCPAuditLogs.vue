@@ -10,6 +10,16 @@
           <el-option label="失败" value="failed" />
         </el-select>
       </el-form-item>
+      <el-form-item label="时间">
+        <el-date-picker
+          v-model="range"
+          type="daterange"
+          value-format="YYYY-MM-DD"
+          start-placeholder="开始"
+          end-placeholder="结束"
+          style="width: 240px"
+        />
+      </el-form-item>
       <el-form-item>
         <el-button type="primary" @click="reload">查询</el-button>
       </el-form-item>
@@ -83,6 +93,7 @@ const rows = ref<MCPAuditLogItem[]>([])
 const total = ref(0)
 const loading = ref(false)
 const query = reactive({ page: 1, size: 20, tool: '', status: '' })
+const range = ref<[string, string] | null>(null)
 
 const detailVisible = ref(false)
 const detail = ref<MCPAuditLogItem | null>(null)
@@ -108,7 +119,9 @@ async function load(): Promise<void> {
       page: query.page,
       size: query.size,
       tool: query.tool || undefined,
-      status: query.status || undefined
+      status: query.status || undefined,
+      start: range.value?.[0] || undefined,
+      end: range.value?.[1] || undefined
     })
     rows.value = data.items ?? []
     total.value = data.total
@@ -121,6 +134,7 @@ function reload(): void {
   query.page = 1
   load()
 }
+
 
 async function openDetail(row: MCPAuditLogItem): Promise<void> {
   detail.value = await getMCPAuditLog(row.id)

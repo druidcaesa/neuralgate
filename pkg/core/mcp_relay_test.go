@@ -409,3 +409,116 @@ func TestPipelineMCPBranchLimiterDegrade(t *testing.T) {
 		t.Errorf("真超限应 429: %d %s", rec.Code, rec.Body.String())
 	}
 }
+
+// TestMCPRelayNotificationPassthrough 通知(无 ID)带会话原样转发，上游状态透传
+func TestMCPRelayNotificationPassthrough(t *testing.T) {
+	upSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var probe mcpRequestProbe
+		_ = json.NewDecoder(r.Body).Decode(&probe)
+		if strings.HasPrefix(probe.Method, "notifications/") {
+			w.WriteHeader(http.StatusAccepted) // 202 无体:通知的规范应答
+			return
+		}
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{}}`))
+	}))
+	defer upSrv.Close()
+	storage := oss.NewMemStorage()
+	_ = storage.SaveMCPServer(&plugin.MCPServer{ID: mcpTestServerID, Name: "u1",
+		Endpoint: upSrv.URL, Enabled: true})
+	relay := NewMCPRelay(storage, nil, nil, upSrv.Client())
+
+	sid := initializeAndGetSession(t, relay)
+	rec := postRPC(t, relay,
+		`{"jsonrpc":"2.0","method":"notifications/initialized"}`, sid)
+	if rec.Code != http.StatusAccepted {
+		t.Errorf("通知应透传上游 202, got %d", rec.Code)
+	}
+}
+
+// TestMCPRelayHeadersMerge 自定义头到达上游且不可覆盖协议保留键
+func TestMCPRelayHeadersMerge(t *testing.T) {
+	var gotCT, gotCustom, gotSid string
+	upSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotCT = r.Header.Get("Content-Type")
+		gotCustom = r.Header.Get("X-Custom")
+		gotSid = r.Header.Get("Mcp-Session-Id")
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{}}`))
+	}))
+	defer upSrv.Close()
+	storage := oss.NewMemStorage()
+	_ = storage.SaveMCPServer(&plugin.MCPServer{
+		ID: mcpTestServerID, Name: "u1", Endpoint: upSrv.URL, Enabled: true,
+		Headers: map[string]string{
+			"X-Custom":       "yes",
+			"Content-Type":   "text/plain",     // 保留键: 应被忽略
+			"Mcp-Session-Id": "forged-session", // 保留键: 应被忽略
+		},
+	})
+	relay := NewMCPRelay(storage, nil, nil, upSrv.Client())
+	postRPC(t, relay, initRequestBody, "")
+	if gotCT != "application/json" {
+		t.Errorf("保留键 Content-Type 不应被配置覆盖, got %s", gotCT)
+	}
+	if gotCustom != "yes" {
+		t.Errorf("自定义头应到达上游, got %q", gotCustom)
+	}
+	if gotSid == "forged-session" {
+		t.Error("initialize 跳不应携带伪造的上游会话")
+	}
+}
+
+// TestMCPRelayBodyTooLarge 超 1MB 请求体回 413
+func TestMCPRelayBodyTooLarge(t *testing.T) {
+	upSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer upSrv.Close()
+	storage := oss.NewMemStorage()
+	_ = storage.SaveMCPServer(&plugin.MCPServer{ID: mcpTestServerID, Name: "u1",
+		Endpoint: upSrv.URL, Enabled: true})
+	relay := NewMCPRelay(storage, nil, nil, upSrv.Client())
+
+	big := `{"jsonrpc":"2.0","id":1,"method":"ping","pad":"` +
+		strings.Repeat("x", 1<<20+64) + `"}`
+	req := httptest.NewRequest(http.MethodPost,
+		"/v1/mcp/servers/"+mcpTestServerID+"/mcp", strings.NewReader(big))
+	rec := httptest.NewRecorder()
+	relay.ServeHTTP(rec, req)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("超限体应 413, got %d", rec.Code)
+	}
+}
+
+// TestPipelineMCPBranch429Shape 真实超限回 JSON-RPC 形状 429
+func TestPipelineMCPBranch429Shape(t *testing.T) {
+	upSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer upSrv.Close()
+	storage := oss.NewMemStorage()
+	_ = storage.SaveMCPServer(&plugin.MCPServer{ID: mcpTestServerID, Name: "u1",
+		Endpoint: upSrv.URL, Enabled: true})
+	rawKey := "ng-mcp-429-key"
+	sum := sha256.Sum256([]byte(rawKey))
+	_ = storage.SaveAPIKey(&plugin.APIKey{
+		ID: "k429", KeyHash: hex.EncodeToString(sum[:]), Name: "k",
+		Status: plugin.APIKeyStatusActive, Quota: -1,
+	})
+	denyLimiter := &denyLimiterStub{}
+	p := NewPipeline(storage, denyLimiter, nil, nil)
+	p.SetMCPRelay(NewMCPRelay(storage, nil, nil, upSrv.Client()))
+	h := p.Build(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("超限时不应到达下游")
+	}))
+	req := httptest.NewRequest(http.MethodPost,
+		"/v1/mcp/servers/"+mcpTestServerID+"/mcp", strings.NewReader(initRequestBody))
+	req.Header.Set("Authorization", "Bearer "+rawKey)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusTooManyRequests || !strings.Contains(rec.Body.String(), "-32603") {
+		t.Errorf("超限应 429/-32603: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// denyLimiterStub 恒拒绝的限流桩
+type denyLimiterStub struct {
+	plugin.RateLimitPlugin
+}
+
+func (s *denyLimiterStub) Allow(string, string, int) (bool, int64, error) { return false, 0, nil }

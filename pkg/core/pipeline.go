@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/druidcaesa/neuralgate/pkg/adapter"
+	"github.com/druidcaesa/neuralgate/pkg/mcp"
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
 )
 
@@ -88,9 +89,10 @@ func (p *Pipeline) mcpBranch() Middleware {
 			if p.mcpRelay != nil && strings.HasPrefix(r.URL.Path, MCPPathPrefix) {
 				if rc, ok := RequestContextFrom(r.Context()); ok && rc != nil && p.rateLimiter != nil {
 					allowed, _, err := p.rateLimiter.Allow(rc.TenantID, "", 0)
-					// 限流器内部异常降级放行(可用性优先,与 chat 链口径一致)；仅真实超限回 429
+					// 限流器内部异常降级放行(可用性优先,与 chat 链口径一致)；仅真实超限回 429。
+					// MCP 端点错误体用 JSON-RPC 形状(与中继其余拒绝路径一致)
 					if err == nil && !allowed {
-						writeOpenAIError(w, http.StatusTooManyRequests, "rate_limit_exceeded", "rate_limit_exceeded", "rate limit exceeded")
+						mcp.WriteJSONRPCError(w, http.StatusTooManyRequests, nil, mcp.CodeInternalError, "rate limit exceeded")
 						return
 					}
 				}

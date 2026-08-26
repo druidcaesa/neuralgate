@@ -82,7 +82,11 @@ func (r *MCPRelay) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		// 直连中继（未过鉴权链，测试场景）：构造最小上下文保证审计字段可用
 		rc = &RequestContext{RequestID: uuid.NewString(), StartTime: time.Now(), RequestPath: req.URL.Path}
 	}
-	serverID := parseMCPServerID(req.URL.Path)
+	serverID, okPath := parseMCPServerID(req.URL.Path)
+	if !okPath {
+		mcp.WriteJSONRPCError(w, http.StatusNotFound, nil, mcp.CodeInvalidRequest, "unknown mcp endpoint")
+		return
+	}
 	srv, err := r.storage.GetMCPServer(serverID)
 	if err != nil || !srv.Enabled {
 		mcp.WriteJSONRPCError(w, http.StatusNotFound, nil, mcp.CodeInvalidRequest, "unknown mcp server")
@@ -95,7 +99,12 @@ func (r *MCPRelay) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	body, err := io.ReadAll(http.MaxBytesReader(w, req.Body, mcpMaxBodyBytes))
 	if err != nil {
-		mcp.WriteJSONRPCError(w, http.StatusRequestEntityTooLarge, nil, mcp.CodeInvalidRequest, "request body too large")
+		var mbe *http.MaxBytesError
+		if errors.As(err, &mbe) {
+			mcp.WriteJSONRPCError(w, http.StatusRequestEntityTooLarge, nil, mcp.CodeInvalidRequest, "request body too large")
+		} else {
+			mcp.WriteJSONRPCError(w, http.StatusBadRequest, nil, mcp.CodeInvalidRequest, "failed to read request body")
+		}
 		return
 	}
 	rpcReq, perr := mcp.ParseRequest(body)
@@ -174,10 +183,26 @@ func (r *MCPRelay) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// JSON 路径：旁路截断缓冲后原样写给客户端
 	w.WriteHeader(upResp.StatusCode)
 	tee := cappedBuffer{cap: mcpAuditCapBytes}
-	_, _ = io.Copy(io.MultiWriter(w, &tee), upResp.Body)
+	_, copyErr := io.Copy(io.MultiWriter(w, &tee), upResp.Body)
 	if isToolCall {
 		final := parseFinalResponse(tee.buf.String(), rpcReq.ID)
-		r.emitToolCallFromResponse(rc, callerAgent, callParams, final, tee.buf.String(), upResp.StatusCode)
+		status, msg := auditStatusOf(final, upResp.StatusCode)
+		if copyErr != nil {
+			// 客户端中途断开：不再谎报 success
+			status, msg = plugin.MCPStatusFailed, "client disconnected mid-response"
+		}
+		entry := r.buildToolCallEntry(rc, callerAgent, callParams,
+			responseResultTextOf(final, tee.buf.String()), status, msg)
+		entry.DurationMS = r.elapsed(rc.StartTime)
+		if r.hook != nil {
+			r.hook.OnToolCall(entry)
+		}
+		if r.auditor != nil {
+			_ = r.auditor.Finalize(rc.RequestID, &plugin.AuditMeta{
+				ResponseStatus: upResp.StatusCode,
+				Duration:       entry.DurationMS,
+			})
+		}
 	}
 }
 
@@ -219,8 +244,20 @@ func (r *MCPRelay) forward(ctx context.Context, srv *plugin.MCPServer, sess *mcp
 	return r.client.Do(upReq)
 }
 
+// upstreamReservedHeaders 中继自身管理的协议头：管理员配置的
+// srv.Headers 不得覆盖，防止会话/内容协商被配置项意外破坏
+var upstreamReservedHeaders = map[string]bool{
+	"Mcp-Session-Id": true,
+	"Accept":         true,
+	"Content-Type":   true,
+	"Host":           true,
+}
+
 func mergeUpstreamHeaders(req *http.Request, srv *plugin.MCPServer) {
 	for k, v := range srv.Headers {
+		if upstreamReservedHeaders[k] || upstreamReservedHeaders[http.CanonicalHeaderKey(k)] {
+			continue
+		}
 		req.Header.Set(k, v)
 	}
 }
@@ -319,8 +356,8 @@ func (r *MCPRelay) buildToolCallEntry(rc *RequestContext, callerAgent string, pa
 		TenantID:      rc.TenantID,
 		APIKeyID:      rc.APIKeyID,
 		ToolName:      params.Name,
-		ToolArguments: truncateForAudit(string(params.Arguments)),
-		ToolResult:    truncateForAudit(resultText),
+		ToolArguments: string(params.Arguments),
+		ToolResult:    resultText,
 		CallerAgent:   callerAgent,
 		Status:        status,
 		ErrorMessage:  errMsg,
@@ -387,13 +424,18 @@ func truncateForAudit(s string) string {
 	return s[:mcpAuditCapBytes] + "[truncated]"
 }
 
-func parseMCPServerID(path string) string {
+// parseMCPServerID 解析 /v1/mcp/servers/{id}/mcp 中的 {id}；
+// 缺少 /mcp 后缀或含多余路径段视为非法端点(false)
+func parseMCPServerID(path string) (string, bool) {
 	rest := strings.TrimPrefix(path, MCPPathPrefix)
+	if !strings.HasSuffix(rest, "/mcp") {
+		return "", false
+	}
 	id := strings.TrimSuffix(rest, "/mcp")
 	if id == "" || strings.Contains(id, "/") {
-		return "\x00invalid" // 必然查不到存储记录，走统一 404 分支
+		return "", false
 	}
-	return id
+	return id, true
 }
 
 func requestAPIKeyID(req *http.Request) string {
@@ -421,3 +463,22 @@ func (c *cappedBuffer) Write(p []byte) (int, error) {
 }
 
 func (c *cappedBuffer) String() string { return c.buf.String() }
+
+// auditStatusOf 由最终响应与 HTTP 状态推导审计状态与失败原因
+func auditStatusOf(final *mcp.RPCResponse, httpStatus int) (string, string) {
+	if final != nil {
+		return responseStatusOf(final), responseErrorMessage(final)
+	}
+	if httpStatus >= 300 {
+		return plugin.MCPStatusFailed, "upstream returned non-2xx"
+	}
+	return plugin.MCPStatusSuccess, ""
+}
+
+// responseResultTextOf 最终响应文本；无法定位最终响应时退回原始体
+func responseResultTextOf(final *mcp.RPCResponse, rawBody string) string {
+	if final != nil {
+		return responseResultText(final)
+	}
+	return rawBody
+}
