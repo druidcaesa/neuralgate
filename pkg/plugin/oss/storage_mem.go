@@ -46,6 +46,7 @@ type MemStorage struct {
 	roles             map[string]*plugin.Role                  // id -> 角色
 	adminOpLogs       []*plugin.AdminOperationLog              // 按写入顺序
 	complianceReports []*plugin.ComplianceReport               // 按写入顺序(查询时排序)
+	mcpServers        map[string]*plugin.MCPServer             // id -> MCP 上游配置
 }
 
 // NewMemStorage 创建内存存储
@@ -61,6 +62,7 @@ func NewMemStorage() *MemStorage {
 		privacyWhitelist: make(map[string]*plugin.PrivacyWhitelistEntry),
 		tenants:          make(map[string]*plugin.Tenant),
 		roles:            make(map[string]*plugin.Role),
+		mcpServers:       make(map[string]*plugin.MCPServer),
 	}
 }
 
@@ -899,4 +901,65 @@ func (s *MemStorage) CountComplianceReports() (int64, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return int64(len(s.complianceReports)), nil
+}
+
+// ===== MCP 上游配置(E7) =====
+
+// SaveMCPServer UPSERT：按 id 覆盖，ID 为空时自动生成
+func (s *MemStorage) SaveMCPServer(server *plugin.MCPServer) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if server.ID == "" {
+		server.ID = uuid.NewString()
+	}
+	now := time.Now()
+	if server.CreatedAt.IsZero() {
+		server.CreatedAt = now
+	}
+	server.UpdatedAt = now
+	stored := *server
+	s.mcpServers[stored.ID] = &stored
+	return nil
+}
+
+// GetMCPServer 按主键取配置，返回副本防调用方改动穿透
+func (s *MemStorage) GetMCPServer(id string) (*plugin.MCPServer, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if srv, ok := s.mcpServers[id]; ok {
+		cp := *srv
+		return &cp, nil
+	}
+	return nil, ErrNotFound
+}
+
+// ListMCPServers 分页列表：name 升序（管理面展示稳定序）
+func (s *MemStorage) ListMCPServers(page, size int) ([]*plugin.MCPServer, int64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	all := make([]*plugin.MCPServer, 0, len(s.mcpServers))
+	for _, srv := range s.mcpServers {
+		all = append(all, srv)
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].Name < all[j].Name })
+	page, size = normalizePage(page, size)
+	start := min((page-1)*size, len(all))
+	end := min(start+size, len(all))
+	out := make([]*plugin.MCPServer, 0, end-start)
+	for _, srv := range all[start:end] {
+		cp := *srv
+		out = append(out, &cp)
+	}
+	return out, int64(len(all)), nil
+}
+
+// DeleteMCPServer 物理删除
+func (s *MemStorage) DeleteMCPServer(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.mcpServers[id]; !ok {
+		return ErrNotFound
+	}
+	delete(s.mcpServers, id)
+	return nil
 }

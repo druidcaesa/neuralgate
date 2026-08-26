@@ -1422,3 +1422,99 @@ func (s *SQLStorage) CountComplianceReports() (int64, error) {
 	err := s.db.QueryRow("SELECT COUNT(*) FROM compliance_reports").Scan(&total)
 	return total, err
 }
+
+// ===== MCP 上游配置(E7) =====
+
+const mcpServerCols = "id, name, endpoint, headers, enabled, created_at, updated_at"
+
+func scanMCPServer(row interface{ Scan(...interface{}) error }) (*plugin.MCPServer, error) {
+	srv := &plugin.MCPServer{}
+	var headersJSON string
+	var enabledInt int
+	var createdMS, updatedMS int64
+	if err := row.Scan(&srv.ID, &srv.Name, &srv.Endpoint, &headersJSON, &enabledInt, &createdMS, &updatedMS); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	srv.Enabled = enabledInt != 0
+	srv.CreatedAt = msToTime(createdMS)
+	srv.UpdatedAt = msToTime(updatedMS)
+	if err := json.Unmarshal([]byte(headersJSON), &srv.Headers); err != nil {
+		return nil, fmt.Errorf("解析 MCP 上游 headers: %w", err)
+	}
+	return srv, nil
+}
+
+// SaveMCPServer UPSERT：按 id 覆盖(保留原 created_at)。MySQL 用 VALUES(col)，SQLite 用 excluded.col
+func (s *SQLStorage) SaveMCPServer(server *plugin.MCPServer) error {
+	now := time.Now()
+	if server.ID == "" {
+		server.ID = uuid.NewString()
+	}
+	if server.CreatedAt.IsZero() {
+		server.CreatedAt = now
+	}
+	server.UpdatedAt = now
+	headersJSON, err := json.Marshal(server.Headers)
+	if err != nil {
+		return fmt.Errorf("序列化 MCP 上游 headers: %w", err)
+	}
+	upsert := ""
+	if s.isMySQL() {
+		upsert = " ON DUPLICATE KEY UPDATE name=VALUES(name), endpoint=VALUES(endpoint), headers=VALUES(headers), enabled=VALUES(enabled), updated_at=VALUES(updated_at)"
+	} else {
+		upsert = " ON CONFLICT(id) DO UPDATE SET name=excluded.name, endpoint=excluded.endpoint, headers=excluded.headers, enabled=excluded.enabled, updated_at=excluded.updated_at"
+	}
+	if _, err := s.db.Exec(
+		"INSERT INTO mcp_servers ("+mcpServerCols+") VALUES (?, ?, ?, ?, ?, ?, ?)"+upsert,
+		server.ID, server.Name, server.Endpoint, string(headersJSON),
+		boolToInt(server.Enabled), timeToMS(server.CreatedAt), timeToMS(server.UpdatedAt),
+	); err != nil {
+		return fmt.Errorf("save mcp server: %w", err)
+	}
+	return nil
+}
+
+// ListMCPServers 分页列表：name 升序（与 MemStorage 排序语义一致）
+func (s *SQLStorage) ListMCPServers(page, size int) ([]*plugin.MCPServer, int64, error) {
+	page, size = normalizePage(page, size)
+	var total int64
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM mcp_servers").Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count mcp servers: %w", err)
+	}
+	rows, err := s.db.Query(
+		"SELECT "+mcpServerCols+" FROM mcp_servers ORDER BY name ASC LIMIT ? OFFSET ?",
+		size, (page-1)*size)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list mcp servers: %w", err)
+	}
+	defer rows.Close()
+	out := make([]*plugin.MCPServer, 0, size)
+	for rows.Next() {
+		srv, err := scanMCPServer(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		out = append(out, srv)
+	}
+	return out, total, rows.Err()
+}
+
+func (s *SQLStorage) GetMCPServer(id string) (*plugin.MCPServer, error) {
+	row := s.db.QueryRow("SELECT "+mcpServerCols+" FROM mcp_servers WHERE id = ?", id)
+	return scanMCPServer(row)
+}
+
+// DeleteMCPServer 物理删除；未命中返回 ErrNotFound 与内存实现语义一致
+func (s *SQLStorage) DeleteMCPServer(id string) error {
+	res, err := s.db.Exec("DELETE FROM mcp_servers WHERE id = ?", id)
+	if err != nil {
+		return fmt.Errorf("delete mcp server: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
