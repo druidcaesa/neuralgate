@@ -68,12 +68,14 @@ func (s *ReportScheduler) Start() {
 	go s.loop()
 }
 
-// Stop 停止循环并等待退出；重复调用与未 Start 均为安全空操作
+// Stop 停止循环并等待退出；重复调用与未 Start 均为安全空操作。
+// 检查并关闭 stopCh 全程持 mu，保证并发 Stop 仅首个调用者执行 close，
+// 其余落入已关闭分支只做等待；等 doneCh 在锁外进行——loop 虽不取锁，
+// 但 Start 持锁跑补扫，持锁等待会与之互锁。未 Start 时不等待直接返回
 func (s *ReportScheduler) Stop() {
 	s.mu.Lock()
-	started := s.started
-	s.mu.Unlock()
-	if !started {
+	if !s.started {
+		s.mu.Unlock()
 		return
 	}
 	select {
@@ -81,6 +83,8 @@ func (s *ReportScheduler) Stop() {
 	default:
 		close(s.stopCh)
 	}
+	s.mu.Unlock()
+
 	<-s.doneCh
 }
 
