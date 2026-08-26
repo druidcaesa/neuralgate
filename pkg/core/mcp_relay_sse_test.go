@@ -20,6 +20,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
 	"github.com/druidcaesa/neuralgate/pkg/plugin/oss"
@@ -81,7 +82,8 @@ func TestMCPRelayToolsCallSSE(t *testing.T) {
 	}
 }
 
-// TestMCPRelaySSENoFinalResponse 流被截断无最终响应 → 不落工具调用审计
+// TestMCPRelaySSENoFinalResponse 流被截断无最终响应 → 不落工具调用审计，
+// 但须回收常规审计挂起项（MarkDisconnect），避免 pending 泄漏至进程退出
 func TestMCPRelaySSENoFinalResponse(t *testing.T) {
 	upSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -93,16 +95,31 @@ func TestMCPRelaySSENoFinalResponse(t *testing.T) {
 	_ = storage.SaveMCPServer(&plugin.MCPServer{ID: mcpTestServerID, Name: "u1",
 		Endpoint: upSrv.URL, Enabled: true})
 	hook := &hookRecorder{}
-	relay := NewMCPRelay(storage, nil, hook, upSrv.Client())
+	auditor := &recordingAuditor{}
+	relay := NewMCPRelay(storage, auditor, hook, upSrv.Client())
 
-	sid := initializeAndGetSession(t, relay)
-	rec := postRPC(t, relay,
+	// 注入确定 RequestID 的上下文，便于断言挂起项按该 ID 回收
+	rc := &RequestContext{RequestID: "req-sse-no-final", StartTime: time.Now()}
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		relay.ServeHTTP(w, r.WithContext(WithRequestContext(r.Context(), rc)))
+	})
+
+	sid := initializeAndGetSession(t, handler)
+	rec := postRPC(t, handler,
 		`{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"x"}}`, sid)
 	if rec.Code != 200 {
 		t.Fatalf("透传本身应成功: %d", rec.Code)
 	}
 	if entries := hook.all(); len(entries) != 0 {
 		t.Errorf("无最终响应不应落审计, got %+v", entries)
+	}
+	auditor.mu.Lock()
+	defer auditor.mu.Unlock()
+	if len(auditor.finalized) != 0 {
+		t.Errorf("无最终响应不应 Finalize, got %v", auditor.finalized)
+	}
+	if len(auditor.disconnects) != 1 || auditor.disconnects[0] != rc.RequestID {
+		t.Errorf("应恰好按 %q 回收一次挂起项, got %v", rc.RequestID, auditor.disconnects)
 	}
 }
 

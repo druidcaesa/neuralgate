@@ -250,7 +250,12 @@ func (r *MCPRelay) relaySSE(w http.ResponseWriter, upResp *http.Response, target
 		}
 	}
 	if final == nil {
-		return // 未拿到最终响应即结束（断连/上游异常），不落工具调用审计
+		// 未拿到最终响应即结束(客户端断连/上游截断)：回收常规审计挂起项，
+		// 避免 pending 泄漏至进程退出；信息不足不落工具调用审计(跳过 hook)
+		if r.auditor != nil {
+			_ = r.auditor.MarkDisconnect(rc.RequestID, "upstream stream ended without final response", nil)
+		}
+		return
 	}
 	entry := r.buildToolCallEntry(rc, callerAgent, params, responseResultText(final),
 		responseStatusOf(final), "")
