@@ -26,8 +26,9 @@ import (
 	"go.uber.org/zap"
 )
 
-// buildMCPRelay OSS 版：中继通道照常开放（OSS+ 透传语义），无审计钩子
-func buildMCPRelay(core.LicenseGate, config.Config, plugin.StoragePlugin,
-	plugin.AuditPipeline, *zap.Logger) *core.MCPRelay {
-	return core.NewMCPRelay(nil, nil, nil, &http.Client{Timeout: 60 * time.Second})
+// buildMCPRelay OSS 版：中继通道照常开放（OSS+ 透传语义），无审计钩子。
+// storage 必须真实传入——中继依赖它解析上游配置
+func buildMCPRelay(_ core.LicenseGate, _ config.Config, storage plugin.StoragePlugin,
+	_ plugin.AuditPipeline, _ *zap.Logger) *core.MCPRelay {
+	return core.NewMCPRelay(storage, nil, nil, &http.Client{Timeout: 60 * time.Second})
 }
