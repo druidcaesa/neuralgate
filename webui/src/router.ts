@@ -17,6 +17,7 @@ const router = createRouter({
     { path: '/roles', name: 'roles', component: () => import('./views/Roles.vue'), meta: { title: '角色管理' } },
     { path: '/users', name: 'users', component: () => import('./views/Users.vue'), meta: { title: '用户管理' } },
     { path: '/operation-logs', name: 'operation-logs', component: () => import('./views/OperationLogs.vue'), meta: { title: '操作日志' } },
+    { path: '/compliance-reports', name: 'compliance-reports', component: () => import('./views/ComplianceReports.vue'), meta: { title: '合规报表' } },
     { path: '/system', name: 'system', component: () => import('./views/SystemInfo.vue'), meta: { title: '系统信息' } }
   ]
 })

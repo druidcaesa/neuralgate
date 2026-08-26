@@ -15,6 +15,7 @@
         <el-menu-item v-if="hasPerm('rbac:read')" index="/roles"><el-icon><Avatar /></el-icon>角色管理</el-menu-item>
         <el-menu-item v-if="hasPerm('rbac:read')" index="/users"><el-icon><UserFilled /></el-icon>用户管理</el-menu-item>
         <el-menu-item v-if="hasPerm('system:read')" index="/operation-logs"><el-icon><List /></el-icon>操作日志</el-menu-item>
+        <el-menu-item v-if="hasPerm('system:read')" index="/compliance-reports"><el-icon><DataAnalysis /></el-icon>合规报表</el-menu-item>
         <el-menu-item index="/system"><el-icon><Setting /></el-icon>系统信息</el-menu-item>
       </el-menu>
     </el-aside>
@@ -67,7 +68,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
   Cpu, Key, Document, Timer, Setting, Warning, User, ArrowDown, Lock, Bell,
-  OfficeBuilding, Avatar, UserFilled, List
+  OfficeBuilding, Avatar, UserFilled, List, DataAnalysis
 } from '@element-plus/icons-vue'
 import { changePassword, clearAdminSession, getAdminUsername, hasPerm } from './api/auth'
 
