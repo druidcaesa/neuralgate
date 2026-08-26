@@ -245,3 +245,12 @@ func (d *dynamicStorage) ListMCPServers(page, size int) ([]*plugin.MCPServer, in
 func (d *dynamicStorage) DeleteMCPServer(id string) error {
 	return d.impl.DeleteMCPServer(id)
 }
+
+// ===== MCP 工具调用审计(委托底层实现) =====
+
+func (d *dynamicStorage) SaveMCPAuditLog(entry *plugin.MCPAuditLog) error {
+	return d.impl.SaveMCPAuditLog(entry)
+}
+func (d *dynamicStorage) ListMCPAuditLogs(filter plugin.MCPAuditLogFilter, page, size int) ([]*plugin.MCPAuditLog, int64, error) {
+	return d.impl.ListMCPAuditLogs(filter, page, size)
+}
