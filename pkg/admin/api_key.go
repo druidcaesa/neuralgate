@@ -18,6 +18,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -178,4 +179,103 @@ func (s *AdminServer) deleteAPIKey(c *gin.Context) {
 func (s *AdminServer) tenantMismatch(c *gin.Context, recordTenantID string) bool {
 	forced := s.scopeTenant(c)
 	return forced != nil && recordTenantID != *forced
+}
+
+// ===== 批量操作(PRD 3.2 Enterprise) =====
+
+// apiKeyBatchCreateRequest 批量创建请求体：一次生成 N 个，明文列表仅此一次返回
+type apiKeyBatchCreateRequest struct {
+	NamePrefix    string     `json:"name_prefix" binding:"required,min=1,max=48"`
+	Count         int        `json:"count" binding:"min=1,max=100"`
+	TenantID      string     `json:"tenant_id"`
+	Quota         *int64     `json:"quota"` // 未传=无限(-1)
+	RateLimit     int        `json:"rate_limit"`
+	AllowedModels []string   `json:"allowed_models"`
+	ExpiresAt     *time.Time `json:"expires_at"`
+}
+
+// batchCreateAPIKeys POST /api/api-keys/batch-create：
+// 名称按 前缀-两位序号 生成；租户内用户强制归属自身租户(与单个创建一致)
+func (s *AdminServer) batchCreateAPIKeys(c *gin.Context) {
+	var req apiKeyBatchCreateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		Error(c, http.StatusBadRequest, 400, err.Error())
+		return
+	}
+	if req.Count < 1 || req.Count > 100 {
+		Error(c, http.StatusBadRequest, 400, "count 须为 1-100")
+		return
+	}
+	if req.RateLimit < 1 || req.RateLimit > 10000 {
+		req.RateLimit = 10
+	}
+	if forced := s.scopeTenant(c); forced != nil {
+		req.TenantID = *forced
+	}
+	now := time.Now()
+	items := make([]gin.H, 0, req.Count)
+	for i := 1; i <= req.Count; i++ {
+		buf := make([]byte, 16)
+		if _, err := rand.Read(buf); err != nil {
+			Error(c, http.StatusInternalServerError, 500, "failed to generate key")
+			return
+		}
+		rawKey := "ng-" + hex.EncodeToString(buf)
+		sum := sha256.Sum256([]byte(rawKey))
+		key := &plugin.APIKey{
+			ID:            uuid.NewString(),
+			KeyHash:       hex.EncodeToString(sum[:]),
+			KeyPrefix:     rawKey[:11],
+			TenantID:      req.TenantID,
+			Name:          req.NamePrefix + "-" + fmt.Sprintf("%02d", i),
+			Status:        plugin.APIKeyStatusActive,
+			Quota:         -1,
+			RateLimit:     req.RateLimit,
+			AllowedModels: req.AllowedModels,
+			ExpiresAt:     req.ExpiresAt,
+			CreatedAt:     now, UpdatedAt: now,
+		}
+		if req.Quota != nil {
+			key.Quota = *req.Quota
+		}
+		if err := s.storage.SaveAPIKey(key); err != nil {
+			Error(c, http.StatusInternalServerError, 500, "failed to save api key")
+			return
+		}
+		items = append(items, gin.H{
+			"id": key.ID, "key": rawKey, "key_prefix": key.KeyPrefix, "name": key.Name,
+		})
+	}
+	OK(c, gin.H{"items": items})
+}
+
+// apiKeyBatchDeleteRequest 批量删除请求体
+type apiKeyBatchDeleteRequest struct {
+	IDs []string `json:"ids" binding:"required,min=1,max=1000"`
+}
+
+// batchDeleteAPIKeys POST /api/api-keys/batch-delete：
+// 逐个删除并区分 deleted/missing；跨租户 id 计入 missing(与单个删除 404 同语义)
+func (s *AdminServer) batchDeleteAPIKeys(c *gin.Context) {
+	var req apiKeyBatchDeleteRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		Error(c, http.StatusBadRequest, 400, err.Error())
+		return
+	}
+	forced := s.scopeTenant(c)
+	deleted := 0
+	missing := []string{}
+	for _, id := range req.IDs {
+		k, err := s.storage.GetAPIKeyByID(id)
+		if err != nil || (forced != nil && k.TenantID != *forced) {
+			missing = append(missing, id)
+			continue
+		}
+		if err := s.storage.DeleteAPIKey(id); err != nil {
+			missing = append(missing, id)
+			continue
+		}
+		deleted++
+	}
+	OK(c, gin.H{"deleted": deleted, "missing": missing})
 }
