@@ -404,7 +404,7 @@ func (p *ProxyCore) buildConvertedRequest(r *http.Request, upstreamURL string, c
 
 // newUpstreamRequest 组装上游请求(URL/方法/头/上游Key)
 func (p *ProxyCore) newUpstreamRequest(r *http.Request, upstreamURL string, cfg *plugin.ModelConfig, body []byte) (*http.Request, error) {
-	outbound, err := http.NewRequest(r.Method, upstreamURL, bytes.NewReader(body))
+	outbound, err := http.NewRequestWithContext(r.Context(), r.Method, upstreamURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -426,14 +426,27 @@ func rcBody(r *http.Request) []byte {
 	return nil
 }
 
-// doWithRetry 转发并重试(连接错误/5xx 重试 MaxRetries 次,4xx 不重试)
+// sharedUpstreamTransport 上游连接池单例：复用空闲连接，杜绝每请求新建握手。
+// 各请求的超时差异由 per-request Client.Timeout 承担，传输层共享
+var sharedUpstreamTransport = &http.Transport{
+	MaxIdleConns:        200,
+	MaxIdleConnsPerHost: 50,
+	IdleConnTimeout:     90 * time.Second,
+	TLSHandshakeTimeout: 10 * time.Second,
+}
+
+// doWithRetry 转发并重试。收敛后的重试语义：
+//   - 连接类失败(未收到响应)：任何方法都可重试——请求未触达上游无副作用
+//   - 已收到响应的 5xx：仅幂等方法(GET/HEAD)自动重试；POST 等
+//     非幂等方法直接返回该响应（防重复副作用）
+//
 // 5xx 重试耗尽后返回最后一次响应(含 body),由调用方透传错误(502)
 func (p *ProxyCore) doWithRetry(req *http.Request, cfg *plugin.ModelConfig) (*http.Response, error) {
 	timeout := time.Duration(cfg.Timeout) * time.Second
 	if timeout <= 0 {
 		timeout = 60 * time.Second
 	}
-	client := &http.Client{Timeout: timeout}
+	client := &http.Client{Timeout: timeout, Transport: sharedUpstreamTransport}
 	bodyBytes, _ := io.ReadAll(req.Body) // 预先读出,供每次重试
 	var lastResp *http.Response
 	var lastErr error
@@ -453,6 +466,10 @@ func (p *ProxyCore) doWithRetry(req *http.Request, cfg *plugin.ModelConfig) (*ht
 			continue
 		}
 		if resp.StatusCode >= 500 {
+			if req.Method != http.MethodGet && req.Method != http.MethodHead {
+				// 非幂等方法不自动重试 5xx(防重复副作用),直接返回由调用方透传
+				return resp, nil
+			}
 			lastErr = fmt.Errorf("upstream status %d", resp.StatusCode)
 			// 保留最后一次 5xx 响应(含 body 供错误解析),释放之前的
 			if lastResp != nil {
@@ -571,7 +588,7 @@ func (p *ProxyCore) handlePassThrough(w http.ResponseWriter, r *http.Request, rc
 		}
 	}
 	upstreamURL := strings.TrimRight(cfg.BaseURL, "/") + r.URL.Path
-	outbound, err := http.NewRequest(r.Method, upstreamURL, bytes.NewReader(body))
+	outbound, err := http.NewRequestWithContext(r.Context(), r.Method, upstreamURL, bytes.NewReader(body))
 	if err != nil {
 		rc.ResponseStatus = http.StatusInternalServerError
 		rc.EndTime = time.Now()
