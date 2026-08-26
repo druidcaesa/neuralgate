@@ -18,6 +18,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -55,12 +56,13 @@ func (h *hookRecorder) all() []*plugin.MCPAuditLog {
 	return h.entries
 }
 
-// recordingAuditor 只关心 Finalize；其余方法嵌接口不触达
+// recordingAuditor 只关心 Finalize 与 MarkDisconnect；其余方法嵌接口不触达
 type recordingAuditor struct {
 	plugin.AuditPipeline
-	mu        sync.Mutex
-	finalized []string
-	statuses  []int
+	mu          sync.Mutex
+	finalized   []string
+	statuses    []int
+	disconnects []string // MarkDisconnect 收到的 requestID（顺序记录）
 }
 
 func (a *recordingAuditor) Submit(event *plugin.AuditEvent) error { return nil }
@@ -70,6 +72,13 @@ func (a *recordingAuditor) Finalize(requestID string, meta *plugin.AuditMeta) er
 	defer a.mu.Unlock()
 	a.finalized = append(a.finalized, requestID)
 	a.statuses = append(a.statuses, meta.ResponseStatus)
+	return nil
+}
+
+func (a *recordingAuditor) MarkDisconnect(requestID string, reason string, meta *plugin.AuditMeta) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.disconnects = append(a.disconnects, requestID)
 	return nil
 }
 
@@ -346,5 +355,57 @@ func TestPipelineMCPBranch(t *testing.T) {
 	rec = authedPost(h, initRequestBody)
 	if rec.Code != 200 {
 		t.Errorf("经管道访问 MCP 应成功: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// stubLimiter 可编程限流桩：嵌接口仅实现 Allow，覆盖 mcpBranch 的分支判定
+type stubLimiter struct {
+	plugin.RateLimitPlugin
+	err     error // 非 nil 时 Allow 返回该异常（限流器内部故障）
+	allowed bool  // err 为 nil 时的放行判定
+}
+
+func (l *stubLimiter) Allow(tenantID string, model string, tokens int) (bool, int64, error) {
+	if l.err != nil {
+		return false, 0, l.err
+	}
+	return l.allowed, 10, nil
+}
+
+// TestPipelineMCPBranchLimiterDegrade 限流器内部异常时 MCP 分支降级放行
+// （与 chat 链"可用性优先"口径一致，瞬时故障不得 429 全部 MCP 流量）；真超限仍 429
+func TestPipelineMCPBranchLimiterDegrade(t *testing.T) {
+	upSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"fake-mcp","version":"0"}}}`))
+	}))
+	defer upSrv.Close()
+	storage := oss.NewMemStorage()
+	_ = storage.SaveMCPServer(&plugin.MCPServer{ID: mcpTestServerID, Name: "u1",
+		Endpoint: upSrv.URL, Enabled: true})
+	rawKey := "ng-mcp-test-key"
+	keySum := sha256.Sum256([]byte(rawKey))
+	_ = storage.SaveAPIKey(&plugin.APIKey{
+		ID: "k-mcp", KeyHash: hex.EncodeToString(keySum[:]), Name: "tester",
+		Status: plugin.APIKeyStatusActive, Quota: -1,
+	})
+	post := func(limiter plugin.RateLimitPlugin) *httptest.ResponseRecorder {
+		p := NewPipeline(storage, limiter, nil, nil)
+		p.SetMCPRelay(NewMCPRelay(storage, nil, nil, upSrv.Client()))
+		h := p.Build(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+		req := httptest.NewRequest(http.MethodPost,
+			"/v1/mcp/servers/"+mcpTestServerID+"/mcp", strings.NewReader(initRequestBody))
+		req.Header.Set("Authorization", "Bearer "+rawKey)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+
+	rec := post(&stubLimiter{err: errors.New("limiter fault")})
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "serverInfo") {
+		t.Errorf("限流器异常应降级放行(initialize 成功): %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := post(&stubLimiter{allowed: false}); rec.Code != http.StatusTooManyRequests {
+		t.Errorf("真超限应 429: %d %s", rec.Code, rec.Body.String())
 	}
 }
