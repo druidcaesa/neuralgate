@@ -71,7 +71,10 @@ func NewPrivacyMiddleware(engine *PrivacyEngine, auditor plugin.AuditPipeline,
 				r.Header.Set("Content-Length", strconv.Itoa(len(body)))
 				rc.RequestBody = body // 转发与审计统一使用脱敏后文本
 			}
-			next.ServeHTTP(&sanitizeResponseWriter{ResponseWriter: w, engine: engine}, r)
+			next.ServeHTTP(&sanitizeResponseWriter{
+				ResponseWriter: w, engine: engine,
+				rc: rc, storage: storage, logger: logger,
+			}, r)
 		})
 	}
 }
@@ -164,19 +167,75 @@ func truncateRunes(s string, n int) string {
 
 // sanitizeResponseWriter 响应侧包装：写出前按 response scope 规则替换。
 // 流式 SSE 逐分片扫描（单分片内完整匹配，跨分片漏检为已知局限）；
-// 替换导致长度变化时删除 Content-Length，交由 net/http 分块编码兜底
+// 替换导致长度变化时删除 Content-Length，交由 net/http 分块编码兜底。
+// output 类 block 规则命中：未写过字节则回写 content_filter 错误体(200)，
+// 已写过则丢弃剩余分片（流式已透传内容不可撤回，尽力而为）——均记一次安全事件
 type sanitizeResponseWriter struct {
 	http.ResponseWriter
-	engine *PrivacyEngine
+	engine  *PrivacyEngine
+	rc      *core.RequestContext
+	storage plugin.StoragePlugin
+	logger  *zap.Logger
+
+	blocked    bool // 已进入拦截态：后续 Write 一律吞掉
+	hasWritten bool
+	eventSaved bool
 }
 
 func (w *sanitizeResponseWriter) Write(b []byte) (int, error) {
+	if !w.blocked {
+		if hit := w.engine.DetectOutput(b); hit != nil &&
+			strings.EqualFold(hit.Action, plugin.PrivacyActionBlock) {
+			w.enterBlocked(hit)
+			return len(b), nil
+		}
+	} else {
+		return len(b), nil
+	}
 	out, changed := w.engine.Sanitize(b, plugin.PrivacyScopeResponse)
 	if changed {
 		w.Header().Del("Content-Length")
 		b = out
 	}
-	return w.ResponseWriter.Write(b)
+	n, err := w.ResponseWriter.Write(b)
+	if n > 0 || err == nil {
+		w.hasWritten = true
+	}
+	return n, err
+}
+
+// enterBlocked 进入拦截态：安全事件留痕一次；尚无任何输出时回写错误体
+func (w *sanitizeResponseWriter) enterBlocked(hit *plugin.PrivacyRule) {
+	w.blocked = true
+	if !w.eventSaved {
+		w.eventSaved = true
+		event := &plugin.SecurityEvent{
+			RequestID: w.rc.RequestID,
+			RuleName:  "output_blocked:" + hit.Name,
+			ClientIP:  w.rc.ClientIP,
+			CreatedAt: time.Now(),
+		}
+		if w.rc.ModelConfig != nil {
+			event.ModelName = w.rc.ModelConfig.ModelName
+		}
+		if err := w.storage.SaveSecurityEvent(event); err != nil && w.logger != nil {
+			w.logger.Warn("输出风控安全事件留痕失败",
+				zap.String("request_id", w.rc.RequestID), zap.Error(err))
+		}
+	}
+	if !w.hasWritten {
+		w.Header().Del("Content-Length")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w.ResponseWriter).Encode(map[string]any{
+			"error": map[string]any{
+				"message": "响应内容被安全策略拦截",
+				"type":    "content_filter",
+				"param":   nil,
+				"code":    "output_blocked",
+			},
+		})
+		w.hasWritten = true
+	}
 }
 
 // Flush 透传 Flusher（流式响应依赖）

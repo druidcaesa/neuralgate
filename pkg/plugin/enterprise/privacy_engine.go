@@ -44,6 +44,7 @@ type PrivacyEngine struct {
 	loadedAt       time.Time
 	piiRules       []*compiledRule
 	injectionRules []*compiledRule
+	outputRules    []*compiledRule
 	whitelist      []*compiledRule
 }
 
@@ -53,24 +54,24 @@ func NewPrivacyEngine(storage plugin.StoragePlugin, ttl time.Duration, logger *z
 }
 
 // snapshot 返回当前编译规则；从未加载或缓存超过 TTL 时先重载再取
-func (e *PrivacyEngine) snapshot() (pii, inj, wl []*compiledRule) {
+func (e *PrivacyEngine) snapshot() (pii, inj, output, wl []*compiledRule) {
 	e.mu.RLock()
 	expired := e.loadedAt.IsZero() || time.Since(e.loadedAt) > e.ttl
-	pii, inj, wl = e.piiRules, e.injectionRules, e.whitelist
+	pii, inj, output, wl = e.piiRules, e.injectionRules, e.outputRules, e.whitelist
 	e.mu.RUnlock()
 	if !expired {
-		return pii, inj, wl
+		return pii, inj, output, wl
 	}
 	e.reload()
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	return e.piiRules, e.injectionRules, e.whitelist
+	return e.piiRules, e.injectionRules, e.outputRules, e.whitelist
 }
 
 // reload 从存储重载全部规则并整体换入缓存。
 // 加载失败沿用旧缓存、仅刷新时间戳（避免失败后每次请求都打库）
 func (e *PrivacyEngine) reload() {
-	var pii, inj []*compiledRule
+	var pii, inj, output []*compiledRule
 	rules, err := e.storage.ListPrivacyRules(nil)
 	if err != nil {
 		e.logger.Warn("隐私规则加载失败，沿用上次缓存", zap.Error(err))
@@ -90,6 +91,8 @@ func (e *PrivacyEngine) reload() {
 				pii = append(pii, cr)
 			case plugin.PrivacyRuleTypeInjection:
 				inj = append(inj, cr)
+			case plugin.PrivacyRuleTypeOutput:
+				output = append(output, cr)
 			}
 		}
 	}
@@ -123,7 +126,7 @@ func (e *PrivacyEngine) reload() {
 
 // Whitelisted 内容命中任一启用白名单正则返回 true（调用方据此整体跳过脱敏与注入检测）
 func (e *PrivacyEngine) Whitelisted(body []byte) bool {
-	_, _, wl := e.snapshot()
+	_, _, _, wl := e.snapshot()
 	for _, cr := range wl {
 		if safeMatch(cr, body) {
 			return true
@@ -135,7 +138,7 @@ func (e *PrivacyEngine) Whitelisted(body []byte) bool {
 // Sanitize 按 scope 过滤 PII 规则做字面替换（replacement 不解释 $1 等分组引用），
 // 返回结果文本与是否变更；单条规则异常保留当前文本继续（降级放行）
 func (e *PrivacyEngine) Sanitize(body []byte, scope string) ([]byte, bool) {
-	pii, _, _ := e.snapshot()
+	pii, _, _, _ := e.snapshot()
 	result := body
 	for _, cr := range pii {
 		if s := cr.source.Scope; s != plugin.PrivacyScopeBoth && s != scope {
@@ -151,8 +154,20 @@ func (e *PrivacyEngine) Sanitize(body []byte, scope string) ([]byte, bool) {
 
 // DetectInjection 返回命中的注入检测规则（nil=未命中）
 func (e *PrivacyEngine) DetectInjection(body []byte) *plugin.PrivacyRule {
-	_, inj, _ := e.snapshot()
+	_, inj, _, _ := e.snapshot()
 	for _, cr := range inj {
+		if safeMatch(cr, body) {
+			return cr.source
+		}
+	}
+	return nil
+}
+
+// DetectOutput 输出内容风控：命中任一启用的 output 类规则即返回该规则
+// （调用方按 Action 决定 redact/block）；nil=未命中
+func (e *PrivacyEngine) DetectOutput(body []byte) *plugin.PrivacyRule {
+	_, _, output, _ := e.snapshot()
+	for _, cr := range output {
 		if safeMatch(cr, body) {
 			return cr.source
 		}

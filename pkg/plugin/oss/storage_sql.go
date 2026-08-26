@@ -105,6 +105,17 @@ func (s *SQLStorage) Init(config map[string]interface{}) error {
 		s.db = nil
 		return fmt.Errorf("migrate admin users: %w", err)
 	}
+	if driver == "mysql" {
+		err = migrateMySQLPrivacyAction(db)
+	} else if driver == "sqlite" {
+		err = migrateSQLitePrivacyAction(db)
+	}
+	if err != nil {
+		_ = db.Close()
+		s.driver = ""
+		s.db = nil
+		return fmt.Errorf("migrate privacy rules: %w", err)
+	}
 	if err := seedPrivacyRules(db, s.ph); err != nil {
 		_ = db.Close()
 		s.driver = ""
@@ -840,13 +851,13 @@ func (s *SQLStorage) SetTamperAlertResolved(id string, resolved bool) error {
 
 // ===== 隐私合规(规则库/白名单/安全事件) =====
 
-const privacyRuleCols = "id, rule_type, name, pattern, replacement, scope, enabled, created_at, updated_at"
+const privacyRuleCols = "id, rule_type, name, pattern, replacement, scope, action, enabled, created_at, updated_at"
 
 func scanPrivacyRule(row interface{ Scan(...interface{}) error }) (*plugin.PrivacyRule, error) {
 	r := &plugin.PrivacyRule{}
 	var enabledInt int
 	var createdMS, updatedMS int64
-	if err := row.Scan(&r.ID, &r.RuleType, &r.Name, &r.Pattern, &r.Replacement, &r.Scope, &enabledInt, &createdMS, &updatedMS); err != nil {
+	if err := row.Scan(&r.ID, &r.RuleType, &r.Name, &r.Pattern, &r.Replacement, &r.Scope, &r.Action, &enabledInt, &createdMS, &updatedMS); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -866,11 +877,11 @@ func (s *SQLStorage) SavePrivacyRule(rule *plugin.PrivacyRule) error {
 		rule.CreatedAt = now
 	}
 	rule.UpdatedAt = now
-	if err := s.saveUpsert("INSERT INTO privacy_rules ("+privacyRuleCols+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", []interface{}{
+	if err := s.saveUpsert("INSERT INTO privacy_rules ("+privacyRuleCols+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", []interface{}{
 		rule.ID, rule.RuleType, rule.Name, rule.Pattern, rule.Replacement, rule.Scope,
-		boolToInt(rule.Enabled), timeToMS(rule.CreatedAt), timeToMS(rule.UpdatedAt)},
+		rule.Action, boolToInt(rule.Enabled), timeToMS(rule.CreatedAt), timeToMS(rule.UpdatedAt)},
 		[]string{"id"}, []string{"rule_type", "name", "pattern", "replacement",
-			"scope", "enabled", "updated_at"}); err != nil {
+			"scope", "action", "enabled", "updated_at"}); err != nil {
 		return fmt.Errorf("save privacy rule: %w", err)
 	}
 	return nil

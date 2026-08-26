@@ -166,6 +166,7 @@ func mysqlCreateTables(db *sql.DB) error {
 			pattern TEXT NOT NULL,
 			replacement VARCHAR(128) NOT NULL DEFAULT '',
 			scope VARCHAR(16) NOT NULL DEFAULT 'both',
+			action VARCHAR(16) NOT NULL DEFAULT '',
 			enabled TINYINT NOT NULL DEFAULT 1,
 			created_at BIGINT NOT NULL,
 			updated_at BIGINT NOT NULL,
@@ -293,6 +294,23 @@ func migrateMySQLAdminUserColumns(db *sql.DB) error {
 		}
 		if _, err := db.Exec("ALTER TABLE admin_users ADD COLUMN `" + col + "` VARCHAR(64) NOT NULL DEFAULT ''"); err != nil {
 			return fmt.Errorf("add column %s: %w", col, err)
+		}
+	}
+	return nil
+}
+
+// migrateMySQLPrivacyAction 存量库 privacy_rules 补 action 列（information_schema 判列）
+func migrateMySQLPrivacyAction(db *sql.DB) error {
+	var count int
+	err := db.QueryRow(`
+		SELECT COUNT(*) FROM information_schema.COLUMNS
+		WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'privacy_rules' AND COLUMN_NAME = 'action'`).Scan(&count)
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		if _, err := db.Exec("ALTER TABLE privacy_rules ADD COLUMN action VARCHAR(16) NOT NULL DEFAULT ''"); err != nil {
+			return err
 		}
 	}
 	return nil
