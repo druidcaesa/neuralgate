@@ -34,6 +34,7 @@ import (
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	golumberjack "gopkg.in/natefinch/lumberjack.v2"
 )
 
 func main() {
@@ -52,6 +53,9 @@ func main() {
 	cfg, err := config.Load(*configPath)
 	if err != nil {
 		logFatal("加载配置失败", err)
+	}
+	if err := cfg.Validate(); err != nil {
+		logFatal("配置校验失败", err)
 	}
 	logger := initLogger(cfg.Log)
 	defer logger.Sync()
@@ -415,7 +419,17 @@ func initLogger(cfg config.LogConfig) *zap.Logger {
 	} else {
 		encoder = zapcore.NewConsoleEncoder(zap.NewDevelopmentEncoderConfig())
 	}
-	return zap.New(zapcore.NewCore(encoder, zapcore.AddSync(os.Stdout), level))
+	// 输出目标：stdout 或文件(文件模式接 lumberjack 轮转: 单文件 200MB,保留 7 份)
+	var sink zapcore.WriteSyncer = os.Stdout
+	if cfg.Output != "" && cfg.Output != "stdout" {
+		sink = zapcore.AddSync(&golumberjack.Logger{
+			Filename:   cfg.Output,
+			MaxSize:    200,
+			MaxBackups: 7,
+			Compress:   true,
+		})
+	}
+	return zap.New(zapcore.NewCore(encoder, sink, level))
 }
 
 // logFatal 打印错误并退出（zap 初始化前的兜底）
