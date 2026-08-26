@@ -95,7 +95,7 @@ func (s *AdminServer) createAPIKey(c *gin.Context) {
 		return
 	}
 	OK(c, gin.H{
-		"id": key.ID, "key": rawKey, "key_hash": key.KeyHash, "key_prefix": key.KeyPrefix,
+		"id": key.ID, "key": rawKey, "key_prefix": key.KeyPrefix,
 		"name": key.Name, "quota": key.Quota, "rate_limit": key.RateLimit,
 		"allowed_models": key.AllowedModels, "expires_at": key.ExpiresAt,
 	})

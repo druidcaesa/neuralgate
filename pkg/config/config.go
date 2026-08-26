@@ -37,6 +37,7 @@ type Config struct {
 	Admin      AdminConfig      `yaml:"admin"`
 	Log        LogConfig        `yaml:"log"`
 	IPFilter   IPFilterConfig   `yaml:"ip_filter"`
+	Security   SecurityConfig   `yaml:"security"`
 	TLS        TLSConfig        `yaml:"tls"`
 }
 
@@ -132,6 +133,12 @@ type LogConfig struct {
 	Level  string `yaml:"level"`
 	Format string `yaml:"format"`
 	Output string `yaml:"output"`
+}
+
+// SecurityConfig 安全相关运行配置：trusted_proxies 为可信代理 CIDR 清单，
+// 仅当直连地址命中清单时才采信 X-Forwarded-For；空=全部不信任(默认收紧)
+type SecurityConfig struct {
+	TrustedProxies []string `yaml:"trusted_proxies"`
 }
 
 // IPFilterConfig IP 黑白名单配置

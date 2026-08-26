@@ -139,3 +139,25 @@ func TestAuthQuotaExceeded(t *testing.T) {
 		t.Fatalf("status=%d body=%s; want 429 quota_exceeded", rec.Code, rec.Body.String())
 	}
 }
+
+// TestClientIPTrustedProxy 可信代理白名单：命中才采信 XFF，否则用 RemoteAddr
+func TestClientIPTrustedProxy(t *testing.T) {
+	if err := SetTrustedProxies([]string{"10.0.0.0/8"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = SetTrustedProxies(nil) })
+
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req.RemoteAddr = "10.1.1.1:5000"
+	req.Header.Set("X-Forwarded-For", "203.0.113.7")
+	if got := clientIP(req); got != "203.0.113.7" {
+		t.Errorf("可信代理来源应采信 XFF, got %s", got)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/x", nil)
+	req.RemoteAddr = "192.0.2.9:5000" // 非可信直连
+	req.Header.Set("X-Forwarded-For", "203.0.113.7")
+	if got := clientIP(req); got != "192.0.2.9" {
+		t.Errorf("不可信直连应忽略 XFF 用 RemoteAddr, got %s", got)
+	}
+}
