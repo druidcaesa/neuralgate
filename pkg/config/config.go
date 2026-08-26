@@ -32,6 +32,7 @@ type Config struct {
 	Privacy    PrivacyConfig    `yaml:"privacy"`
 	RBAC       RBACConfig       `yaml:"rbac"`
 	Compliance ComplianceConfig `yaml:"compliance"`
+	MCPAudit   MCPAuditConfig   `yaml:"mcp_audit"`
 	License    LicenseConfig    `yaml:"license"`
 	Admin      AdminConfig      `yaml:"admin"`
 	Log        LogConfig        `yaml:"log"`
@@ -52,6 +53,12 @@ type RBACConfig struct {
 // ComplianceConfig 合规运维配置（Enterprise：需 compliance 授权）
 type ComplianceConfig struct {
 	Enabled bool `yaml:"enabled"` // 是否启用合规报表调度(日/周/月周期聚合)；bool 不参与 applyDefaults
+}
+
+// MCPAuditConfig MCP 智能体审计配置（Enterprise：需 mcp_audit 授权）；
+// 中继通道本身 OSS+ 恒可用，此项仅控制审计留存与失败告警
+type MCPAuditConfig struct {
+	Enabled bool `yaml:"enabled"` // 是否启用工具调用审计与告警；bool 不参与 applyDefaults
 }
 
 // AdminConfig 管理后台配置：bootstrap 密码仅用于首个管理员账号的种子（登录凭证存数据库），

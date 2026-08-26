@@ -170,6 +170,11 @@ func main() {
 	// 12. 合规运维（compliance 门控，接线随构建版本；报表调度 + 手动补生成注入）
 	stopCompliance := setupCompliance(gate, *cfg, storage, logger, adminServer)
 
+	// 13. MCP 中继（通道 OSS+ 恒可用；审计随构建版本与 mcp_audit 门控）
+	// 须在 acceptor 创建（pipeline.Build 快照链）之前挂载
+	pipeline.SetMCPRelay(buildMCPRelay(gate, *cfg, storage, auditor, logger))
+	logger.Info("MCP 中继已就绪")
+
 	// 8. 审计日志外推（audit_stream 门控）
 	exporter := factory.CreateExporter()
 	exportStarted := false
@@ -346,6 +351,18 @@ func shouldStartCompliance(gate core.LicenseGate, enabled bool) (bool, string) {
 	}
 	if !gate.HasFeature(license.FeatureCompliance) {
 		return false, "授权未包含 compliance 功能"
+	}
+	return true, ""
+}
+
+// shouldStartMCPAudit 判断 MCP 调用审计启动条件（配置启用 + 授权含 mcp_audit）；不满足给出原因。
+// 中继通道本身不受此门控——OSS+ 恒可用
+func shouldStartMCPAudit(gate core.LicenseGate, enabled bool) (bool, string) {
+	if !enabled {
+		return false, "配置未启用(mcp_audit.enabled=false)"
+	}
+	if !gate.HasFeature(license.FeatureMCPAudit) {
+		return false, "授权未包含 mcp_audit 功能"
 	}
 	return true, ""
 }
