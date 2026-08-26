@@ -57,6 +57,9 @@ func main() {
 	if err := cfg.Validate(); err != nil {
 		logFatal("配置校验失败", err)
 	}
+	if err := core.SetTrustedProxies(cfg.Security.TrustedProxies); err != nil {
+		logFatal("可信代理配置非法", err)
+	}
 	logger := initLogger(cfg.Log)
 	defer logger.Sync()
 

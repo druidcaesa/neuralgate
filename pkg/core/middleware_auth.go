@@ -17,9 +17,11 @@ package core
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
@@ -97,10 +99,58 @@ func AuthMiddleware(storage plugin.StoragePlugin) Middleware {
 	}
 }
 
-// clientIP 提取客户端 IP(优先 X-Forwarded-For)
+// 可信代理清单：仅当直连地址命中清单时才采信 X-Forwarded-For，
+// 否则一律取 RemoteAddr——防止伪造 XFF 污染审计 IP。空清单=全部不信任
+var (
+	trustedProxiesMu sync.RWMutex
+	trustedProxies   []*net.IPNet
+)
+
+// SetTrustedProxies 配置可信代理 CIDR/单 IP 清单（进程级，启动装配一次）
+func SetTrustedProxies(cidrs []string) error {
+	parsed := make([]*net.IPNet, 0, len(cidrs))
+	for _, c := range cidrs {
+		if !strings.Contains(c, "/") {
+			c += "/32"
+		}
+		_, ipnet, err := net.ParseCIDR(c)
+		if err != nil {
+			return fmt.Errorf("trusted proxy %q: %w", c, err)
+		}
+		parsed = append(parsed, ipnet)
+	}
+	trustedProxiesMu.Lock()
+	trustedProxies = parsed
+	trustedProxiesMu.Unlock()
+	return nil
+}
+
+func remoteAddrTrusted(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	trustedProxiesMu.RLock()
+	defer trustedProxiesMu.RUnlock()
+	for _, n := range trustedProxies {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// clientIP 提取客户端 IP：仅当直连来源为可信代理时才采信 XFF 首段，
+// 其余情况取 RemoteAddr（安全默认收紧）
 func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		return strings.TrimSpace(strings.Split(xff, ",")[0])
+	if remoteAddrTrusted(r) {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			return strings.TrimSpace(strings.Split(xff, ",")[0])
+		}
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
