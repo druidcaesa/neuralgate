@@ -312,3 +312,29 @@ export interface OperationLogItem {
   client_ip: string
   created_at: string
 }
+
+// ===== 合规报表(E6) =====
+export interface DimensionStat {
+  key: string // 模型名/租户ID；空串归 "(global)"
+  requests: number
+  tokens: number
+}
+
+export interface ReportContent {
+  total_requests: number
+  total_tokens: number
+  error_4xx: number
+  error_5xx: number
+  stream_count: number
+  by_model: DimensionStat[]
+  by_tenant: DimensionStat[]
+}
+
+export interface ReportItem {
+  id: string
+  period_type: 'day' | 'week' | 'month'
+  period_start: string // RFC3339
+  period_end: string   // RFC3339
+  generated_at: string // RFC3339
+  content?: ReportContent | null
+}
