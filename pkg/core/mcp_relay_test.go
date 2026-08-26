@@ -180,8 +180,8 @@ func TestMCPRelayToolsCallJSONAudit(t *testing.T) {
 	e := entries[0]
 	if e.ToolName != "search" || !strings.Contains(e.ToolArguments, `"go"`) ||
 		e.Status != plugin.MCPStatusSuccess || e.CallerAgent != "test-agent" ||
-		e.DurationMS != 150 || e.RequestID == "" {
-		t.Errorf("审计字段不符: %+v", e)
+		e.DurationMS != 150 || e.RequestID == "" || e.ErrorMessage != "" {
+		t.Errorf("审计字段不符(成功调用 error_message 应为空): %+v", e)
 	}
 	if !strings.Contains(e.ToolResult, "isError") {
 		t.Errorf("tool_result 应含最终响应: %q", e.ToolResult)

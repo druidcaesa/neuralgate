@@ -349,16 +349,19 @@ func responseStatusOf(final *mcp.RPCResponse) string {
 	return plugin.MCPStatusSuccess
 }
 
+// responseErrorMessage 提取失败原因：JSON-RPC error 取 message；
+// isError 结果取首个 content 文本；成功响应恒返回空串（error_message 仅失败时有值）
 func responseErrorMessage(final *mcp.RPCResponse) string {
 	if final.Error != nil {
 		return final.Error.Message
 	}
 	var result struct {
+		IsError bool `json:"isError"`
 		Content []struct {
 			Text string `json:"text"`
 		} `json:"content"`
 	}
-	if err := json.Unmarshal(final.Result, &result); err == nil && len(result.Content) > 0 {
+	if err := json.Unmarshal(final.Result, &result); err == nil && result.IsError && len(result.Content) > 0 {
 		return result.Content[0].Text
 	}
 	return ""
