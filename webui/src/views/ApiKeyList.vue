@@ -2,8 +2,13 @@
   <el-card>
     <div class="toolbar">
       <el-button type="primary" @click="openCreate">创建 Key</el-button>
+      <el-button @click="batchDialogVisible = true">批量创建</el-button>
+      <el-button type="danger" :disabled="selectedIds.length === 0" @click="batchRemove">
+        批量删除({{ selectedIds.length }})
+      </el-button>
     </div>
-    <el-table :data="keys" v-loading="loading">
+    <el-table :data="keys" v-loading="loading" @selection-change="(rows: ApiKeyItem[]) => { selectedIds = rows.map(r => r.id) }">
+      <el-table-column type="selection" width="45" />
       <el-table-column prop="key_prefix" label="Key" min-width="140" />
       <el-table-column prop="name" label="名称" min-width="100" />
       <el-table-column label="状态" width="90">
@@ -30,6 +35,19 @@
       v-model:current-page="page" v-model:page-size="size"
       :total="total" layout="total, prev, pager, next" @current-change="load"
       style="margin-top:12px; justify-content:flex-end" />
+
+    <!-- 批量创建表单：明文列表仅此一次展示 -->
+    <el-dialog v-model="batchDialogVisible" title="批量创建 API Key" width="520px">
+      <el-form label-width="110px">
+        <el-form-item label="名称前缀" required><el-input v-model="batchForm.name_prefix" maxlength="48" /></el-form-item>
+        <el-form-item label="数量" required><el-input-number v-model="batchForm.count" :min="1" :max="100" /></el-form-item>
+        <el-form-item label="额度(负=无限)"><el-input-number v-model="batchForm.quota" :min="-1" /></el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="batchDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="doBatchCreate">创建</el-button>
+      </template>
+    </el-dialog>
 
     <!-- 创建表单 -->
     <el-dialog v-model="createDialog" title="创建 API Key" width="520px">
@@ -68,7 +86,10 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { ApiKeyItem, ApiKeyCreateRequest } from '../types'
-import { listApiKeys, createApiKey, updateApiKeyStatus, deleteApiKey } from '../api/apiKey'
+import {
+  listApiKeys, createApiKey, updateApiKeyStatus, deleteApiKey,
+  batchCreateAPIKeys, batchDeleteAPIKeys,
+} from '../api/apiKey'
 
 const keys = ref<ApiKeyItem[]>([])
 const page = ref(1)
@@ -142,6 +163,36 @@ async function confirmClosePlain() {
 function closePlain() {
   plainConfirmed = true
   plainDialog.value = false
+}
+
+// ===== 批量操作(Enterprise) =====
+const selectedIds = ref<string[]>([])
+const batchDialogVisible = ref(false)
+const batchForm = reactive({ name_prefix: '', count: 5, quota: -1 })
+const batchPlainKeys = ref<string[]>([])
+
+async function doBatchCreate(): Promise<void> {
+  if (!batchForm.name_prefix.trim()) {
+    ElMessage.error('请填写名称前缀')
+    return
+  }
+  const items = await batchCreateAPIKeys({ ...batchForm })
+  batchDialogVisible.value = false
+  await load()
+  // 明文仅此一次：以确认框逐条展示(复制后关闭)
+  batchPlainKeys.value = items.map((it) => `${it.name}\t${it.key}`)
+  ElMessageBox.alert(
+    `<pre style="max-height:300px;overflow:auto">${batchPlainKeys.value.join('\n')}</pre>`,
+    `已创建 ${items.length} 个 Key（明文仅显示一次，请立即保存）`,
+    { dangerouslyUseHTMLString: true, confirmButtonText: '已保存' },
+  ).catch(() => {})
+}
+
+async function batchRemove(): Promise<void> {
+  await ElMessageBox.confirm(`确认删除选中的 ${selectedIds.value.length} 个 Key？`, '批量删除', { type: 'warning' })
+  const res = await batchDeleteAPIKeys(selectedIds.value)
+  ElMessage.success(`已删除 ${res.deleted}${res.missing.length ? `，缺失 ${res.missing.length}` : ''}`)
+  await load()
 }
 
 onMounted(load)

@@ -45,6 +45,8 @@ func (s *AdminServer) registerRoutes(r *gin.Engine) {
 		// API Key 管理（RBAC 启用后按权限码守卫，未启用恒放行）
 		authz.POST("/api-keys", s.RequirePermission(plugin.PermAPIKeyWrite), s.createAPIKey)
 		authz.GET("/api-keys", s.RequirePermission(plugin.PermAPIKeyRead), s.listAPIKeys)
+		authz.POST("/api-keys/batch-create", s.RequirePermission(plugin.PermAPIKeyWrite), s.batchCreateAPIKeys)
+		authz.POST("/api-keys/batch-delete", s.RequirePermission(plugin.PermAPIKeyWrite), s.batchDeleteAPIKeys)
 		authz.PATCH("/api-keys/:id", s.RequirePermission(plugin.PermAPIKeyWrite), s.updateAPIKey)
 		authz.DELETE("/api-keys/:id", s.RequirePermission(plugin.PermAPIKeyWrite), s.deleteAPIKey)
 
