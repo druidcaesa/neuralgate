@@ -20,18 +20,21 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"hash"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
+	"github.com/emmansun/gmsm/sm3"
 )
 
 // 指纹算法注册表：算法选定后不可更换——换算法会使历史指纹全部失配，
-// 校验任务会误报篡改。sm3 随信创迭代注册，本期仅 sha256（未知值回退）。
+// 校验任务会误报篡改。sm3(国密)随信创迭代注册；未知值回退 sha256。
 var fingerprintAlgos = map[string]func(*plugin.AuditLog) string{
 	"sha256": fingerprintSHA256,
+	"sm3":    fingerprintSM3,
 }
 
 // Fingerprint 用指定算法计算审计日志全量内容指纹；algo 未注册时回退 sha256
@@ -48,7 +51,17 @@ func Fingerprint(algo string, log *plugin.AuditLog) string {
 // 字段顺序即签名口径：任何内容字段变化都会导致指纹变化；
 // Headers 按 key 字典序拼接保证 map 确定性；时间统一 UTC RFC3339。
 func fingerprintSHA256(log *plugin.AuditLog) string {
-	fields := []string{
+	return hashFingerprint(fingerprintFields(log), sha256.New())
+}
+
+// fingerprintSM3 国密 SM3 指纹：与 SHA256 共用同一序列化口径，仅摘要算法不同
+func fingerprintSM3(log *plugin.AuditLog) string {
+	return hashFingerprint(fingerprintFields(log), sm3.New())
+}
+
+// fingerprintFields 指纹输入字段(除指纹字段外全内容)
+func fingerprintFields(log *plugin.AuditLog) []string {
+	return []string{
 		log.ID,
 		log.RequestID,
 		log.TenantID,
@@ -72,12 +85,16 @@ func fingerprintSHA256(log *plugin.AuditLog) string {
 		log.DisconnectReason,
 		log.CreatedAt.UTC().Format(time.RFC3339),
 	}
+}
+
+// hashFingerprint 长度前缀确定性序列化后取摘要 hex
+func hashFingerprint(fields []string, h hash.Hash) string {
 	var buf strings.Builder
 	for _, f := range fields {
 		fmt.Fprintf(&buf, "%d:%s;", len(f), f)
 	}
-	sum := sha256.Sum256([]byte(buf.String()))
-	return hex.EncodeToString(sum[:])
+	h.Write([]byte(buf.String()))
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // headersSegment Headers 子段：key 字典序排列，逐项 "len(k):k=len(v):v;"，
