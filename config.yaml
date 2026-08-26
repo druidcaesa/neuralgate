@@ -11,7 +11,7 @@ storage:
   # 注: 达梦/金仓需 Enterprise 编译版
   driver: sqlite
   dsn: "neuralgate.db"
-  encrypt_key: "neuralgate-default-encrypt-key"
+  encrypt_key: ""   # 必填！上游 API Key 加密密钥(可用 openssl rand -hex 32 生成)；缺失时启动失败
   max_open_conns: 20
   max_idle_conns: 10
   # ----- MySQL (可选) -----

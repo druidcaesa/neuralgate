@@ -17,6 +17,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -224,5 +225,35 @@ privacy:
 	}
 	if cfg2.Privacy.Enabled {
 		t.Error("未配置时 privacy.enabled 应为 false")
+	}
+}
+
+// TestValidateRequiresEncryptKey 安全校验：encrypt_key 必须显式提供
+func TestValidateRequiresEncryptKey(t *testing.T) {
+	cfg := Default()
+	cfg.Storage.EncryptKey = ""
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "encrypt_key") {
+		t.Errorf("空密钥应报错并提示字段, got %v", err)
+	}
+	cfg.Storage.EncryptKey = "explicit-key"
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("显式密钥应通过, got %v", err)
+	}
+}
+
+// TestEnvOverrides NEURALGATE_ 前缀白名单覆盖 yaml(非空才生效)
+func TestEnvOverrides(t *testing.T) {
+	cfg := Default()
+	t.Setenv("NEURALGATE_PROXY_ADDR", ":9999")
+	t.Setenv("NEURALGATE_STORAGE_DSN", "/data/ng.db")
+	t.Setenv("NEURALGATE_ADMIN_BOOTSTRAP_PASSWORD", "env-pass")
+	t.Setenv("NEURALGATE_LOG_LEVEL", "") // 空值不覆盖
+	cfg.applyEnvOverrides()
+	if cfg.Server.ProxyAddr != ":9999" || cfg.Storage.DSN != "/data/ng.db" ||
+		cfg.Admin.BootstrapPassword != "env-pass" {
+		t.Errorf("环境覆盖未生效: %+v", cfg)
+	}
+	if cfg.Log.Level != Default().Log.Level {
+		t.Error("空环境变量不应覆盖")
 	}
 }

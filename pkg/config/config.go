@@ -163,7 +163,6 @@ func Default() *Config {
 		Storage: StorageConfig{
 			Driver:       "sqlite",
 			DSN:          "neuralgate.db",
-			EncryptKey:   "neuralgate-default-encrypt-key",
 			MaxOpenConns: 20,
 			MaxIdleConns: 10,
 		},
@@ -200,7 +199,7 @@ func Default() *Config {
 	}
 }
 
-// Load 加载配置文件，缺失字段使用默认值
+// Load 加载配置文件，缺失字段使用默认值；随后应用环境变量覆盖与安全校验
 func Load(path string) (*Config, error) {
 	cfg := Default()
 	data, err := os.ReadFile(path)
@@ -211,7 +210,43 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("parse config file: %w", err)
 	}
 	cfg.applyDefaults()
+	cfg.applyEnvOverrides()
 	return cfg, nil
+}
+
+// applyEnvOverrides 运维覆盖白名单：NEURALGATE_ 前缀环境变量优先于 yaml。
+// 仅开放部署态高频项，避免环境成为隐式配置面
+func (c *Config) applyEnvOverrides() {
+	envStr := func(key string) (string, bool) {
+		v, ok := os.LookupEnv("NEURALGATE_" + key)
+		return v, ok && v != ""
+	}
+	if v, ok := envStr("PROXY_ADDR"); ok {
+		c.Server.ProxyAddr = v
+	}
+	if v, ok := envStr("ADMIN_ADDR"); ok {
+		c.Server.AdminAddr = v
+	}
+	if v, ok := envStr("STORAGE_DSN"); ok {
+		c.Storage.DSN = v
+	}
+	if v, ok := envStr("LOG_LEVEL"); ok {
+		c.Log.Level = v
+	}
+	if v, ok := envStr("ADMIN_BOOTSTRAP_PASSWORD"); ok {
+		c.Admin.BootstrapPassword = v
+	}
+}
+
+// Validate 安全校验：encrypt_key 必须显式提供——内置默认密钥等于公开密钥，
+// 会令上游 API Key 的加密形同虚设。返回的提示包含生成方式
+func (c *Config) Validate() error {
+	if c.Storage.EncryptKey == "" {
+		return fmt.Errorf(
+			"storage.encrypt_key 未配置：出于安全考虑已移除内置默认值，" +
+				"请显式设置(可用 `openssl rand -hex 32` 生成)")
+	}
+	return nil
 }
 
 // applyDefaults 将零值字段替换为默认值
