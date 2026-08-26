@@ -338,3 +338,33 @@ export interface ReportItem {
   generated_at: string // RFC3339
   content?: ReportContent | null
 }
+
+// ===== E7 MCP 智能体审计 =====
+
+// MCP 上游服务器配置（Streamable HTTP 端点）
+export interface MCPServerItem {
+  id: string
+  name: string
+  endpoint: string
+  headers?: Record<string, string> | null
+  enabled: boolean
+  created_at: string
+  updated_at: string
+}
+
+// 工具调用审计记录（PRD 3.9 十三字段）
+export interface MCPAuditLogItem {
+  id: string
+  request_id: string
+  tenant_id: string
+  api_key_id: string
+  tool_name: string
+  tool_arguments: string
+  tool_result: string
+  caller_agent: string
+  duration_ms: number
+  status: 'success' | 'failed'
+  error_message: string
+  client_ip: string
+  created_at: string
+}

@@ -18,6 +18,8 @@ const router = createRouter({
     { path: '/users', name: 'users', component: () => import('./views/Users.vue'), meta: { title: '用户管理' } },
     { path: '/operation-logs', name: 'operation-logs', component: () => import('./views/OperationLogs.vue'), meta: { title: '操作日志' } },
     { path: '/compliance-reports', name: 'compliance-reports', component: () => import('./views/ComplianceReports.vue'), meta: { title: '合规报表' } },
+    { path: '/mcp-servers', name: 'mcp-servers', component: () => import('./views/MCPServers.vue'), meta: { title: 'MCP 上游' } },
+    { path: '/mcp-audit-logs', name: 'mcp-audit-logs', component: () => import('./views/MCPAuditLogs.vue'), meta: { title: 'MCP 审计' } },
     { path: '/system', name: 'system', component: () => import('./views/SystemInfo.vue'), meta: { title: '系统信息' } }
   ]
 })
