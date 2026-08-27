@@ -253,6 +253,19 @@ func (s *AdminServer) RequirePermission(perm string) gin.HandlerFunc {
 	}
 }
 
+// RequireFeature 企业功能门控：功能未授权则 403 + CodeFeatureLocked（前端据此弹升级提示）。
+// 与 RequirePermission 正交——前者判功能是否授权，后者判账号是否有权限；须挂在其之前。
+func (s *AdminServer) RequireFeature(feature string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if s.hasFeature(feature) {
+			c.Next()
+			return
+		}
+		Error(c, http.StatusForbidden, CodeFeatureLocked, "该功能需要企业版授权")
+		c.Abort()
+	}
+}
+
 func containsPerm(perms []string, perm string) bool {
 	for _, p := range perms {
 		if p == perm {

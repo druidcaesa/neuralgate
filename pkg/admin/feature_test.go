@@ -15,11 +15,16 @@
 package admin
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/druidcaesa/neuralgate/pkg/license"
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
 	"github.com/druidcaesa/neuralgate/pkg/plugin/oss"
+	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
 
@@ -56,5 +61,37 @@ func TestHasFeatureThreeStates(t *testing.T) {
 	}
 	if len(exp.featureList()) != 0 {
 		t.Error("过期授权 featureList 应为空")
+	}
+}
+
+// TestRequireFeatureGate 授权含该功能则放行；缺失则 403 + CodeFeatureLocked
+func TestRequireFeatureGate(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ov := &LicenseOverview{Status: "valid", Info: &plugin.LicenseInfo{Features: []string{license.FeatureRBAC}}}
+	s := NewAdminServer(oss.NewMemStorage(), zap.NewNop(), "enterprise", newFeatRateLimiter(), ov)
+
+	// 放行：授权含 rbac
+	pass := gin.New()
+	pass.GET("/t", s.RequireFeature(license.FeatureRBAC), func(c *gin.Context) { OK(c, gin.H{}) })
+	recPass := httptest.NewRecorder()
+	pass.ServeHTTP(recPass, httptest.NewRequest(http.MethodGet, "/t", nil))
+	if recPass.Code != http.StatusOK {
+		t.Fatalf("授权含 rbac 应放行, got %d %s", recPass.Code, recPass.Body.String())
+	}
+
+	// 拦截：授权不含 compliance
+	block := gin.New()
+	block.GET("/t", s.RequireFeature(license.FeatureCompliance), func(c *gin.Context) { OK(c, gin.H{}) })
+	recBlock := httptest.NewRecorder()
+	block.ServeHTTP(recBlock, httptest.NewRequest(http.MethodGet, "/t", nil))
+	if recBlock.Code != http.StatusForbidden || !strings.Contains(recBlock.Body.String(), "企业版授权") {
+		t.Fatalf("缺 compliance 应 403 企业版, got %d %s", recBlock.Code, recBlock.Body.String())
+	}
+	var resp Response
+	if err := json.Unmarshal(recBlock.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Code != CodeFeatureLocked {
+		t.Errorf("业务码应为 %d, got %d", CodeFeatureLocked, resp.Code)
 	}
 }
