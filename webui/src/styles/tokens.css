@@ -1,0 +1,98 @@
+/* 设计令牌：颜色 / 间距 / 圆角 / 阴影 / 字体的单一事实来源。
+   同时覆盖 Element Plus 的 --el-* 变量，使 EP 组件贴合品牌主题。 */
+:root {
+  /* 品牌靛蓝 */
+  --ng-primary: #4f46e5;
+  --ng-primary-hover: #4338ca;
+  --ng-primary-active: #3730a3;
+
+  /* 中性灰阶 */
+  --ng-gray-50: #f8fafc;
+  --ng-gray-100: #f1f5f9;
+  --ng-gray-200: #e5e7eb;
+  --ng-gray-300: #cbd5e1;
+  --ng-gray-400: #94a3b8;
+  --ng-gray-500: #64748b;
+  --ng-gray-600: #475569;
+  --ng-gray-700: #334155;
+  --ng-gray-800: #1e293b;
+  --ng-gray-900: #0f172a;
+
+  /* 语义色 */
+  --ng-success: #16a34a;
+  --ng-warning: #d97706;
+  --ng-danger: #dc2626;
+  --ng-info: #64748b;
+
+  /* 表面与文字 */
+  --ng-bg-body: #f5f7fa;
+  --ng-bg-card: #ffffff;
+  --ng-text-primary: #1f2937;
+  --ng-text-secondary: #6b7280;
+  --ng-border: #e5e7eb;
+
+  /* 深色侧栏（明暗两态均为深色） */
+  --ng-sidebar-bg: #1e2333;
+  --ng-sidebar-hover: #2a3145;
+  --ng-sidebar-text: #cbd5e1;
+  --ng-sidebar-active-text: #ffffff;
+
+  /* 间距刻度 */
+  --ng-space-1: 4px;
+  --ng-space-2: 8px;
+  --ng-space-3: 12px;
+  --ng-space-4: 16px;
+  --ng-space-5: 24px;
+  --ng-space-6: 32px;
+  --ng-space-7: 40px;
+
+  /* 圆角 */
+  --ng-radius-sm: 4px;
+  --ng-radius-md: 8px;
+  --ng-radius-lg: 12px;
+
+  /* 阴影 */
+  --ng-shadow-card: 0 1px 3px rgba(15, 23, 42, 0.08), 0 1px 2px rgba(15, 23, 42, 0.04);
+  --ng-shadow-dropdown: 0 4px 12px rgba(15, 23, 42, 0.12);
+  --ng-shadow-dialog: 0 12px 32px rgba(15, 23, 42, 0.18);
+
+  /* 字体（离线系统字体栈） */
+  --ng-font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
+    "PingFang SC", "Microsoft YaHei", sans-serif;
+  --ng-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* Element Plus 主色贴靛蓝（light-N 为主色不同透明度的浅色调） */
+  --el-color-primary: var(--ng-primary);
+  --el-color-primary-light-3: #7c74ea;
+  --el-color-primary-light-5: #a5a0f0;
+  --el-color-primary-light-7: #cecbf6;
+  --el-color-primary-light-8: #e2e0fa;
+  --el-color-primary-light-9: #f0effc;
+  --el-color-primary-dark-2: #3f38b7;
+  --el-border-radius-base: var(--ng-radius-md);
+}
+
+/* 暗色主题令牌覆盖（EP 组件由 element-plus dark css-vars 接管，这里覆盖 --ng-* 与表面色） */
+html.dark {
+  --ng-bg-body: #0f1420;
+  --ng-bg-card: #1a2030;
+  --ng-text-primary: #e5e7eb;
+  --ng-text-secondary: #9ca3af;
+  --ng-border: #2a3145;
+  --el-color-primary: var(--ng-primary);
+  --el-color-primary-light-3: #6b63e8;
+  --el-color-primary-light-5: #574fd8;
+  --el-color-primary-dark-2: #6d66ea;
+}
+
+body {
+  margin: 0;
+  font-family: var(--ng-font-sans);
+  color: var(--ng-text-primary);
+  background: var(--ng-bg-body);
+}
+
+/* 表格数字/ID/延迟等用等宽对齐 */
+.ng-mono {
+  font-family: var(--ng-font-mono);
+}
