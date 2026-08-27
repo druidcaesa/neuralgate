@@ -29,8 +29,8 @@ export async function deleteTenant(id: string): Promise<void> {
 
 // ===== 角色 =====
 export async function listRoles(): Promise<RoleItem[]> {
-  const resp = await client.get<ApiResponse<RoleItem[]>>('/roles')
-  return resp.data.data ?? []
+  const resp = await client.get<ApiResponse<{ items: RoleItem[] }>>('/roles')
+  return resp.data.data?.items ?? []
 }
 
 export async function createRole(role: RoleItem): Promise<{ id: string }> {
