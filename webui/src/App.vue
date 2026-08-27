@@ -1,30 +1,50 @@
 <template>
   <router-view v-if="isLoginRoute" />
   <el-container v-else class="app-layout">
-    <el-aside width="200px" class="app-aside">
-      <div class="app-logo">NeuralGate</div>
-      <el-menu router :default-active="$route.path">
-        <el-menu-item index="/models"><el-icon><Cpu /></el-icon>模型配置</el-menu-item>
-        <el-menu-item index="/api-keys"><el-icon><Key /></el-icon>API Key</el-menu-item>
-        <el-menu-item index="/audit-logs"><el-icon><Document /></el-icon>审计日志</el-menu-item>
-        <el-menu-item index="/rate-limits"><el-icon><Timer /></el-icon>限流配置</el-menu-item>
-        <el-menu-item index="/tamper-alerts"><el-icon><Warning /></el-icon>防篡改告警</el-menu-item>
-        <el-menu-item index="/privacy-rules"><el-icon><Lock /></el-icon>隐私合规</el-menu-item>
-        <el-menu-item index="/security-events"><el-icon><Bell /></el-icon>安全事件</el-menu-item>
-        <el-menu-item v-if="hasPerm('tenant:read')" index="/tenants"><el-icon><OfficeBuilding /></el-icon>租户管理</el-menu-item>
-        <el-menu-item v-if="hasPerm('rbac:read')" index="/roles"><el-icon><Avatar /></el-icon>角色管理</el-menu-item>
-        <el-menu-item v-if="hasPerm('rbac:read')" index="/users"><el-icon><UserFilled /></el-icon>用户管理</el-menu-item>
-        <el-menu-item v-if="hasPerm('system:read')" index="/operation-logs"><el-icon><List /></el-icon>操作日志</el-menu-item>
-        <el-menu-item v-if="hasPerm('system:read')" index="/compliance-reports"><el-icon><DataAnalysis /></el-icon>合规报表</el-menu-item>
-        <el-menu-item v-if="hasPerm('system:read')" index="/mcp-servers"><el-icon><Connection /></el-icon>MCP 上游</el-menu-item>
-        <el-menu-item v-if="hasPerm('system:read')" index="/mcp-audit-logs"><el-icon><Tickets /></el-icon>MCP 审计</el-menu-item>
-        <el-menu-item index="/system"><el-icon><Setting /></el-icon>系统信息</el-menu-item>
+    <el-aside :width="collapsed ? '64px' : '210px'" class="app-aside">
+      <div class="app-logo">
+        <span v-if="!collapsed">NeuralGate</span>
+        <span v-else>NG</span>
+      </div>
+      <el-menu
+        router
+        :default-active="route.path"
+        :collapse="collapsed"
+        :collapse-transition="false"
+        background-color="transparent"
+      >
+        <template v-for="group in menuGroups" :key="group.title">
+          <el-menu-item-group v-if="visibleItems(group).length" :title="group.title">
+            <el-menu-item
+              v-for="item in visibleItems(group)"
+              :key="item.index"
+              :index="item.index"
+            >
+              <el-icon><component :is="item.icon" /></el-icon>
+              <template #title>{{ item.title }}</template>
+            </el-menu-item>
+          </el-menu-item-group>
+        </template>
       </el-menu>
     </el-aside>
+
     <el-container>
       <el-header class="app-header">
-        <span class="app-title">{{ $route.meta.title }}</span>
-        <div class="app-user-area">
+        <el-icon class="app-collapse-btn" @click="toggleCollapse">
+          <Expand v-if="collapsed" />
+          <Fold v-else />
+        </el-icon>
+        <el-breadcrumb class="app-breadcrumb" separator="/">
+          <el-breadcrumb-item>首页</el-breadcrumb-item>
+          <el-breadcrumb-item>{{ route.meta.title }}</el-breadcrumb-item>
+        </el-breadcrumb>
+        <div class="app-header-right">
+          <el-tooltip :content="theme === 'dark' ? '切换到亮色' : '切换到暗色'">
+            <el-icon class="app-theme-btn" @click="toggle">
+              <Moon v-if="theme === 'dark'" />
+              <Sunny v-else />
+            </el-icon>
+          </el-tooltip>
           <el-dropdown @command="onUserCommand">
             <span class="app-user">
               <el-icon><User /></el-icon>{{ username }}
@@ -65,19 +85,65 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, type Component } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
   Cpu, Key, Document, Timer, Setting, Warning, User, ArrowDown, Lock, Bell,
-  OfficeBuilding, Avatar, UserFilled, List, DataAnalysis, Connection, Tickets
+  OfficeBuilding, Avatar, UserFilled, List, DataAnalysis, Connection, Tickets,
+  Sunny, Moon, Fold, Expand
 } from '@element-plus/icons-vue'
 import { changePassword, clearAdminSession, getAdminUsername, hasPerm } from './api/auth'
+import { useTheme } from './composables/useTheme'
+
+interface MenuItem { index: string; title: string; icon: Component; perm?: string }
+interface MenuGroup { title: string; items: MenuItem[] }
 
 const route = useRoute()
 const router = useRouter()
+const { theme, toggle } = useTheme()
+
 const isLoginRoute = computed(() => route.path === '/login')
 const username = computed(() => getAdminUsername() || 'admin')
+
+// 侧栏折叠态（记忆到 localStorage）
+const collapsed = ref(localStorage.getItem('ng-sidebar-collapsed') === '1')
+function toggleCollapse() {
+  collapsed.value = !collapsed.value
+  localStorage.setItem('ng-sidebar-collapsed', collapsed.value ? '1' : '0')
+}
+
+// 侧栏分组（perm 字段与原 v-if 权限守卫一一对应，逻辑不变）
+const menuGroups: MenuGroup[] = [
+  { title: '配置', items: [
+    { index: '/models', title: '模型配置', icon: Cpu },
+    { index: '/api-keys', title: 'API Key', icon: Key },
+    { index: '/rate-limits', title: '限流配置', icon: Timer }
+  ] },
+  { title: '安全合规', items: [
+    { index: '/audit-logs', title: '审计日志', icon: Document },
+    { index: '/tamper-alerts', title: '防篡改告警', icon: Warning },
+    { index: '/privacy-rules', title: '隐私合规', icon: Lock },
+    { index: '/security-events', title: '安全事件', icon: Bell },
+    { index: '/compliance-reports', title: '合规报表', icon: DataAnalysis, perm: 'system:read' },
+    { index: '/mcp-servers', title: 'MCP 上游', icon: Connection, perm: 'system:read' },
+    { index: '/mcp-audit-logs', title: 'MCP 审计', icon: Tickets, perm: 'system:read' }
+  ] },
+  { title: '系统', items: [
+    { index: '/system', title: '系统信息', icon: Setting },
+    { index: '/operation-logs', title: '操作日志', icon: List, perm: 'system:read' }
+  ] },
+  { title: '权限', items: [
+    { index: '/tenants', title: '租户管理', icon: OfficeBuilding, perm: 'tenant:read' },
+    { index: '/roles', title: '角色管理', icon: Avatar, perm: 'rbac:read' },
+    { index: '/users', title: '用户管理', icon: UserFilled, perm: 'rbac:read' }
+  ] }
+]
+
+// 仅展示有权限的项（无 perm 恒展示，与原逻辑一致）
+function visibleItems(group: MenuGroup): MenuItem[] {
+  return group.items.filter(i => !i.perm || hasPerm(i.perm))
+}
 
 const pwdVisible = ref(false)
 const pwdLoading = ref(false)
@@ -121,17 +187,47 @@ async function submitChangePassword() {
 }
 </script>
 
-<style>
-body { margin: 0; font-family: 'Helvetica Neue', Arial, sans-serif; }
+<style scoped>
 .app-layout { height: 100vh; }
-.app-aside { background: #1f2937; }
-.app-logo { color: #fff; font-size: 18px; font-weight: bold; padding: 16px; text-align: center; }
-.app-aside .el-menu { border-right: none; background: transparent; }
-.app-aside .el-menu-item { color: #cbd5e1; }
-.app-aside .el-menu-item.is-active { color: #fff; background: #374151; }
-.app-header { background: #fff; border-bottom: 1px solid #e5e7eb; display: flex; align-items: center; }
-.app-title { font-size: 16px; font-weight: 500; }
-.app-main { background: #f3f4f6; }
-.app-user-area { margin-left: auto; }
-.app-user { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; font-size: 14px; color: #374151; outline: none; }
+.app-aside {
+  background: var(--ng-sidebar-bg);
+  transition: width 0.2s ease;
+  overflow-x: hidden;
+}
+.app-logo {
+  color: #fff;
+  font-size: 18px;
+  font-weight: bold;
+  padding: var(--ng-space-4);
+  text-align: center;
+  white-space: nowrap;
+}
+.app-aside :deep(.el-menu) { border-right: none; background: transparent; }
+.app-aside :deep(.el-menu-item-group__title) {
+  color: var(--ng-gray-500);
+  font-size: 12px;
+  padding-left: var(--ng-space-4);
+}
+.app-aside :deep(.el-menu-item) { color: var(--ng-sidebar-text); }
+.app-aside :deep(.el-menu-item:hover) { background: var(--ng-sidebar-hover); }
+.app-aside :deep(.el-menu-item.is-active) {
+  color: var(--ng-sidebar-active-text);
+  background: var(--ng-sidebar-hover);
+  border-left: 3px solid var(--ng-primary);
+}
+.app-header {
+  background: var(--ng-bg-card);
+  border-bottom: 1px solid var(--ng-border);
+  display: flex;
+  align-items: center;
+  gap: var(--ng-space-4);
+}
+.app-collapse-btn, .app-theme-btn { font-size: 18px; cursor: pointer; color: var(--ng-text-secondary); }
+.app-breadcrumb { flex: none; }
+.app-header-right { margin-left: auto; display: inline-flex; align-items: center; gap: var(--ng-space-4); }
+.app-user {
+  display: inline-flex; align-items: center; gap: 4px;
+  cursor: pointer; font-size: 14px; color: var(--ng-text-primary); outline: none;
+}
+.app-main { background: var(--ng-bg-body); padding: var(--ng-space-5); }
 </style>
