@@ -20,12 +20,14 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/druidcaesa/neuralgate/pkg/license"
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
 	"github.com/druidcaesa/neuralgate/pkg/plugin/oss"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+	"golang.org/x/crypto/bcrypt"
 )
 
 func newFeatRateLimiter() plugin.RateLimitPlugin {
@@ -93,5 +95,42 @@ func TestRequireFeatureGate(t *testing.T) {
 	}
 	if resp.Code != CodeFeatureLocked {
 		t.Errorf("业务码应为 %d, got %d", CodeFeatureLocked, resp.Code)
+	}
+}
+
+// TestLoginResponseCarriesEditionFeatures 登录响应带 edition 与生效 features 快照
+func TestLoginResponseCarriesEditionFeatures(t *testing.T) {
+	storage := oss.NewMemStorage()
+	ov := &LicenseOverview{Status: "valid", Info: &plugin.LicenseInfo{Features: []string{license.FeatureRBAC, license.FeaturePrivacy}}}
+	s := NewAdminServer(storage, zap.NewNop(), "enterprise", newFeatRateLimiter(), ov)
+	s.EnableAuth(NewSessionManager([]byte("feat-test"), time.Hour), nil)
+
+	hash, _ := bcrypt.GenerateFromPassword([]byte("password-123"), bcrypt.MinCost)
+	role := &plugin.Role{Name: plugin.SuperRoleName, Permissions: plugin.AllPermissions}
+	_ = storage.SaveRole(role)
+	_ = storage.SaveAdminUser(&plugin.AdminUser{
+		ID: "u1", Username: "root", PasswordHash: string(hash),
+		RoleID: role.ID, Status: plugin.AdminUserStatusActive,
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"username":"root","password":"password-123"}`))
+	req.Header.Set("Content-Type", "application/json")
+	s.Router().ServeHTTP(rec, req)
+
+	var resp struct {
+		Data struct {
+			Edition  string   `json:"edition"`
+			Features []string `json:"features"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Data.Edition != "enterprise" {
+		t.Errorf("edition 应为 enterprise, got %q", resp.Data.Edition)
+	}
+	if len(resp.Data.Features) != 2 {
+		t.Errorf("features 应含 2 项, got %v", resp.Data.Features)
 	}
 }

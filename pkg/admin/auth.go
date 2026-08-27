@@ -424,6 +424,8 @@ func (s *AdminServer) handleLogin(c *gin.Context) {
 		"token": token, "expires_at": exp.UTC().Format(time.RFC3339),
 		"username": user.Username, "tenant_id": user.TenantID,
 		"permissions": perms, "is_super": isSuper,
+		"edition":  s.edition,
+		"features": s.featureList(),
 	})
 }
 
