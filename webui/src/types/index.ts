@@ -233,6 +233,7 @@ export interface LicenseDetail {
   is_offline?: boolean
   signed: boolean           // 是否携带签名（不回显签名全文）
   days_remaining?: number   // 剩余天数（仅有效时）
+  machine_id?: string       // 本机机器码（供页面复制送签；OSS 为空）
 }
 
 // ===== 分页列表 =====

@@ -55,18 +55,62 @@
         </template>
         <span v-else>-</span>
       </el-descriptions-item>
+      <el-descriptions-item label="本机机器码" :span="2">
+        <span style="font-family:monospace">{{ license.machine_id || '-' }}</span>
+        <el-button v-if="license.machine_id" link type="primary" size="small" @click="copyMachineID">复制</el-button>
+      </el-descriptions-item>
     </el-descriptions>
+
+    <div v-if="license && license.machine_id" style="margin-top:16px">
+      <el-alert
+        type="info"
+        show-icon
+        :closable="false"
+        title="上传流程：复制本机机器码 → 联系供应商签发授权 → 上传授权文件 → 重启服务生效"
+        style="margin-bottom:8px"
+      />
+      <input ref="fileInput" type="file" accept=".json,.lic" style="display:none" @change="onFile" />
+      <el-button type="primary" @click="pickFile">上传授权文件</el-button>
+    </div>
   </el-card>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { ElMessage } from 'element-plus'
 import type { LicenseDetail, SystemInfo } from '../types'
-import { getLicense, getSystemInfo } from '../api/system'
+import { getLicense, getSystemInfo, uploadLicense } from '../api/system'
 
 const info = ref<SystemInfo | null>(null)
 const license = ref<LicenseDetail | null>(null)
+const fileInput = ref<HTMLInputElement | null>(null)
+
+function pickFile() {
+  fileInput.value?.click()
+}
+
+async function copyMachineID() {
+  if (!license.value?.machine_id) return
+  await navigator.clipboard.writeText(license.value.machine_id)
+  ElMessage.success('机器码已复制')
+}
+
+async function onFile(e: Event) {
+  const input = e.target as HTMLInputElement
+  const f = input.files?.[0]
+  if (!f) return
+  try {
+    const text = await f.text()
+    const r = await uploadLicense(text)
+    ElMessage.success(r.message || '上传成功，重启后生效')
+    license.value = await getLicense()
+  } catch {
+    // 失败原因已由响应拦截器统一提示(验签/过期/机器码不匹配)
+  } finally {
+    input.value = ''
+  }
+}
 
 const tamperUnresolved = computed(() => info.value?.tamper?.unresolved_count ?? 0)
 
