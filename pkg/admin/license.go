@@ -142,3 +142,25 @@ func (s *AdminServer) uploadLicense(c *gin.Context) {
 		"message":       "上传成功，重启后生效",
 	})
 }
+
+// featureList 返回当前生效的企业功能列表（单一真值源）：仅当授权有效
+// (edition==enterprise 且 status==valid) 时取授权声明的 Features，其余版本/状态一律空。
+// 与 cmd/gateway/main.go 装配同源——effectiveEdition=="enterprise" 当且仅当验签通过。
+func (s *AdminServer) featureList() []string {
+	if s.edition != "enterprise" || s.license == nil || s.license.Status != "valid" || s.license.Info == nil {
+		return []string{}
+	}
+	out := make([]string, len(s.license.Info.Features))
+	copy(out, s.license.Info.Features)
+	return out
+}
+
+// hasFeature 判断某企业功能当前是否授权
+func (s *AdminServer) hasFeature(feature string) bool {
+	for _, f := range s.featureList() {
+		if f == feature {
+			return true
+		}
+	}
+	return false
+}

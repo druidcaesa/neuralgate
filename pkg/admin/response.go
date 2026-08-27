@@ -20,6 +20,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// CodeFeatureLocked 业务码：请求的功能未授权（企业版）。取值与沿用 HTTP status 值的错误码
+// (400/403/409/500) 错开，供前端唯一识别以弹「升级企业版」提示而非普通错误。
+const CodeFeatureLocked = 4030
+
 // Response 统一响应格式
 type Response struct {
 	Code    int         `json:"code"`    // 0=成功,非0=错误码
