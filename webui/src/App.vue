@@ -19,9 +19,13 @@
               v-for="item in visibleItems(group)"
               :key="item.index"
               :index="item.index"
+              :class="{ 'menu-locked': isLocked(item) }"
             >
               <el-icon><component :is="item.icon" /></el-icon>
-              <template #title>{{ item.title }}</template>
+              <template #title>
+                <span class="menu-title">{{ item.title }}</span>
+                <el-tag v-if="isLocked(item)" size="small" type="warning" class="ent-tag">企业版</el-tag>
+              </template>
             </el-menu-item>
           </el-menu-item-group>
         </template>
@@ -93,10 +97,10 @@ import {
   OfficeBuilding, Avatar, UserFilled, List, DataAnalysis, Connection, Tickets,
   Sunny, Moon, Fold, Expand
 } from '@element-plus/icons-vue'
-import { changePassword, clearAdminSession, getAdminUsername, hasPerm } from './api/auth'
+import { changePassword, clearAdminSession, getAdminUsername, hasPerm, hasFeature } from './api/auth'
 import { useTheme } from './composables/useTheme'
 
-interface MenuItem { index: string; title: string; icon: Component; perm?: string }
+interface MenuItem { index: string; title: string; icon: Component; perm?: string; feature?: string }
 interface MenuGroup { title: string; items: MenuItem[] }
 
 const route = useRoute()
@@ -122,27 +126,32 @@ const menuGroups: MenuGroup[] = [
   ] },
   { title: '安全合规', items: [
     { index: '/audit-logs', title: '审计日志', icon: Document },
-    { index: '/tamper-alerts', title: '防篡改告警', icon: Warning },
-    { index: '/privacy-rules', title: '隐私合规', icon: Lock },
-    { index: '/security-events', title: '安全事件', icon: Bell },
-    { index: '/compliance-reports', title: '合规报表', icon: DataAnalysis, perm: 'system:read' },
+    { index: '/tamper-alerts', title: '防篡改告警', icon: Warning, feature: 'tamper_proof' },
+    { index: '/privacy-rules', title: '隐私合规', icon: Lock, feature: 'privacy' },
+    { index: '/security-events', title: '安全事件', icon: Bell, feature: 'privacy' },
+    { index: '/compliance-reports', title: '合规报表', icon: DataAnalysis, perm: 'system:read', feature: 'compliance' },
     { index: '/mcp-servers', title: 'MCP 上游', icon: Connection, perm: 'system:read' },
-    { index: '/mcp-audit-logs', title: 'MCP 审计', icon: Tickets, perm: 'system:read' }
+    { index: '/mcp-audit-logs', title: 'MCP 审计', icon: Tickets, perm: 'system:read', feature: 'mcp_audit' }
   ] },
   { title: '系统', items: [
     { index: '/system', title: '系统信息', icon: Setting },
     { index: '/operation-logs', title: '操作日志', icon: List, perm: 'system:read' }
   ] },
   { title: '权限', items: [
-    { index: '/tenants', title: '租户管理', icon: OfficeBuilding, perm: 'tenant:read' },
-    { index: '/roles', title: '角色管理', icon: Avatar, perm: 'rbac:read' },
-    { index: '/users', title: '用户管理', icon: UserFilled, perm: 'rbac:read' }
+    { index: '/tenants', title: '租户管理', icon: OfficeBuilding, perm: 'tenant:read', feature: 'rbac' },
+    { index: '/roles', title: '角色管理', icon: Avatar, perm: 'rbac:read', feature: 'rbac' },
+    { index: '/users', title: '用户管理', icon: UserFilled, perm: 'rbac:read', feature: 'rbac' }
   ] }
 ]
 
 // 仅展示有权限的项（无 perm 恒展示，与原逻辑一致）
 function visibleItems(group: MenuGroup): MenuItem[] {
   return group.items.filter(i => !i.perm || hasPerm(i.perm))
+}
+
+// 锁定：声明了 feature 但当前授权不含（可见性仍由 perm 决定，与 visibleItems 无关）
+function isLocked(item: MenuItem): boolean {
+  return !!item.feature && !hasFeature(item.feature)
 }
 
 const pwdVisible = ref(false)
@@ -230,4 +239,7 @@ async function submitChangePassword() {
   cursor: pointer; font-size: 14px; color: var(--ng-text-primary); outline: none;
 }
 .app-main { background: var(--ng-bg-body); padding: var(--ng-space-5); }
+.menu-title { vertical-align: middle; }
+.ent-tag { margin-left: 6px; transform: scale(0.85); }
+.app-aside :deep(.menu-locked) { opacity: 0.7; }
 </style>
