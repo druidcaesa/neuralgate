@@ -348,9 +348,15 @@ func (p *ProxyCore) handleStreaming(w http.ResponseWriter, r *http.Request, rc *
 			f.Flush()
 		}
 	}
-	// 上游读取错误或单行超长(ErrTooLong):先标记断连落库(Disconnected=true),再 Finalize 防重复
+	// 上游读取错误或单行超长(ErrTooLong):先标记断连落库(Disconnected=true),再 Finalize 防重复。
+	// 客户端断连会取消 r.Context() 从而中断上游读,此路径归因为 client_disconnected
+	// (与 Watch goroutine 一致),避免二者竞态下真实断连被误标为 upstream read error
 	if err := scanner.Err(); err != nil && p.pipeline.auditor != nil {
-		if mErr := p.pipeline.auditor.MarkDisconnect(rc.RequestID, "upstream read error: "+err.Error(), &plugin.AuditMeta{
+		reason := "upstream read error: " + err.Error()
+		if r.Context().Err() != nil {
+			reason = "client_disconnected"
+		}
+		if mErr := p.pipeline.auditor.MarkDisconnect(rc.RequestID, reason, &plugin.AuditMeta{
 			ResponseStatus:   rc.ResponseStatus,
 			PromptTokens:     rc.PromptTokens,
 			CompletionTokens: rc.CompletionTokens,

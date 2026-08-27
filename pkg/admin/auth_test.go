@@ -30,7 +30,9 @@ import (
 
 var (
 	testSecret = []byte("unit-test-session-secret")
-	testNow    = time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
+	// testNow 取当前时刻(略回拨):会话 token 以此为基准签发,而 RequireAuth 中间件
+	// 用真实 time.Now() 校验——固定历史日期会令 token 过期,导致鉴权链路测试误红
+	testNow = time.Now().Add(-time.Minute)
 )
 
 // newBcryptHash 生成测试口令的 bcrypt 哈希
