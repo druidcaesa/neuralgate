@@ -27,7 +27,7 @@ import (
 )
 
 func newPrivacyServer() *AdminServer {
-	s := NewAdminServer(oss.NewMemStorage(), zap.NewNop(), "enterprise", oss.NewRateLimiter(oss.NewMemStorage(), 100, 100000, "token_bucket"), nil)
+	s := NewAdminServer(oss.NewMemStorage(), zap.NewNop(), "enterprise", oss.NewRateLimiter(oss.NewMemStorage(), 100, 100000, "token_bucket"), enterpriseLicenseAll())
 	s.DisableAuth()
 	return s
 }

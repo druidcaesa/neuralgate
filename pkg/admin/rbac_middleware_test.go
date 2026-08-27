@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/druidcaesa/neuralgate/pkg/license"
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
 	"github.com/druidcaesa/neuralgate/pkg/plugin/oss"
 	"go.uber.org/zap"
@@ -39,10 +40,20 @@ type rbacFixture struct {
 	scopedTok string
 }
 
+// enterpriseLicenseAll 测试用：授权有效且含全部受门控企业功能，使 RequireFeature 一律放行。
+func enterpriseLicenseAll() *LicenseOverview {
+	return &LicenseOverview{Status: "valid", Info: &plugin.LicenseInfo{
+		Features: []string{
+			license.FeatureRBAC, license.FeaturePrivacy, license.FeatureCompliance,
+			license.FeatureTamperProof, license.FeatureMCPAudit,
+		},
+	}}
+}
+
 func newRBACFixture(t *testing.T, enableRBAC bool) *rbacFixture {
 	t.Helper()
 	storage := oss.NewMemStorage()
-	f := &rbacFixture{s: NewAdminServer(storage, zap.NewNop(), "enterprise", oss.NewRateLimiter(oss.NewMemStorage(), 100, 100000, "token_bucket"), nil), storage: storage}
+	f := &rbacFixture{s: NewAdminServer(storage, zap.NewNop(), "enterprise", oss.NewRateLimiter(oss.NewMemStorage(), 100, 100000, "token_bucket"), enterpriseLicenseAll()), storage: storage}
 	sm := NewSessionManager([]byte("rbac-test-secret"), time.Hour)
 	f.s.EnableAuth(sm, nil)
 	if enableRBAC {
