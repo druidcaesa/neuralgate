@@ -38,6 +38,11 @@ import (
 )
 
 func main() {
+	// machine-id 子命令:打印本机机器码(供授权设备绑定取码),无需配置/授权
+	if len(os.Args) > 1 && os.Args[1] == "machine-id" {
+		os.Exit(machineIDCommand(os.Stdout))
+	}
+
 	// 1. 解析命令行参数
 	configPath := flag.String("config", "config.yaml", "配置文件路径")
 	showVersion := flag.Bool("version", false, "显示版本信息")
