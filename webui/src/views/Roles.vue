@@ -16,7 +16,7 @@
       </el-table-column>
       <el-table-column label="权限明细" min-width="280">
         <template #default="{ row }">
-          <el-tag v-for="p in row.permissions.slice(0, 6)" :key="p" size="small" class="perm-tag">{{ p }}</el-tag>
+          <el-tag v-for="p in row.permissions.slice(0, 6)" :key="p" size="small" class="perm-tag">{{ permLabel(p) }}</el-tag>
           <span v-if="row.permissions.length > 6">…</span>
         </template>
       </el-table-column>
@@ -44,12 +44,16 @@
           </el-select>
         </el-form-item>
         <el-form-item label="权限">
-          <el-checkbox-group v-model="form.permissions">
-            <el-row>
-              <el-col v-for="p in allPermissions" :key="p" :span="8">
-                <el-checkbox :value="p" :label="p">{{ p }}</el-checkbox>
-              </el-col>
-            </el-row>
+          <el-checkbox-group v-model="form.permissions" class="perm-groups">
+            <div v-for="g in permissionGroups" :key="g.module" class="perm-group">
+              <div class="perm-module">
+                <span class="perm-module-name">{{ g.module }}</span>
+                <span class="perm-menus">{{ g.menus }}</span>
+              </div>
+              <div class="perm-items">
+                <el-checkbox v-for="it in g.items" :key="it.code" :value="it.code">{{ it.label }}</el-checkbox>
+              </div>
+            </div>
           </el-checkbox-group>
         </el-form-item>
       </el-form>
@@ -68,17 +72,45 @@ import type { RoleItem, TenantItem } from '../types'
 import { createRole, deleteRole, listRoles, updateRole } from '../api/rbac'
 import { listTenants } from '../api/rbac'
 
-// 与后端 plugin.AllPermissions 对齐
-const allPermissions = [
-  'api_key:read', 'api_key:write',
-  'model:read', 'model:write',
-  'audit:read', 'audit:export',
-  'tenant:read', 'tenant:write',
-  'rbac:read', 'rbac:write',
-  'system:read', 'system:write',
-  'rate_limit:read', 'rate_limit:write',
-  'privacy:read', 'privacy:write'
+// 权限按功能模块分组（对应菜单）：单一数据源，read/write/export 映射为中文；
+// 勾选值仍是后端权限码（与 plugin.AllPermissions 对齐），仅显示层中文化。
+interface PermItem { code: string; label: string }
+interface PermGroup { module: string; menus: string; items: PermItem[] }
+const permissionGroups: PermGroup[] = [
+  { module: 'API Key', menus: 'API Key', items: [
+    { code: 'api_key:read', label: '查看' }, { code: 'api_key:write', label: '管理' }
+  ] },
+  { module: '模型配置', menus: '模型配置', items: [
+    { code: 'model:read', label: '查看' }, { code: 'model:write', label: '管理' }
+  ] },
+  { module: '限流配置', menus: '限流配置', items: [
+    { code: 'rate_limit:read', label: '查看' }, { code: 'rate_limit:write', label: '管理' }
+  ] },
+  { module: '审计日志', menus: '审计日志、防篡改告警(查看)', items: [
+    { code: 'audit:read', label: '查看' }, { code: 'audit:export', label: '导出' }
+  ] },
+  { module: '隐私合规', menus: '隐私合规、安全事件', items: [
+    { code: 'privacy:read', label: '查看' }, { code: 'privacy:write', label: '管理' }
+  ] },
+  { module: '租户管理', menus: '租户管理', items: [
+    { code: 'tenant:read', label: '查看' }, { code: 'tenant:write', label: '管理' }
+  ] },
+  { module: '角色与用户', menus: '角色管理、用户管理', items: [
+    { code: 'rbac:read', label: '查看' }, { code: 'rbac:write', label: '管理' }
+  ] },
+  { module: '系统管理', menus: '系统信息、操作日志、合规报表、MCP', items: [
+    { code: 'system:read', label: '查看' }, { code: 'system:write', label: '管理' }
+  ] }
 ]
+
+// permLabel 权限码 → “模块·动作” 中文（表格权限明细用；未知码回显原值）
+function permLabel(code: string): string {
+  for (const g of permissionGroups) {
+    const it = g.items.find((i) => i.code === code)
+    if (it) return `${g.module}·${it.label}`
+  }
+  return code
+}
 
 const roles = ref<RoleItem[]>([])
 const tenants = ref<TenantItem[]>([])
@@ -146,5 +178,12 @@ onMounted(load)
 <style scoped>
 .toolbar { margin-bottom: 12px; display: flex; gap: 8px; align-items: center; }
 .tip { color: #909399; font-size: 12px; margin-left: auto; }
-.perm-tag { margin-right: 4px; }
+.perm-tag { margin-right: 4px; margin-bottom: 4px; }
+.perm-groups { display: block; width: 100%; }
+.perm-group { display: flex; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--ng-border, #ebeef5); }
+.perm-group:last-child { border-bottom: none; }
+.perm-module { width: 210px; flex: none; display: flex; flex-direction: column; }
+.perm-module-name { font-weight: 500; }
+.perm-menus { color: #909399; font-size: 12px; line-height: 1.4; }
+.perm-items { display: flex; gap: 16px; flex-wrap: wrap; }
 </style>
