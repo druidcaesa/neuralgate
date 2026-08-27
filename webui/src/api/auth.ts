@@ -13,6 +13,8 @@ export interface LoginResult {
   tenant_id?: string
   permissions?: string[]
   is_super?: boolean
+  edition?: string
+  features?: string[]
 }
 
 export function getAdminToken(): string {
@@ -24,12 +26,17 @@ export function setAdminSession(
   username: string,
   permissions: string[] = [],
   isSuper = false,
-  tenantId = ''
+  tenantId = '',
+  edition = '',
+  features: string[] = []
 ): void {
   localStorage.setItem(ADMIN_TOKEN_KEY, token)
   localStorage.setItem(ADMIN_USER_KEY, username)
-  // 权限快照与超管标记用于菜单显隐；权限判定以后端为准，前端仅做展示裁剪
-  localStorage.setItem(ADMIN_PERMS_KEY, JSON.stringify({ permissions, is_super: isSuper, tenant_id: tenantId }))
+  // 权限/版本快照用于菜单显隐与门控提示；判定仍以后端为准，前端仅做展示裁剪
+  localStorage.setItem(
+    ADMIN_PERMS_KEY,
+    JSON.stringify({ permissions, is_super: isSuper, tenant_id: tenantId, edition, features })
+  )
 }
 
 export function clearAdminSession(): void {
@@ -46,6 +53,8 @@ export interface AdminIdentity {
   permissions: string[]
   is_super: boolean
   tenant_id: string
+  edition: string
+  features: string[]
 }
 
 export function getAdminIdentity(): AdminIdentity {
@@ -55,12 +64,24 @@ export function getAdminIdentity(): AdminIdentity {
   } catch {
     // 解析失败按无权限处理
   }
-  return { permissions: [], is_super: false, tenant_id: '' }
+  return { permissions: [], is_super: false, tenant_id: '', edition: '', features: [] }
 }
 
 export function hasPerm(perm: string): boolean {
   const identity = getAdminIdentity()
   return identity.is_super || identity.permissions.includes(perm)
+}
+
+export function getEdition(): string {
+  return getAdminIdentity().edition || ''
+}
+
+export function getFeatures(): string[] {
+  return getAdminIdentity().features || []
+}
+
+export function hasFeature(feature: string): boolean {
+  return getFeatures().includes(feature)
 }
 
 export async function login(username: string, password: string): Promise<LoginResult> {
