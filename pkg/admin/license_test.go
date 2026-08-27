@@ -16,6 +16,7 @@ package admin
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -196,5 +197,70 @@ func TestSystemInfoWithoutLicense(t *testing.T) {
 	}
 	if lic["status"] != "oss" {
 		t.Errorf("license.status = %v, want oss", lic["status"])
+	}
+}
+
+// stubLicenseMgr 桩:模拟授权上传管理
+type stubLicenseMgr struct {
+	machineID string
+	info      *plugin.LicenseInfo
+	err       error
+}
+
+func (m *stubLicenseMgr) LocalMachineID() string { return m.machineID }
+func (m *stubLicenseMgr) ApplyUpload([]byte) (*plugin.LicenseInfo, error) {
+	return m.info, m.err
+}
+
+func postLicense(s *AdminServer, token, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, "/api/license", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Admin-Token", token)
+	rec := httptest.NewRecorder()
+	s.Router().ServeHTTP(rec, req)
+	return rec
+}
+
+func TestUploadLicenseValid(t *testing.T) {
+	s, _, tok := newAuthTestServer(t)
+	s.SetLicenseManager(&stubLicenseMgr{
+		machineID: "fp-A",
+		info: &plugin.LicenseInfo{CustomerName: "acme",
+			ExpiresAt: time.Now().Add(24 * time.Hour),
+			Features:  []string{"rbac"}, MachineID: "fp-A"},
+	})
+	rec := postLicense(s, tok, `{"customer_name":"acme"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("有效上传应 200, 得 %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "重启后生效") {
+		t.Errorf("成功响应应含重启提示: %s", rec.Body.String())
+	}
+}
+
+func TestUploadLicenseRejected(t *testing.T) {
+	s, _, tok := newAuthTestServer(t)
+	s.SetLicenseManager(&stubLicenseMgr{err: errors.New("授权与本机设备不匹配")})
+	if rec := postLicense(s, tok, `{"x":1}`); rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("校验失败应 422, 得 %d", rec.Code)
+	}
+	if rec := postLicense(s, tok, ``); rec.Code != http.StatusBadRequest {
+		t.Fatalf("空 body 应 400, 得 %d", rec.Code)
+	}
+}
+
+func TestUploadLicenseUnavailableWhenOSS(t *testing.T) {
+	s, _, tok := newAuthTestServer(t) // 未 SetLicenseManager → nil
+	if rec := postLicense(s, tok, `{"x":1}`); rec.Code != http.StatusNotImplemented {
+		t.Fatalf("无 manager 应 501, 得 %d", rec.Code)
+	}
+}
+
+func TestGetLicenseIncludesMachineID(t *testing.T) {
+	s, _, tok := newAuthTestServer(t)
+	s.SetLicenseManager(&stubLicenseMgr{machineID: "fp-A"})
+	rec := authedGet(s, "/api/license", tok)
+	if !strings.Contains(rec.Body.String(), `"machine_id":"fp-A"`) {
+		t.Fatalf("GET /license 应含 machine_id: %s", rec.Body.String())
 	}
 }

@@ -73,6 +73,7 @@ func (s *AdminServer) registerRoutes(r *gin.Engine) {
 
 		// 授权信息
 		authz.GET("/license", s.RequirePermission(plugin.PermSystemRead), s.licenseInfo)
+		authz.POST("/license", s.RequirePermission(plugin.PermSystemWrite), s.uploadLicense)
 
 		// 篡改告警（处置属运维动作归 system:write）
 		authz.GET("/tamper-alerts", s.RequirePermission(plugin.PermAuditRead), s.listTamperAlerts)

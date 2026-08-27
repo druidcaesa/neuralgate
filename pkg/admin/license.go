@@ -15,11 +15,24 @@
 package admin
 
 import (
+	"io"
+	"net/http"
 	"time"
 
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
 	"github.com/gin-gonic/gin"
 )
+
+// LicenseManager 授权上传管理:校验+持久化上传的授权原文,并提供本机机器码。
+// enterprise 装配注入;OSS 为 nil。pkg/admin 不依赖 enterprise 包(经本接口解耦)。
+type LicenseManager interface {
+	LocalMachineID() string
+	// ApplyUpload 校验(验签+设备指纹+有效期)并持久化;成功返回解析后的授权,失败返回具体原因
+	ApplyUpload(raw []byte) (*plugin.LicenseInfo, error)
+}
+
+// SetLicenseManager 注入授权上传管理(enterprise 装配层调用)
+func (s *AdminServer) SetLicenseManager(m LicenseManager) { s.licenseMgr = m }
 
 // LicenseOverview 授权概要：启动时校验一次的结果快照，供后台展示。
 // Status 取值 valid/expired/invalid/missing/oss；Info 在授权缺失时为 nil，
@@ -46,6 +59,7 @@ type licenseResponse struct {
 	IsOffline     bool       `json:"is_offline,omitempty"`     // 是否离线授权
 	Signed        bool       `json:"signed"`                   // 是否携带签名（不回显签名全文）
 	DaysRemaining *int       `json:"days_remaining,omitempty"` // 剩余天数（仅有效时）
+	MachineID     string     `json:"machine_id,omitempty"`     // 本机机器码（供页面复制送签；OSS 为空）
 }
 
 // licenseInfo GET /api/license：授权状态与脱敏后的业务字段
@@ -69,6 +83,9 @@ func (s *AdminServer) buildLicenseResponse() licenseResponse {
 		Message: ov.Message,
 		Edition: s.edition,
 		Signed:  ov.Info != nil && ov.Info.Signature != "",
+	}
+	if s.licenseMgr != nil {
+		resp.MachineID = s.licenseMgr.LocalMachineID() // 未授权/降级态也回显,供取码送签
 	}
 	if ov.Info == nil {
 		return resp
@@ -95,4 +112,33 @@ func maskLicenseKey(key string) string {
 		return key + "****"
 	}
 	return key[:8] + "****"
+}
+
+// uploadLicense POST /api/license：上传授权 JSON 原文，即时校验+持久化，功能重启生效。
+// 全局域；不受授权门控（过期/换机后仍可上传修复）
+func (s *AdminServer) uploadLicense(c *gin.Context) {
+	if s.globalOnlyGuard(c) {
+		return
+	}
+	if s.licenseMgr == nil {
+		Error(c, http.StatusNotImplemented, http.StatusNotImplemented, "当前版本不支持授权上传")
+		return
+	}
+	raw, err := io.ReadAll(io.LimitReader(c.Request.Body, 1<<20))
+	if err != nil || len(raw) == 0 {
+		Error(c, http.StatusBadRequest, http.StatusBadRequest, "授权文件为空或不可读")
+		return
+	}
+	info, err := s.licenseMgr.ApplyUpload(raw)
+	if err != nil {
+		Error(c, http.StatusUnprocessableEntity, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	OK(c, gin.H{
+		"customer_name": info.CustomerName,
+		"expires_at":    info.ExpiresAt,
+		"features":      info.Features,
+		"machine_bound": info.MachineID != "",
+		"message":       "上传成功，重启后生效",
+	})
 }
