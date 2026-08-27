@@ -134,3 +134,43 @@ func TestLoginResponseCarriesEditionFeatures(t *testing.T) {
 		t.Errorf("features 应含 2 项, got %v", resp.Data.Features)
 	}
 }
+
+// TestFeatureGateBlocksUnlicensed OSS 下即便超管也无法访问企业路由（合规硬门控核心）
+func TestFeatureGateBlocksUnlicensed(t *testing.T) {
+	storage := oss.NewMemStorage()
+	s := NewAdminServer(storage, zap.NewNop(), "oss", newFeatRateLimiter(), nil)
+	s.EnableAuth(NewSessionManager([]byte("feat-oss"), time.Hour), nil)
+
+	role := &plugin.Role{Name: plugin.SuperRoleName, Permissions: plugin.AllPermissions}
+	_ = storage.SaveRole(role)
+	u := &plugin.AdminUser{ID: "u1", Username: "root", RoleID: role.ID, Status: plugin.AdminUserStatusActive}
+	_ = storage.SaveAdminUser(u)
+	tok, _, _ := s.sessions.Mint(u, plugin.AllPermissions, true, time.Now())
+
+	for _, path := range []string{"/api/roles", "/api/tenants", "/api/admin-users", "/api/privacy-rules", "/api/compliance-reports", "/api/tamper-alerts", "/api/mcp-audit-logs"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set(tokenHeader, tok)
+		rec := httptest.NewRecorder()
+		s.Router().ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("OSS 访问 %s 应 403, got %d", path, rec.Code)
+			continue
+		}
+		var resp Response
+		_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+		if resp.Code != CodeFeatureLocked {
+			t.Errorf("%s 应返回 CodeFeatureLocked(%d), got %d", path, CodeFeatureLocked, resp.Code)
+		}
+	}
+
+	// 对照：OSS 保留功能不受门控
+	for _, path := range []string{"/api/operation-logs", "/api/mcp-servers"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set(tokenHeader, tok)
+		rec := httptest.NewRecorder()
+		s.Router().ServeHTTP(rec, req)
+		if rec.Code == http.StatusForbidden {
+			t.Errorf("OSS 保留功能 %s 不应被门控 403", path)
+		}
+	}
+}

@@ -17,6 +17,7 @@ package admin
 import (
 	"net/http"
 
+	"github.com/druidcaesa/neuralgate/pkg/license"
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
 	"github.com/gin-gonic/gin"
 )
@@ -76,21 +77,21 @@ func (s *AdminServer) registerRoutes(r *gin.Engine) {
 		authz.POST("/license", s.RequirePermission(plugin.PermSystemWrite), s.uploadLicense)
 
 		// 篡改告警（处置属运维动作归 system:write）
-		authz.GET("/tamper-alerts", s.RequirePermission(plugin.PermAuditRead), s.listTamperAlerts)
-		authz.PATCH("/tamper-alerts/:id", s.RequirePermission(plugin.PermSystemWrite), s.resolveTamperAlert)
+		authz.GET("/tamper-alerts", s.RequireFeature(license.FeatureTamperProof), s.RequirePermission(plugin.PermAuditRead), s.listTamperAlerts)
+		authz.PATCH("/tamper-alerts/:id", s.RequireFeature(license.FeatureTamperProof), s.RequirePermission(plugin.PermSystemWrite), s.resolveTamperAlert)
 
 		// 合规报表(E6)：查询/下载/手动补生成（生成器由 enterprise 装配注入，未注入时生成 503）
-		authz.GET("/compliance-reports", s.RequirePermission(plugin.PermSystemRead), s.listComplianceReports)
-		authz.GET("/compliance-reports/:id", s.RequirePermission(plugin.PermSystemRead), s.getComplianceReport)
-		authz.POST("/compliance-reports/generate", s.RequirePermission(plugin.PermSystemWrite), s.generateComplianceReport)
+		authz.GET("/compliance-reports", s.RequireFeature(license.FeatureCompliance), s.RequirePermission(plugin.PermSystemRead), s.listComplianceReports)
+		authz.GET("/compliance-reports/:id", s.RequireFeature(license.FeatureCompliance), s.RequirePermission(plugin.PermSystemRead), s.getComplianceReport)
+		authz.POST("/compliance-reports/generate", s.RequireFeature(license.FeatureCompliance), s.RequirePermission(plugin.PermSystemWrite), s.generateComplianceReport)
 
 		// MCP 上游管理与工具调用审计(E7)：全局域数据，租户内用户一律 403
 		authz.GET("/mcp-servers", s.RequirePermission(plugin.PermSystemRead), s.listMCPServers)
 		authz.POST("/mcp-servers", s.RequirePermission(plugin.PermSystemWrite), s.createMCPServer)
 		authz.PUT("/mcp-servers/:id", s.RequirePermission(plugin.PermSystemWrite), s.updateMCPServer)
 		authz.DELETE("/mcp-servers/:id", s.RequirePermission(plugin.PermSystemWrite), s.deleteMCPServer)
-		authz.GET("/mcp-audit-logs", s.RequirePermission(plugin.PermSystemRead), s.listMCPAuditLogs)
-		authz.GET("/mcp-audit-logs/:id", s.RequirePermission(plugin.PermSystemRead), s.getMCPAuditLog)
+		authz.GET("/mcp-audit-logs", s.RequireFeature(license.FeatureMCPAudit), s.RequirePermission(plugin.PermSystemRead), s.listMCPAuditLogs)
+		authz.GET("/mcp-audit-logs/:id", s.RequireFeature(license.FeatureMCPAudit), s.RequirePermission(plugin.PermSystemRead), s.getMCPAuditLog)
 
 		// 限流配置管理
 		authz.POST("/rate-limits", s.RequirePermission(plugin.PermRateLimitWrite), s.createRateLimit)
@@ -99,14 +100,14 @@ func (s *AdminServer) registerRoutes(r *gin.Engine) {
 		authz.DELETE("/rate-limits/:id", s.RequirePermission(plugin.PermRateLimitWrite), s.deleteRateLimit)
 
 		// 隐私合规(E4)：规则库/白名单/安全事件
-		authz.POST("/privacy-rules", s.RequirePermission(plugin.PermPrivacyWrite), s.createPrivacyRule)
-		authz.GET("/privacy-rules", s.RequirePermission(plugin.PermPrivacyRead), s.listPrivacyRules)
-		authz.PUT("/privacy-rules/:id", s.RequirePermission(plugin.PermPrivacyWrite), s.updatePrivacyRule)
-		authz.DELETE("/privacy-rules/:id", s.RequirePermission(plugin.PermPrivacyWrite), s.deletePrivacyRule)
-		authz.POST("/privacy-whitelist", s.RequirePermission(plugin.PermPrivacyWrite), s.createPrivacyWhitelistEntry)
-		authz.GET("/privacy-whitelist", s.RequirePermission(plugin.PermPrivacyRead), s.listPrivacyWhitelistEntries)
-		authz.DELETE("/privacy-whitelist/:id", s.RequirePermission(plugin.PermPrivacyWrite), s.deletePrivacyWhitelistEntry)
-		authz.GET("/security-events", s.RequirePermission(plugin.PermPrivacyRead), s.listSecurityEvents)
+		authz.POST("/privacy-rules", s.RequireFeature(license.FeaturePrivacy), s.RequirePermission(plugin.PermPrivacyWrite), s.createPrivacyRule)
+		authz.GET("/privacy-rules", s.RequireFeature(license.FeaturePrivacy), s.RequirePermission(plugin.PermPrivacyRead), s.listPrivacyRules)
+		authz.PUT("/privacy-rules/:id", s.RequireFeature(license.FeaturePrivacy), s.RequirePermission(plugin.PermPrivacyWrite), s.updatePrivacyRule)
+		authz.DELETE("/privacy-rules/:id", s.RequireFeature(license.FeaturePrivacy), s.RequirePermission(plugin.PermPrivacyWrite), s.deletePrivacyRule)
+		authz.POST("/privacy-whitelist", s.RequireFeature(license.FeaturePrivacy), s.RequirePermission(plugin.PermPrivacyWrite), s.createPrivacyWhitelistEntry)
+		authz.GET("/privacy-whitelist", s.RequireFeature(license.FeaturePrivacy), s.RequirePermission(plugin.PermPrivacyRead), s.listPrivacyWhitelistEntries)
+		authz.DELETE("/privacy-whitelist/:id", s.RequireFeature(license.FeaturePrivacy), s.RequirePermission(plugin.PermPrivacyWrite), s.deletePrivacyWhitelistEntry)
+		authz.GET("/security-events", s.RequireFeature(license.FeaturePrivacy), s.RequirePermission(plugin.PermPrivacyRead), s.listSecurityEvents)
 
 		// RBAC 权限体系(E5)：租户/角色/用户/操作日志（handler 在 Task4 注册）
 		s.registerRBACRoutes(authz)

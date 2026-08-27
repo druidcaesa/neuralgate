@@ -20,29 +20,31 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/druidcaesa/neuralgate/pkg/license"
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )
 
-// registerRBACRoutes 注册租户/角色/用户/操作日志路由（权限码守卫）
+// registerRBACRoutes 注册租户/角色/用户/操作日志路由（rbac 功能门控 + 权限码守卫）
 func (s *AdminServer) registerRBACRoutes(authz *gin.RouterGroup) {
-	authz.POST("/tenants", s.RequirePermission(plugin.PermTenantWrite), s.createTenant)
-	authz.GET("/tenants", s.RequirePermission(plugin.PermTenantRead), s.listTenants)
-	authz.PUT("/tenants/:id", s.RequirePermission(plugin.PermTenantWrite), s.updateTenant)
-	authz.DELETE("/tenants/:id", s.RequirePermission(plugin.PermTenantWrite), s.deleteTenant)
+	authz.POST("/tenants", s.RequireFeature(license.FeatureRBAC), s.RequirePermission(plugin.PermTenantWrite), s.createTenant)
+	authz.GET("/tenants", s.RequireFeature(license.FeatureRBAC), s.RequirePermission(plugin.PermTenantRead), s.listTenants)
+	authz.PUT("/tenants/:id", s.RequireFeature(license.FeatureRBAC), s.RequirePermission(plugin.PermTenantWrite), s.updateTenant)
+	authz.DELETE("/tenants/:id", s.RequireFeature(license.FeatureRBAC), s.RequirePermission(plugin.PermTenantWrite), s.deleteTenant)
 
-	authz.POST("/roles", s.RequirePermission(plugin.PermRBACWrite), s.createRole)
-	authz.GET("/roles", s.RequirePermission(plugin.PermRBACRead), s.listRoles)
-	authz.PUT("/roles/:id", s.RequirePermission(plugin.PermRBACWrite), s.updateRole)
-	authz.DELETE("/roles/:id", s.RequirePermission(plugin.PermRBACWrite), s.deleteRole)
+	authz.POST("/roles", s.RequireFeature(license.FeatureRBAC), s.RequirePermission(plugin.PermRBACWrite), s.createRole)
+	authz.GET("/roles", s.RequireFeature(license.FeatureRBAC), s.RequirePermission(plugin.PermRBACRead), s.listRoles)
+	authz.PUT("/roles/:id", s.RequireFeature(license.FeatureRBAC), s.RequirePermission(plugin.PermRBACWrite), s.updateRole)
+	authz.DELETE("/roles/:id", s.RequireFeature(license.FeatureRBAC), s.RequirePermission(plugin.PermRBACWrite), s.deleteRole)
 
-	authz.POST("/admin-users", s.RequirePermission(plugin.PermRBACWrite), s.createAdminUser)
-	authz.GET("/admin-users", s.RequirePermission(plugin.PermRBACRead), s.listAdminUsers)
-	authz.PUT("/admin-users/:id", s.RequirePermission(plugin.PermRBACWrite), s.updateAdminUser)
-	authz.DELETE("/admin-users/:id", s.RequirePermission(plugin.PermRBACWrite), s.deleteAdminUser)
+	authz.POST("/admin-users", s.RequireFeature(license.FeatureRBAC), s.RequirePermission(plugin.PermRBACWrite), s.createAdminUser)
+	authz.GET("/admin-users", s.RequireFeature(license.FeatureRBAC), s.RequirePermission(plugin.PermRBACRead), s.listAdminUsers)
+	authz.PUT("/admin-users/:id", s.RequireFeature(license.FeatureRBAC), s.RequirePermission(plugin.PermRBACWrite), s.updateAdminUser)
+	authz.DELETE("/admin-users/:id", s.RequireFeature(license.FeatureRBAC), s.RequirePermission(plugin.PermRBACWrite), s.deleteAdminUser)
 
+	// 操作日志不受 feature 门控：操作审计无条件运行、数据持续产生
 	authz.GET("/operation-logs", s.RequirePermission(plugin.PermSystemRead), s.listOperationLogs)
 }
 
