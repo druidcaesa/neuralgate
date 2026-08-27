@@ -163,6 +163,8 @@ func main() {
 		zap.Bool("gate_enabled", gate != core.LicenseGate(core.NopGate())))
 
 	adminServer := admin.NewAdminServer(storage, logger, effectiveEdition, rateLimiter, licenseOverview)
+	// 授权上传管理（enterprise 注入独立校验器；OSS 为空操作，上传接口恒 501）
+	setupLicenseManager(*cfg, adminServer, logger)
 	// CORS 白名单（空=同源部署不发送跨域头）；首个管理员账号缺位时引导创建
 	if len(cfg.Admin.AllowedOrigins) > 0 {
 		adminServer.EnableAuth(nil, cfg.Admin.AllowedOrigins)
