@@ -346,6 +346,7 @@ type LicenseInfo struct {
 	Features     []string  `json:"features"`      // 授权功能列表
 	Signature    string    `json:"signature"`     // 签名
 	IsOffline    bool      `json:"is_offline"`    // 是否离线授权
+	MachineID    string    `json:"machine_id"`    // 绑定的机器指纹(空=不绑定,仅供开发/内部)
 }
 
 // PluginFactory 插件工厂统一入口

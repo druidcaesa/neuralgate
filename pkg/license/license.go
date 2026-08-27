@@ -42,6 +42,7 @@ const (
 // CanonicalPayload 将授权信息中除签名外的全部字段做确定性序列化，作为签名载荷。
 // 每个字段以 "长度:内容;" 形式拼接，杜绝字段值含分隔符导致的歧义；
 // 时间统一转 UTC RFC3339，Features 按原序合并为逗号分隔串。
+// MachineID 仅在非空时追加末段：为空时载荷与旧版逐字节一致，历史授权仍可验签。
 // 签发与验签必须使用同一函数保证字节一致。
 func CanonicalPayload(info *plugin.LicenseInfo) []byte {
 	fields := []string{
@@ -54,6 +55,9 @@ func CanonicalPayload(info *plugin.LicenseInfo) []byte {
 		info.ExpiresAt.UTC().Format(time.RFC3339),
 		strings.Join(info.Features, ","),
 		strconv.FormatBool(info.IsOffline),
+	}
+	if info.MachineID != "" {
+		fields = append(fields, info.MachineID)
 	}
 	var buf bytes.Buffer
 	for _, f := range fields {

@@ -102,3 +102,19 @@ func TestLicenseInfoJSONTags(t *testing.T) {
 		}
 	}
 }
+
+func TestCanonicalPayloadEmptyMachineIDBackwardCompat(t *testing.T) {
+	info := baseInfo()
+	got := string(CanonicalPayload(&info))
+	if !strings.HasSuffix(got, "4:true;") {
+		t.Fatalf("空 machine_id 载荷末段应为 IsOffline(4:true;),得 %q", got)
+	}
+	info.MachineID = "abc123"
+	bound := string(CanonicalPayload(&info))
+	if bound == got {
+		t.Fatal("machine_id 非空必须改变载荷")
+	}
+	if !strings.HasSuffix(bound, "6:abc123;") {
+		t.Fatalf("绑定载荷末段应为 machine_id(6:abc123;),得 %q", bound)
+	}
+}
