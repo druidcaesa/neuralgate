@@ -275,6 +275,28 @@ Notes:
 - Re-login is required after service restart; rotate your credential via "Change Password" in the top-right menu
 - CORS is disabled by default (same-origin deployment); for cross-origin access, configure the `admin.allowed_origins` whitelist
 
+### Commercial License (Device-Bound)
+
+Enterprise licenses can be bound to a specific machine: **the license is automatically invalidated after switching devices**, preventing license files from being freely copied and redistributed. Licenses are activated by uploading through the admin console.
+
+```bash
+# 1. On the target machine, obtain its machine code (runs without a license)
+./neuralgate-enterprise machine-id
+# Prints a machine code; you can also copy it from the console under
+# "System Info → License → Machine Code"
+
+# 2. Send the machine code to your vendor to issue a license bound to that machine
+```
+
+3. Upload the license file under "System Info → License → Upload License" (the signature, validity period, and machine code are verified on upload, and the result is shown)
+4. **Restart the service** to activate enterprise features
+
+Notes:
+
+- The license is read from the path set by `license.file_path`; a successful upload is written to that path
+- When the license is missing, expired, or the machine code does not match, the gateway automatically falls back to OSS mode
+- After expiry or a device change, an administrator can still log in, obtain the machine code, and upload a new license to recover
+
 ### Docker
 
 ```bash
