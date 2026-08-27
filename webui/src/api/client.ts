@@ -33,6 +33,11 @@ client.interceptors.response.use(
       window.location.href = '/login'
       return Promise.reject(err)
     }
+    const data = err.response?.data
+    if (data && typeof data === 'object' && data.code === 4030) {
+      ElMessage.warning(data.message || '该功能需要企业版授权')
+      return Promise.reject(err)
+    }
     const msg =
       err.response?.data?.message ||
       err.response?.data?.error?.message ||
