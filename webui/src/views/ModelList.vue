@@ -114,7 +114,7 @@ const currentModelForUpstream = ref<ModelItem | null>(null)
 
 const modelForm = reactive<ModelCreateRequest>({
   name: '', provider: 'openai', provider_model: '', base_url: '', api_key: '',
-  timeout: 60, max_retries: 2, weight: 1, enabled: true, tags: {}
+  timeout: 60, max_retries: 2, retry_interval: 0, weight: 1, enabled: true, tags: {}
 })
 
 // 内置云服务商预设上游地址(适配 base_url + /v1/chat/completions 拼接)
@@ -163,7 +163,7 @@ async function load() {
 
 function openCreate() {
   editing.value = null
-  Object.assign(modelForm, { name: '', provider: 'openai', provider_model: '', base_url: BUILTIN_BASE_URLS.openai, api_key: '', timeout: 60, max_retries: 2, weight: 1, enabled: true, tags: {} })
+  Object.assign(modelForm, { name: '', provider: 'openai', provider_model: '', base_url: BUILTIN_BASE_URLS.openai, api_key: '', timeout: 60, max_retries: 2, retry_interval: 0, weight: 1, enabled: true, tags: {} })
   modelDialog.value = true
 }
 
