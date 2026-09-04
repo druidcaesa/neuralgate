@@ -103,10 +103,16 @@ func RouteMatchMiddleware(storage plugin.StoragePlugin, registry *adapter.Adapte
 				}
 			}
 
-			// 获取适配器:内置供应商用对应转换适配器;未注册的自定义供应商回退 OpenAI 适配器(OpenAI 兼容透传)
+			// 获取适配器:内置供应商用对应转换适配器;自定义(未注册)按 tags["adapter"] 选协议适配器,
+			// 缺省或 tag 未注册时回退 OpenAI 适配器(OpenAI 兼容透传)
 			adpt, err := registry.Get(config.Provider)
 			if err != nil {
-				adpt = adapter.NewOpenAIAdapter()
+				if proto := config.Tags["adapter"]; proto != "" {
+					adpt, err = registry.Get(proto)
+				}
+				if err != nil {
+					adpt = adapter.NewOpenAIAdapter()
+				}
 			}
 			rc.Adapter = adpt
 

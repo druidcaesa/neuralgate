@@ -17,6 +17,7 @@ package core
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -179,5 +180,93 @@ func TestRouteCustomProviderFallsBackToOpenAI(t *testing.T) {
 	// 自定义 provider 回退到 openai 适配器(原生透传)
 	if rec.Header().Get("X-Provider") != "openai" {
 		t.Fatalf("provider = %s; want openai (fallback)", rec.Header().Get("X-Provider"))
+	}
+}
+
+// stubProtocolAdapter 仅用于验证自定义 provider 按 tags["adapter"] 路由的测试替身
+type stubProtocolAdapter struct{ name string }
+
+func (s *stubProtocolAdapter) Name() string              { return s.name }
+func (s *stubProtocolAdapter) SupportsNativeProxy() bool { return true }
+func (s *stubProtocolAdapter) TransformRequest(*adapter.UnifiedRequest, []byte) (*http.Request, error) {
+	return nil, errors.New("native proxy only")
+}
+func (s *stubProtocolAdapter) TransformResponse(*http.Response) (*adapter.UnifiedResponse, error) {
+	return nil, errors.New("native proxy only")
+}
+func (s *stubProtocolAdapter) TransformStreamChunk([]byte) (*adapter.UnifiedSSEChunk, error) {
+	return nil, errors.New("native proxy only")
+}
+func (s *stubProtocolAdapter) ParseTokenUsage(*http.Response) (int, int, int) { return 0, 0, 0 }
+func (s *stubProtocolAdapter) ParseStreamUsage([]byte) (int, int, int)        { return 0, 0, 0 }
+func (s *stubProtocolAdapter) ParseError(*http.Response) (int, string)        { return 0, "" }
+
+// TestRouteCustomProviderAdapterTagDrivesSelection:自定义 provider + tags["adapter"]
+// → 按 tag 名选已注册适配器(而非一律回退 openai)
+func TestRouteCustomProviderAdapterTagDrivesSelection(t *testing.T) {
+	s := routeTestStorage()
+	now := time.Now()
+	_ = s.SaveModelConfig(&plugin.ModelConfig{
+		ID: "m-tag", ModelName: "tag-routed", Provider: "my-proxy", ProviderModel: "m-1",
+		BaseURL: "https://custom.example.com", APIKey: "sk", Enabled: true,
+		Tags: map[string]string{"adapter": "anthropic"}, CreatedAt: now, UpdatedAt: now,
+	})
+	registry := adapter.NewAdapterRegistry()
+	registry.Register(&stubProtocolAdapter{name: "anthropic"})
+
+	rc := &RequestContext{APIKeyID: "k2", TenantID: "t1"}
+	ctx := WithRequestContext(context.Background(), rc)
+	mw := RouteMatchMiddleware(s, registry)
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rc, _ := RequestContextFrom(r.Context())
+		w.Header().Set("X-Provider", rc.Adapter.Name())
+		w.WriteHeader(http.StatusOK)
+	}))
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
+		bytes.NewReader([]byte(`{"model":"tag-routed","messages":[]}`)))
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; want 200, body=%s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("X-Provider") != "anthropic" {
+		t.Fatalf("provider = %s; want anthropic (adapter tag)", rec.Header().Get("X-Provider"))
+	}
+}
+
+// TestRouteCustomProviderOpenaiTag:前端默认 provider=custom + tags["adapter"]=openai
+// → 解析到注册的 openai 适配器(与缺失 tag 的回退结果一致)
+func TestRouteCustomProviderOpenaiTag(t *testing.T) {
+	s := routeTestStorage()
+	now := time.Now()
+	_ = s.SaveModelConfig(&plugin.ModelConfig{
+		ID: "m-custom-oai", ModelName: "custom-oai", Provider: "custom", ProviderModel: "llama-3.1",
+		BaseURL: "http://127.0.0.1:8000/v1", APIKey: "sk", Enabled: true,
+		Tags: map[string]string{"adapter": "openai"}, CreatedAt: now, UpdatedAt: now,
+	})
+	registry := adapter.NewAdapterRegistry()
+	registry.Register(adapter.NewOpenAIAdapter())
+
+	rc := &RequestContext{APIKeyID: "k2", TenantID: "t1"}
+	ctx := WithRequestContext(context.Background(), rc)
+	mw := RouteMatchMiddleware(s, registry)
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rc, _ := RequestContextFrom(r.Context())
+		w.Header().Set("X-Provider", rc.Adapter.Name())
+		w.WriteHeader(http.StatusOK)
+	}))
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
+		bytes.NewReader([]byte(`{"model":"custom-oai","messages":[]}`)))
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; want 200, body=%s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("X-Provider") != "openai" {
+		t.Fatalf("provider = %s; want openai", rec.Header().Get("X-Provider"))
 	}
 }
