@@ -270,3 +270,26 @@ func TestRouteCustomProviderOpenaiTag(t *testing.T) {
 		t.Fatalf("provider = %s; want openai", rec.Header().Get("X-Provider"))
 	}
 }
+
+// TestRouteBuiltinIgnoresAdapterTag:内置 provider 残留 tags[adapter] 仍走注册的
+// 内置适配器(tag 只对未注册的自定义 provider 生效,保证向后兼容)
+func TestRouteBuiltinIgnoresAdapterTag(t *testing.T) {
+	s := routeTestStorage()
+	now := time.Now()
+	_ = s.SaveModelConfig(&plugin.ModelConfig{
+		ID: "m-builtin-tag", ModelName: "builtin-tag", Provider: "openai", ProviderModel: "gpt-4o-mini",
+		BaseURL: "https://upstream", APIKey: "sk", Enabled: true,
+		Tags: map[string]string{"adapter": "anthropic"}, CreatedAt: now, UpdatedAt: now,
+	})
+	registry := adapter.NewAdapterRegistry()
+	registry.Register(adapter.NewOpenAIAdapter())
+	registry.Register(&stubProtocolAdapter{name: "anthropic"})
+
+	rec := doRouteRequest(s, registry, "k2", `{"model":"builtin-tag","messages":[]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("X-Provider"); got != "openai" {
+		t.Fatalf("provider = %s; want openai (builtin ignores tags.adapter)", got)
+	}
+}
