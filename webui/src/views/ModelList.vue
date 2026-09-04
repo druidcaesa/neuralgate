@@ -63,8 +63,16 @@
         </el-form-item>
         <el-form-item label="上游模型" required><el-input v-model="modelForm.provider_model" /></el-form-item>
         <el-form-item label="上游地址" required>
-          <el-input v-model="modelForm.base_url" placeholder="https://api.openai.com" :disabled="isBuiltinProvider(modelForm.provider)" />
-          <el-text v-if="isBuiltinProvider(modelForm.provider)" type="info" size="small">云服务商地址已锁定</el-text>
+          <el-input v-model="modelForm.base_url"
+            :placeholder="modelForm.provider in BUILTIN_BASE_URLS ? BUILTIN_BASE_URLS[modelForm.provider] : 'http://你的推理服务:8000/v1 (OpenAI 兼容端点)'"
+            :disabled="modelForm.provider in BUILTIN_BASE_URLS" />
+          <el-text v-if="modelForm.provider in BUILTIN_BASE_URLS" type="info" size="small">云服务商地址已锁定</el-text>
+        </el-form-item>
+        <el-form-item v-if="!(modelForm.provider in BUILTIN_BASE_URLS)" label="接入协议">
+          <el-select v-model="modelForm.tags!.adapter" style="width:100%">
+            <el-option v-for="o in PROTOCOL_OPTIONS" :key="o.value" :label="o.label" :value="o.value" :disabled="o.disabled" />
+          </el-select>
+          <el-text type="info" size="small">需暴露 OpenAI 兼容接口（/v1/chat/completions）；Anthropic/Ollama 原生即将支持</el-text>
         </el-form-item>
         <el-form-item label="API Key" required><el-input v-model="modelForm.api_key" show-password /></el-form-item>
         <el-form-item label="超时(秒)"><el-input-number v-model="modelForm.timeout" :min="1" :max="300" /></el-form-item>
@@ -138,6 +146,13 @@ function isBuiltinProvider(p: string): boolean {
   return p in BUILTIN_BASE_URLS
 }
 
+// 接入协议(仅自定义供应商展示):本期仅 openai 可用,Anthropic/Ollama 置灰待下期适配器落地
+const PROTOCOL_OPTIONS = [
+  { value: 'openai', label: 'OpenAI 兼容 (vLLM / Ollama-openai 端点 / one-api 等)', disabled: false },
+  { value: 'anthropic', label: 'Anthropic 格式', disabled: true },
+  { value: 'ollama', label: 'Ollama 原生', disabled: true },
+]
+
 // 供应商变更:内置 → 自动填预设地址;自定义 → 清空地址让用户输入
 function onProviderChange(p: string) {
   if (p in BUILTIN_BASE_URLS) {
@@ -180,10 +195,16 @@ function openEdit(row: ModelItem) {
 async function saveModel() {
   saving.value = true
   try {
-    if (editing.value) {
-      await updateModel(editing.value.id, modelForm)
+    const payload: ModelCreateRequest = { ...modelForm }
+    if (payload.provider in BUILTIN_BASE_URLS) {
+      delete payload.tags!.adapter // 内置供应商不带协议 tag
     } else {
-      await createModel(modelForm)
+      payload.tags!.adapter = payload.tags!.adapter || 'openai'
+    }
+    if (editing.value) {
+      await updateModel(editing.value.id, payload)
+    } else {
+      await createModel(payload)
     }
     ElMessage.success('保存成功')
     modelDialog.value = false
