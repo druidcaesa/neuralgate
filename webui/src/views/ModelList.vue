@@ -64,9 +64,10 @@
         <el-form-item label="上游模型" required><el-input v-model="modelForm.provider_model" /></el-form-item>
         <el-form-item label="上游地址" required>
           <el-input v-model="modelForm.base_url"
-            :placeholder="isBuiltinProvider(modelForm.provider) ? BUILTIN_BASE_URLS[modelForm.provider] : 'http://你的推理服务:8000/v1 (OpenAI 兼容端点)'"
+            :placeholder="isBuiltinProvider(modelForm.provider) ? BUILTIN_BASE_URLS[modelForm.provider] : 'http://你的推理服务:8000 (OpenAI 兼容服务根地址)'"
             :disabled="isBuiltinProvider(modelForm.provider)" />
           <el-text v-if="isBuiltinProvider(modelForm.provider)" type="info" size="small">云服务商地址已锁定</el-text>
+          <el-text v-else type="info" size="small">填写服务根地址(不含 /v1),网关自动拼接 /v1/chat/completions</el-text>
         </el-form-item>
         <el-form-item v-if="!(modelForm.provider in BUILTIN_BASE_URLS)" label="接入协议">
           <el-select v-model="modelForm.tags!.adapter" style="width:100%">
@@ -133,12 +134,15 @@ const BUILTIN_BASE_URLS: Record<string, string> = {
   zhipu: 'https://open.bigmodel.cn/api/paas/v4'
 }
 
-// 自定义供应商:下拉显式选项的值与展示名(手输任意非内置值同样视为自定义,走 OpenAI 兼容)
+// 自定义供应商:下拉显式选项的值与展示名(手输任意非内置值同样视为自定义,走 OpenAI 兼容);
+// 长标签仅供下拉 option 展示,列表「供应商」列用短标签 CUSTOM_PROVIDER_SHORT_LABEL
 const CUSTOM_PROVIDER = 'custom'
 const CUSTOM_PROVIDER_LABEL = '自定义(OpenAI 兼容)'
+const CUSTOM_PROVIDER_SHORT_LABEL = '自定义'
 
+// 列表「供应商」列短标签:custom → 自定义;历史手输值原样显示
 function providerLabel(p: string): string {
-  return p === CUSTOM_PROVIDER ? CUSTOM_PROVIDER_LABEL : p
+  return p === CUSTOM_PROVIDER ? CUSTOM_PROVIDER_SHORT_LABEL : p
 }
 
 // 是否内置云服务商(内置则锁定 base_url)
