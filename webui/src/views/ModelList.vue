@@ -23,7 +23,9 @@
         </template>
       </el-table-column>
       <el-table-column prop="name" label="模型名称" min-width="120" />
-      <el-table-column prop="provider" label="供应商" width="100" />
+      <el-table-column label="供应商" min-width="130">
+        <template #default="{ row }">{{ providerLabel(row.provider) }}</template>
+      </el-table-column>
       <el-table-column prop="provider_model" label="上游模型" min-width="120" />
       <el-table-column prop="base_url" label="上游地址" min-width="180" show-overflow-tooltip />
       <el-table-column prop="timeout" label="超时(s)" width="90" />
@@ -56,6 +58,7 @@
             <el-option label="deepseek" value="deepseek" />
             <el-option label="qwen（通义千问）" value="qwen" />
             <el-option label="zhipu" value="zhipu" />
+            <el-option :label="CUSTOM_PROVIDER_LABEL" :value="CUSTOM_PROVIDER" />
           </el-select>
         </el-form-item>
         <el-form-item label="上游模型" required><el-input v-model="modelForm.provider_model" /></el-form-item>
@@ -111,7 +114,7 @@ const currentModelForUpstream = ref<ModelItem | null>(null)
 
 const modelForm = reactive<ModelCreateRequest>({
   name: '', provider: 'openai', provider_model: '', base_url: '', api_key: '',
-  timeout: 60, max_retries: 2, weight: 1, enabled: true
+  timeout: 60, max_retries: 2, weight: 1, enabled: true, tags: {}
 })
 
 // 内置云服务商预设上游地址(适配 base_url + /v1/chat/completions 拼接)
@@ -120,6 +123,14 @@ const BUILTIN_BASE_URLS: Record<string, string> = {
   deepseek: 'https://api.deepseek.com',
   qwen: 'https://dashscope.aliyuncs.com/compatible-mode',
   zhipu: 'https://open.bigmodel.cn/api/paas/v4'
+}
+
+// 自定义供应商:下拉显式选项的值与展示名(手输任意非内置值同样视为自定义,走 OpenAI 兼容)
+const CUSTOM_PROVIDER = 'custom'
+const CUSTOM_PROVIDER_LABEL = '自定义(OpenAI 兼容)'
+
+function providerLabel(p: string): string {
+  return p === CUSTOM_PROVIDER ? CUSTOM_PROVIDER_LABEL : p
 }
 
 // 是否内置云服务商(内置则锁定 base_url)
@@ -131,8 +142,10 @@ function isBuiltinProvider(p: string): boolean {
 function onProviderChange(p: string) {
   if (p in BUILTIN_BASE_URLS) {
     modelForm.base_url = BUILTIN_BASE_URLS[p]
+    delete modelForm.tags!.adapter // 内置供应商不携带协议 tag
   } else {
     modelForm.base_url = ''
+    modelForm.tags!.adapter = modelForm.tags!.adapter || 'openai'
   }
 }
 const upstreamForm = reactive<UpstreamRequest>({ base_url: '', api_key: '', weight: 1, enabled: true })
@@ -150,13 +163,17 @@ async function load() {
 
 function openCreate() {
   editing.value = null
-  Object.assign(modelForm, { name: '', provider: 'openai', provider_model: '', base_url: BUILTIN_BASE_URLS.openai, api_key: '', timeout: 60, max_retries: 2, weight: 1, enabled: true })
+  Object.assign(modelForm, { name: '', provider: 'openai', provider_model: '', base_url: BUILTIN_BASE_URLS.openai, api_key: '', timeout: 60, max_retries: 2, weight: 1, enabled: true, tags: {} })
   modelDialog.value = true
 }
 
 function openEdit(row: ModelItem) {
   editing.value = row
-  Object.assign(modelForm, { name: row.name, provider: row.provider, provider_model: row.provider_model, base_url: row.base_url, api_key: '', timeout: row.timeout, max_retries: row.max_retries, weight: row.weight, enabled: row.enabled })
+  const tags = { ...(row.tags || {}) }
+  if (!(row.provider in BUILTIN_BASE_URLS) && !tags.adapter) {
+    tags.adapter = 'openai' // 历史自定义行(无 tag)默认 OpenAI 兼容,保证编辑后回显
+  }
+  Object.assign(modelForm, { name: row.name, provider: row.provider, provider_model: row.provider_model, base_url: row.base_url, api_key: '', timeout: row.timeout, max_retries: row.max_retries, retry_interval: row.retry_interval, weight: row.weight, enabled: row.enabled, tags })
   modelDialog.value = true
 }
 
