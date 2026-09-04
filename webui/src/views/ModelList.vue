@@ -64,9 +64,9 @@
         <el-form-item label="上游模型" required><el-input v-model="modelForm.provider_model" /></el-form-item>
         <el-form-item label="上游地址" required>
           <el-input v-model="modelForm.base_url"
-            :placeholder="modelForm.provider in BUILTIN_BASE_URLS ? BUILTIN_BASE_URLS[modelForm.provider] : 'http://你的推理服务:8000/v1 (OpenAI 兼容端点)'"
-            :disabled="modelForm.provider in BUILTIN_BASE_URLS" />
-          <el-text v-if="modelForm.provider in BUILTIN_BASE_URLS" type="info" size="small">云服务商地址已锁定</el-text>
+            :placeholder="isBuiltinProvider(modelForm.provider) ? BUILTIN_BASE_URLS[modelForm.provider] : 'http://你的推理服务:8000/v1 (OpenAI 兼容端点)'"
+            :disabled="isBuiltinProvider(modelForm.provider)" />
+          <el-text v-if="isBuiltinProvider(modelForm.provider)" type="info" size="small">云服务商地址已锁定</el-text>
         </el-form-item>
         <el-form-item v-if="!(modelForm.provider in BUILTIN_BASE_URLS)" label="接入协议">
           <el-select v-model="modelForm.tags!.adapter" style="width:100%">
