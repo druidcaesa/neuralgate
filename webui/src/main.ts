@@ -12,4 +12,8 @@ initTheme()
 const app = createApp(App)
 app.use(ElementPlus, { locale: zhCn })
 app.use(router)
-app.mount('#app')
+// 等初始导航(含鉴权守卫)resolve 后再挂载,使 App 首次渲染即见到真实路由,
+// 避免直载 /login 时被当作非登录页而误拉 /api/gateway-meta(401 在登录页弹错)
+router.isReady().then(() => {
+  app.mount('#app')
+})
