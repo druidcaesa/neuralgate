@@ -30,6 +30,7 @@ import (
 	"github.com/druidcaesa/neuralgate/pkg/admin"
 	"github.com/druidcaesa/neuralgate/pkg/config"
 	"github.com/druidcaesa/neuralgate/pkg/core"
+	"github.com/druidcaesa/neuralgate/pkg/docsui"
 	"github.com/druidcaesa/neuralgate/pkg/license"
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
 	"go.uber.org/zap"
@@ -119,6 +120,7 @@ func main() {
 	registry.Register(adapter.NewQwenAdapter())
 	registry.Register(adapter.NewZhipuAdapter())
 	registry.Register(adapter.NewDeepSeekAdapter())
+	registry.Register(adapter.NewAnthropicAdapter())
 
 	// 6. 初始化代理内核
 	// acceptor 的创建在步骤10 setupPrivacy 之后：pipeline.Build 快照中间件链，Use 晚于 Build 不生效
@@ -232,6 +234,10 @@ func main() {
 	rootHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/metrics" {
 			core.ServeMetrics(metrics, w, r)
+			return
+		}
+		// /docs 公开接口说明页:免鉴权、不落路由中间件,与 /metrics 同层(页面纯静态,无配置回显)
+		if docsui.Serve(w, r) {
 			return
 		}
 		acceptor.Handler().ServeHTTP(w, r)
