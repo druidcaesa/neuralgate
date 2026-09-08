@@ -21,7 +21,7 @@ import (
 	"testing"
 )
 
-// TestServeHitPaths 命中路径写单页:200 + text/html + 标题/端点标记;未命中返回 false
+// TestServeHitPaths 命中路径写单页:200 + text/html + nosniff/no-cache 头 + 12 个双协议内容标记;未命中返回 false
 func TestServeHitPaths(t *testing.T) {
 	markers := []string{
 		"NeuralGate 接口调用说明", "两种协议怎么选", "模型名两入口共用同一套",
@@ -40,6 +40,12 @@ func TestServeHitPaths(t *testing.T) {
 		}
 		if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
 			t.Fatalf("Serve(%s) Content-Type = %q; want text/html", p, ct)
+		}
+		if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+			t.Fatalf("Serve(%s) X-Content-Type-Options = %q; want nosniff", p, got)
+		}
+		if got := rec.Header().Get("Cache-Control"); got != "no-cache" {
+			t.Fatalf("Serve(%s) Cache-Control = %q; want no-cache", p, got)
 		}
 		body := rec.Body.String()
 		for _, m := range markers {

@@ -54,7 +54,7 @@
   <li>模型名两入口共用同一套:对外 <code>model</code> 字段填管理后台「模型配置」里配置的<strong>模型名称</strong>(不是上游内部名)。</li>
 </ul>
 
-<h2 id="proto" data-proto="openai">选择入口</h2>
+<h2>选择入口</h2>
 <div class="tabs">
   <button id="tab-openai" class="active" onclick="switchProto('openai')">OpenAI 兼容</button>
   <button id="tab-anthropic" onclick="switchProto('anthropic')">Anthropic Messages</button>
@@ -81,7 +81,7 @@
   -H "Content-Type: application/json" \
   -d '{"model":"my-model","messages":[{"role":"user","content":"你好"}],"stream":true}'</pre>
 <div class="note">流式按 OpenAI 约定以数据块结束,末条为 <code>data: [DONE]</code>。</div>
-<p>用 OpenAI SDK 时,把 <code>base_url</code> 指向当前网关地址、鉴权用 <code>sk-…</code> 风格的 API Key 即可,路径与请求体与 OpenAI 一致。</p>
+<p>用 OpenAI SDK 时,把 <code>base_url</code> 指向当前网关地址、鉴权头填管理后台创建的真实 API Key 即可,路径与请求体与 OpenAI 一致。</p>
 </section>
 
 <!-- ============ Anthropic Messages 入口 ============ -->
@@ -117,7 +117,12 @@
 <script>
   // 页面即由网关自身伺服:base_url 现算当前地址,示例无需手改 host
   document.getElementById('gw').textContent = location.origin;
-  document.body.innerHTML = document.body.innerHTML.replaceAll('{{BASE_URL}}', location.origin);
+  // 遍历文本节点做占位替换:避免 innerHTML 整体重解析(重解析会让内联事件/监听失效)
+  // {{BASE_URL}} 只出现在正文文本里(code/pre/td),无属性内用法,text-node 替换即可全覆盖
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  const textNodes = [];
+  while (walker.nextNode()) textNodes.push(walker.currentNode);
+  for (const n of textNodes) n.nodeValue = n.nodeValue.split('{{BASE_URL}}').join(location.origin);
 
   function switchProto(p) {
     document.getElementById('tab-openai').classList.toggle('active', p === 'openai');
