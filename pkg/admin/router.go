@@ -69,6 +69,9 @@ func (s *AdminServer) registerRoutes(r *gin.Engine) {
 		authz.GET("/audit-logs/export", s.RequirePermission(plugin.PermAuditExport), s.exportAuditLogs)
 		authz.GET("/audit-logs/:id", s.RequirePermission(plugin.PermAuditRead), s.getAuditLog)
 
+		// 接口说明入口元信息:仅需登录态,无权限码(顶栏按钮对所有登录用户可见)
+		authz.GET("/gateway-meta", s.gatewayMeta)
+
 		// 系统信息
 		authz.GET("/system", s.RequirePermission(plugin.PermSystemRead), s.systemInfo)
 

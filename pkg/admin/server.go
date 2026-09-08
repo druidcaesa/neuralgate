@@ -37,6 +37,8 @@ type AdminServer struct {
 	rbacEnabled     bool                                                                       // 权限体系开关（EnableRBAC 注入，未启用恒放行）
 	reportGenerator func(periodType string, start time.Time) (*plugin.ComplianceReport, error) // 合规补生成器（enterprise 装配注入，nil 时手动生成返回 503）
 	licenseMgr      LicenseManager                                                             // 授权上传管理（enterprise 装配注入；OSS 为 nil → 上传 501）
+	proxyScheme     string                                                                     // 代理服务公开 scheme(http/https),gateway-meta 下发用;空=未注入
+	proxyPort       int                                                                        // 代理服务公开端口;0=未注入或解析失败
 }
 
 // NewAdminServer 创建管理后台；license 为启动时校验得到的授权概要（OSS 版传 nil）。
@@ -61,4 +63,11 @@ func (s *AdminServer) Router() *gin.Engine { return s.engine }
 // Run 启动后台服务
 func (s *AdminServer) Run(addr string) error {
 	return s.engine.Run(addr)
+}
+
+// SetGatewayMeta 注入代理服务公开元信息(scheme+端口),供前端拼「接口说明」(/docs)地址;
+// 未调用时 gateway-meta 返回空值,前端隐藏入口(低版本/未接线不报错)
+func (s *AdminServer) SetGatewayMeta(scheme string, port int) {
+	s.proxyScheme = scheme
+	s.proxyPort = port
 }

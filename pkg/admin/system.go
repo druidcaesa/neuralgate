@@ -48,3 +48,15 @@ func (s *AdminServer) systemInfo(c *gin.Context) {
 		"tamper":              gin.H{"unresolved_count": s.unresolvedTamperCount()},
 	})
 }
+
+// gatewayMeta GET /api/gateway-meta:下发代理服务公开 scheme/端口,前端据此拼「接口说明」入口
+// 地址(同机部署:host 由浏览器 location.hostname 现取)。仅需登录态、不带权限码;port<=0 视为
+// 未配置,返回空 scheme/port 0,前端隐藏入口(fail-closed)。docs_path 恒 /docs(与 docsui 允许路径一致)
+func (s *AdminServer) gatewayMeta(c *gin.Context) {
+	meta := gin.H{"scheme": "", "port": 0, "docs_path": "/docs"}
+	if s.proxyPort > 0 {
+		meta["scheme"] = s.proxyScheme
+		meta["port"] = s.proxyPort
+	}
+	OK(c, meta)
+}

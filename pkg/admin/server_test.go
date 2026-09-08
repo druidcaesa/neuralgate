@@ -341,6 +341,38 @@ func TestAdminSystem(t *testing.T) {
 	}
 }
 
+func TestAdminGatewayMeta(t *testing.T) {
+	s := oss.NewMemStorage()
+	svr := NewAdminServer(s, nil, "oss", oss.NewRateLimiter(s, 100, 100000, "token_bucket"), nil)
+	svr.DisableAuth()
+	router := svr.Router()
+
+	// 未注入 → 空 scheme/port 0 + 恒有 docs_path(fail-closed:前端据此隐藏入口)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/gateway-meta", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("uninjected status = %d", w.Code)
+	}
+	for _, want := range []string{`"docs_path":"/docs"`, `"port":0`, `"scheme":""`} {
+		if !strings.Contains(w.Body.String(), want) {
+			t.Fatalf("uninjected body = %s; want substring %s", w.Body.String(), want)
+		}
+	}
+
+	// 注入 (https, 8080) → 原样下发
+	svr.SetGatewayMeta("https", 8080)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/gateway-meta", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("injected status = %d", w.Code)
+	}
+	for _, want := range []string{`"docs_path":"/docs"`, `"port":8080`, `"scheme":"https"`} {
+		if !strings.Contains(w.Body.String(), want) {
+			t.Fatalf("injected body = %s; want substring %s", w.Body.String(), want)
+		}
+	}
+}
+
 func TestAdminUpstreamCRUD(t *testing.T) {
 	s := oss.NewMemStorage()
 	now := time.Now()
