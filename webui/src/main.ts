@@ -14,6 +14,10 @@ app.use(ElementPlus, { locale: zhCn })
 app.use(router)
 // 等初始导航(含鉴权守卫)resolve 后再挂载,使 App 首次渲染即见到真实路由,
 // 避免直载 /login 时被当作非登录页而误拉 /api/gateway-meta(401 在登录页弹错)
-router.isReady().then(() => {
-  app.mount('#app')
-})
+router.isReady()
+  .catch(() => {
+    // isReady 被守卫中止(如直载企业版门控路由)会 reject:仍挂载,恢复旧行为,由守卫弹提示/跳转
+  })
+  .then(() => {
+    app.mount('#app')
+  })
