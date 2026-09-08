@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -165,6 +166,8 @@ func main() {
 		zap.Bool("gate_enabled", gate != core.LicenseGate(core.NopGate())))
 
 	adminServer := admin.NewAdminServer(storage, logger, effectiveEdition, rateLimiter, licenseOverview)
+	// 下发代理服务公开地址元信息(顶栏「接口说明」入口):scheme 按 TLS 推导,端口从代理监听地址解析
+	adminServer.SetGatewayMeta(proxyScheme(cfg.TLS.Enabled), proxyPort(cfg.Server.ProxyAddr))
 	// 授权上传管理（enterprise 注入独立校验器；OSS 为空操作，上传接口恒 501）
 	setupLicenseManager(*cfg, adminServer, logger)
 	// CORS 白名单（空=同源部署不发送跨域头）；首个管理员账号缺位时引导创建
@@ -452,4 +455,25 @@ func initLogger(cfg config.LogConfig) *zap.Logger {
 func logFatal(msg string, err error) {
 	fmt.Fprintf(os.Stderr, "FATAL %s: %v\n", msg, err)
 	os.Exit(1)
+}
+
+// proxyScheme 返回代理服务对外 scheme:TLS 启用 → https,否则 http(管理后台服务恒为 http)
+func proxyScheme(tlsEnabled bool) string {
+	if tlsEnabled {
+		return "https"
+	}
+	return "http"
+}
+
+// proxyPort 从代理监听地址(形如 :8080 / 0.0.0.0:8080)解析对外端口;解析失败返回 0(视为未配置)
+func proxyPort(proxyAddr string) int {
+	_, port, err := net.SplitHostPort(proxyAddr)
+	if err != nil {
+		return 0
+	}
+	p, err := strconv.Atoi(port)
+	if err != nil {
+		return 0
+	}
+	return p
 }
