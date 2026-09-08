@@ -21,8 +21,14 @@ import (
 	"testing"
 )
 
-// TestServeHitPaths 命中路径写单页:200 + text/html + 标题标记;未命中返回 false
+// TestServeHitPaths 命中路径写单页:200 + text/html + 标题/端点标记;未命中返回 false
 func TestServeHitPaths(t *testing.T) {
+	markers := []string{
+		"NeuralGate 接口调用说明", "两种协议怎么选", "模型名两入口共用同一套",
+		"OpenAI 兼容", "/v1/chat/completions", "Authorization: Bearer",
+		"Anthropic Messages", "/v1/messages", "x-api-key", "anthropic-version",
+		"message_stop", "my-model",
+	}
 	for _, p := range []string{"/docs", "/docs/", "/docs/index.html"} {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, p, nil)
@@ -34,6 +40,12 @@ func TestServeHitPaths(t *testing.T) {
 		}
 		if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
 			t.Fatalf("Serve(%s) Content-Type = %q; want text/html", p, ct)
+		}
+		body := rec.Body.String()
+		for _, m := range markers {
+			if !strings.Contains(body, m) {
+				t.Fatalf("Serve(%s) body 缺少标记 %q", p, m)
+			}
 		}
 	}
 }

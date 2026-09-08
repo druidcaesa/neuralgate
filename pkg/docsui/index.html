@@ -1,11 +1,130 @@
 <!doctype html>
 <html lang="zh-CN">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>NeuralGate 接口调用说明</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NeuralGate 接口调用说明</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+    line-height: 1.7; color: #1f2328; background: #f6f8fa; padding: 32px 16px;
+  }
+  @media (prefers-color-scheme: dark) { body { color: #e6edf3; background: #0d1117; } }
+  .wrap { max-width: 900px; margin: 0 auto; }
+  header.site { border-bottom: 1px solid #d0d7de; padding-bottom: 16px; margin-bottom: 24px; }
+  @media (prefers-color-scheme: dark) { header.site { border-color: #30363d; } }
+  header.site h1 { margin: 0 0 6px; font-size: 24px; }
+  .gateway { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 14px;
+    color: #0969da; word-break: break-all; }
+  @media (prefers-color-scheme: dark) { .gateway { color: #58a6ff; } }
+  h2 { font-size: 20px; margin: 28px 0 10px; }
+  h3 { font-size: 16px; margin: 20px 0 8px; }
+  .tabs { display: flex; gap: 8px; margin: 8px 0 16px; flex-wrap: wrap; }
+  .tabs button { border: 1px solid #d0d7de; background: #fff; padding: 8px 18px; border-radius: 6px;
+    cursor: pointer; font-size: 14px; }
+  @media (prefers-color-scheme: dark) { .tabs button { background: #161b22; border-color: #30363d; color: #e6edf3; } }
+  .tabs button.active { border-color: #0969da; color: #fff; background: #0969da; }
+  pre { background: #0d1117; color: #e6edf3; padding: 14px 16px; border-radius: 8px; overflow-x: auto;
+    font-size: 13px; line-height: 1.6; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  p code, li code { background: rgba(127,127,127,.15); padding: 1px 5px; border-radius: 4px; font-size: .92em; }
+  .note { border-left: 3px solid #d4a72c; background: rgba(212,167,44,.12); padding: 8px 12px;
+    border-radius: 0 6px 6px 0; margin: 12px 0; }
+  table { border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 14px; }
+  th, td { border: 1px solid #d0d7de; padding: 7px 10px; text-align: left; }
+  @media (prefers-color-scheme: dark) { th, td { border-color: #30363d; } }
+</style>
 </head>
 <body>
+<div class="wrap">
+
+<header class="site">
   <h1>NeuralGate 接口调用说明</h1>
+  <div>当前网关地址:<span class="gateway" id="gw"></span></div>
+  <p>NeuralGate 对外同时提供 <strong>OpenAI 兼容</strong> 与 <strong>Anthropic Messages</strong> 两种协议入口,底层接入的模型是什么协议都无所谓——网关负责双向转换。下方选择你要用的入口,按示例调用即可。<br>
+  调用所用的 <code>API Key</code> 在管理后台「API Key」页创建;示例中把 <code>&lt;API Key&gt;</code> 换成你的真实 Key。</p>
+</header>
+
+<h2>两种协议怎么选</h2>
+<ul>
+  <li>已有 OpenAI SDK / OpenAI 兼容代码 → 用 <strong>OpenAI 兼容</strong> 入口(<code>/v1/chat/completions</code>)。</li>
+  <li>用 Anthropic SDK / Claude 风格请求 → 用 <strong>Anthropic Messages</strong> 入口(<code>/v1/messages</code>)。</li>
+  <li>模型名两入口共用同一套:对外 <code>model</code> 字段填管理后台「模型配置」里配置的<strong>模型名称</strong>(不是上游内部名)。</li>
+</ul>
+
+<h2 id="proto" data-proto="openai">选择入口</h2>
+<div class="tabs">
+  <button id="tab-openai" class="active" onclick="switchProto('openai')">OpenAI 兼容</button>
+  <button id="tab-anthropic" onclick="switchProto('anthropic')">Anthropic Messages</button>
+</div>
+
+<!-- ============ OpenAI 兼容入口 ============ -->
+<section id="panel-openai">
+<h3>端点</h3>
+<table>
+  <tr><th>用途</th><th>方法 / 路径</th></tr>
+  <tr><td>对话(含工具调用)</td><td><code>POST {{BASE_URL}}/v1/chat/completions</code></td></tr>
+  <tr><td>可用模型列表</td><td><code>GET {{BASE_URL}}/v1/models</code></td></tr>
+</table>
+<h3>鉴权</h3>
+<p>请求头 <code>Authorization: Bearer &lt;API Key&gt;</code></p>
+<h3>非流式示例</h3>
+<pre>curl {{BASE_URL}}/v1/chat/completions \
+  -H "Authorization: Bearer &lt;API Key&gt;" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"my-model","messages":[{"role":"user","content":"你好"}]}'</pre>
+<h3>流式示例</h3>
+<pre>curl -N {{BASE_URL}}/v1/chat/completions \
+  -H "Authorization: Bearer &lt;API Key&gt;" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"my-model","messages":[{"role":"user","content":"你好"}],"stream":true}'</pre>
+<div class="note">流式按 OpenAI 约定以数据块结束,末条为 <code>data: [DONE]</code>。</div>
+<p>用 OpenAI SDK 时,把 <code>base_url</code> 指向当前网关地址、鉴权用 <code>sk-…</code> 风格的 API Key 即可,路径与请求体与 OpenAI 一致。</p>
+</section>
+
+<!-- ============ Anthropic Messages 入口 ============ -->
+<section id="panel-anthropic" style="display:none">
+<h3>端点</h3>
+<table>
+  <tr><th>用途</th><th>方法 / 路径</th></tr>
+  <tr><td>对话(含工具调用)</td><td><code>POST {{BASE_URL}}/v1/messages</code></td></tr>
+</table>
+<h3>鉴权</h3>
+<p>请求头 <code>x-api-key: &lt;API Key&gt;</code> + <code>anthropic-version: 2023-06-01</code>。<br>
+也兼容 <code>Authorization: Bearer &lt;API Key&gt;</code>(两者同时带时 Bearer 优先);<strong>同一个</strong>管理后台 Key 两个入口通用。</p>
+<h3>非流式示例</h3>
+<pre>curl {{BASE_URL}}/v1/messages \
+  -H "x-api-key: &lt;API Key&gt;" \
+  -H "anthropic-version: 2023-06-01" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"my-model","max_tokens":1024,"messages":[{"role":"user","content":"你好"}]}'</pre>
+<h3>流式示例</h3>
+<pre>curl -N {{BASE_URL}}/v1/messages \
+  -H "x-api-key: &lt;API Key&gt;" \
+  -H "anthropic-version: 2023-06-01" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"my-model","max_tokens":1024,"messages":[{"role":"user","content":"你好"}],"stream":true}'</pre>
+<div class="note"><code>max_tokens</code> 是 Anthropic 必填字段;若请求不带,网关会按该模型在管理后台配置的「默认 max_tokens」注入。流式以 <code>message_stop</code> 事件结束,没有 <code>[DONE]</code>。</div>
+<p>用 Anthropic SDK 时,把 <code>base_url</code> 指向当前网关地址、走 <code>/v1/messages</code> 路径即可,请求体与 Anthropic 一致。</p>
+</section>
+
+<hr style="margin:28px 0;border:none;border-top:1px solid #d0d7de">
+<p style="font-size:13px;color:#59636e">流终止速记:<code>[DONE]</code>(OpenAI 兼容)vs <code>message_stop</code>(Anthropic)。</p>
+
+</div>
+<script>
+  // 页面即由网关自身伺服:base_url 现算当前地址,示例无需手改 host
+  document.getElementById('gw').textContent = location.origin;
+  document.body.innerHTML = document.body.innerHTML.replaceAll('{{BASE_URL}}', location.origin);
+
+  function switchProto(p) {
+    document.getElementById('tab-openai').classList.toggle('active', p === 'openai');
+    document.getElementById('tab-anthropic').classList.toggle('active', p === 'anthropic');
+    document.getElementById('panel-openai').style.display = p === 'openai' ? '' : 'none';
+    document.getElementById('panel-anthropic').style.display = p === 'anthropic' ? '' : 'none';
+  }
+</script>
 </body>
 </html>
