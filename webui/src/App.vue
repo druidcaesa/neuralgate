@@ -43,6 +43,11 @@
           <el-breadcrumb-item>{{ route.meta.title }}</el-breadcrumb-item>
         </el-breadcrumb>
         <div class="app-header-right">
+          <el-tooltip v-if="docsHref" content="接口调用说明">
+            <a :href="docsHref" target="_blank" rel="noopener" class="app-docs-link">
+              <el-icon><Document /></el-icon>
+            </a>
+          </el-tooltip>
           <el-tooltip :content="theme === 'dark' ? '切换到亮色' : '切换到暗色'">
             <el-icon class="app-theme-btn" @click="toggle">
               <Moon v-if="theme === 'dark'" />
@@ -89,7 +94,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, type Component } from 'vue'
+import { computed, reactive, ref, watch, type Component } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
@@ -98,6 +103,7 @@ import {
   Sunny, Moon, Fold, Expand
 } from '@element-plus/icons-vue'
 import { changePassword, clearAdminSession, getAdminUsername, hasPerm, hasFeature } from './api/auth'
+import { getGatewayMeta } from './api/system'
 import { useTheme } from './composables/useTheme'
 
 interface MenuItem { index: string; title: string; icon: Component; perm?: string; feature?: string }
@@ -109,6 +115,22 @@ const { theme, toggle } = useTheme()
 
 const isLoginRoute = computed(() => route.path === '/login')
 const username = computed(() => getAdminUsername() || 'admin')
+
+// 接口说明入口地址(代理端口 /docs):后端下发 scheme+端口,host 取当前 location.hostname 拼;
+// 未配置/拉取失败保持空 → 模板 v-if 隐藏入口(fail-closed)
+const docsHref = ref('')
+async function loadGatewayMeta() {
+  try {
+    const meta = await getGatewayMeta()
+    if (meta.port > 0 && meta.scheme) {
+      docsHref.value = `${meta.scheme}://${location.hostname}:${meta.port}${meta.docs_path || '/docs'}`
+    }
+  } catch {
+    // 接口异常/未配置:保持隐藏(错误提示已由 client 拦截器统一处理)
+  }
+}
+// 进入非登录路由时拉取(immediate 覆盖刷新直达已登录页;login → 布局切换时再拉一次)
+watch(isLoginRoute, (login) => { if (!login) loadGatewayMeta() }, { immediate: true })
 
 // 侧栏折叠态（记忆到 localStorage）
 const collapsed = ref(localStorage.getItem('ng-sidebar-collapsed') === '1')
@@ -231,7 +253,8 @@ async function submitChangePassword() {
   align-items: center;
   gap: var(--ng-space-4);
 }
-.app-collapse-btn, .app-theme-btn { font-size: 18px; cursor: pointer; color: var(--ng-text-secondary); }
+.app-collapse-btn, .app-theme-btn, .app-docs-link { font-size: 18px; cursor: pointer; color: var(--ng-text-secondary); }
+.app-docs-link { text-decoration: none; display: inline-flex; align-items: center; }
 .app-breadcrumb { flex: none; }
 .app-header-right { margin-left: auto; display: inline-flex; align-items: center; gap: var(--ng-space-4); }
 .app-user {
