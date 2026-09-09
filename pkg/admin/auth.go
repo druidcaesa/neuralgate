@@ -173,13 +173,29 @@ type failureRecord struct {
 	locked bool
 }
 
-func newLoginGuard() *memoryLoginGuard {
-	return &memoryLoginGuard{
-		fails:    make(map[string]*failureRecord),
-		window:   loginFailureWindow,
-		maxFails: loginMaxFailures,
-		now:      time.Now,
+// NewMemoryLoginGuard 构造进程内登录守卫;maxFails<=0 取默认 5,window<=0 取默认 1min,
+// now 为空用 time.Now(测试可注入时钟)。返回 LoginGuard 接口,供 enterprise 等价测试跨包构造
+func NewMemoryLoginGuard(maxFails int, window time.Duration, now func() time.Time) LoginGuard {
+	if maxFails <= 0 {
+		maxFails = loginMaxFailures
 	}
+	if window <= 0 {
+		window = loginFailureWindow
+	}
+	if now == nil {
+		now = time.Now
+	}
+	return &memoryLoginGuard{fails: make(map[string]*failureRecord), window: window, maxFails: maxFails, now: now}
+}
+
+// DefaultLoginGuardParams 返回默认防爆破阈值(与 memoryLoginGuard 默认一致),供 enterprise
+// 以同参构造 Redis 共享守卫,避免两处各写死一份却互不校验(数值由本任务等价测试钉死)
+func DefaultLoginGuardParams() (maxFails int, window time.Duration) {
+	return loginMaxFailures, loginFailureWindow
+}
+
+func newLoginGuard() *memoryLoginGuard {
+	return NewMemoryLoginGuard(loginMaxFailures, loginFailureWindow, time.Now).(*memoryLoginGuard)
 }
 
 // Allow 返回是否放行本次尝试
