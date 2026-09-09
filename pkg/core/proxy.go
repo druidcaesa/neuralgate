@@ -40,6 +40,42 @@ const (
 	streamIdleWriteDeadline  = 60 * time.Second // 流式相邻分片间允许的最大空闲
 )
 
+// 入口协议(写入 rc.Entry,由 proxyHandler 按路径判定)
+const (
+	EntryOpenAI    = "openai"
+	EntryAnthropic = "anthropic"
+)
+
+// 上游协议(2×2 矩阵分支用)
+const (
+	protoAnthropic = "anthropic" // 上游为 Anthropic Messages
+	protoOpenAI    = "openai"    // 原生透传族(openai/deepseek)
+	protoOther     = "other"     // 其余需转换适配器(qwen/zhipu,仅 OpenAI 入口支持)
+)
+
+// upstreamProtocol 判定适配器承载的上游协议
+func upstreamProtocol(a adapter.ModelAdapter) string {
+	if adapter.IsAnthropicProtocol(a) {
+		return protoAnthropic
+	}
+	if a.SupportsNativeProxy() {
+		return protoOpenAI
+	}
+	return protoOther
+}
+
+// upstreamPath 上游端点:anthropic 上游一律 /v1/messages;
+// anthropic 入口转 openai 上游用 /v1/chat/completions;其余沿用入口路径
+func upstreamPath(r *http.Request, entry string, adpt adapter.ModelAdapter) string {
+	if adapter.IsAnthropicProtocol(adpt) {
+		return "/v1/messages"
+	}
+	if entry == EntryAnthropic {
+		return "/v1/chat/completions"
+	}
+	return r.URL.Path
+}
+
 // ProxyCore 代理内核层：端点分类 → 本地响应或核心代理转发
 type ProxyCore struct {
 	pipeline *Pipeline
@@ -74,7 +110,7 @@ func (p *ProxyCore) proxyHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	rc, ok := RequestContextFrom(r.Context())
 	if !ok {
-		writeOpenAIError(w, http.StatusInternalServerError, "api_error", "internal_error", "internal error")
+		writeEntryError(w, r, http.StatusInternalServerError, "api_error", "internal_error", "internal error")
 		return
 	}
 
@@ -83,7 +119,7 @@ func (p *ProxyCore) proxyHandler(w http.ResponseWriter, r *http.Request) {
 		p.handleModelsList(w, rc)
 	case strings.HasPrefix(r.URL.Path, "/v1/models/"):
 		p.handleModelDetail(w, r, rc)
-	case r.URL.Path == "/v1/chat/completions" || r.URL.Path == "/v1/embeddings":
+	case r.URL.Path == "/v1/chat/completions" || r.URL.Path == "/v1/messages" || r.URL.Path == "/v1/embeddings":
 		p.handleProxy(w, r, rc)
 	default:
 		// 透传端点:按 PRD 8.5 精确路由 + 方法校验
@@ -154,15 +190,33 @@ func (p *ProxyCore) handleModelDetail(w http.ResponseWriter, r *http.Request, rc
 	})
 }
 
-// handleProxy 核心代理：chat/completions 与 embeddings
-// 流程: 原生透传(替换model) 或 适配器转换 → 超时重试转发 → 非流式写回+审计
+// handleProxy 核心代理：chat/completions、messages 与 embeddings(2×2:入口 × 上游协议)。
+// 流程: 判定(入口,上游协议) → 原生透传/正反向转换 → 超时重试转发 → 非流式写回/流式劫持 + 审计
 func (p *ProxyCore) handleProxy(w http.ResponseWriter, r *http.Request, rc *RequestContext) {
 	if rc.ModelConfig == nil || rc.Adapter == nil {
-		writeOpenAIError(w, http.StatusInternalServerError, "api_error", "internal_error", "routing context missing")
+		writeEntryError(w, r, http.StatusInternalServerError, "api_error", "internal_error", "routing context missing")
 		return
 	}
 	cfg := rc.ModelConfig
 	adpt := rc.Adapter
+
+	// 入口协议:OpenAI 入口(/v1/chat/completions、/v1/embeddings)与 Anthropic 入口(/v1/messages)
+	rc.Entry = EntryOpenAI
+	if r.URL.Path == "/v1/messages" {
+		rc.Entry = EntryAnthropic
+	}
+	entry := rc.Entry
+	upProto := upstreamProtocol(adpt)
+
+	// Anthropic 入口不支持 qwen/zhipu 等非 OpenAI 兼容上游(缺反转换能力,明确 400)
+	if entry == EntryAnthropic && upProto == protoOther {
+		rc.ResponseStatus = http.StatusBadRequest
+		rc.EndTime = time.Now()
+		p.finalizeAudit(rc, 0, 0, 0)
+		writeEntryError(w, r, http.StatusBadRequest, "invalid_request_error", "entry_not_supported",
+			"entry protocol Anthropic only supports OpenAI-compatible or Anthropic upstreams")
+		return
+	}
 
 	// 负载均衡:选中上游覆盖默认 base_url/api_key(局部副本,不改存储)
 	if up := selectUpstream(rc.Upstreams); up != nil {
@@ -193,20 +247,32 @@ func (p *ProxyCore) handleProxy(w http.ResponseWriter, r *http.Request, rc *Requ
 		}
 	}
 
-	// 1. 构造上游请求
-	upstreamURL := strings.TrimRight(cfg.BaseURL, "/") + r.URL.Path
+	// 1. 构造上游请求(路径与鉴权随上游协议分路)
+	upstreamURL := strings.TrimRight(cfg.BaseURL, "/") + upstreamPath(r, entry, adpt)
 	var outbound *http.Request
 	var err error
-	if adpt.SupportsNativeProxy() {
-		outbound, err = p.buildNativeRequest(r, upstreamURL, cfg)
-	} else {
+	switch {
+	case upProto == protoAnthropic && entry == EntryAnthropic:
+		// anthropic 入口 × anthropic 上游:原生透传(model 替换,anthropic 鉴权/路径)
+		outbound, err = p.buildNativeRequest(r, upstreamURL, cfg, adpt)
+	case upProto == protoAnthropic:
+		// openai 入口 × anthropic 上游:openai body → 统一 → anthropic body(+默认 max_tokens)
+		outbound, err = p.buildAnthropicForwardRequest(r, upstreamURL, cfg, adpt)
+	case entry == EntryAnthropic:
+		// anthropic 入口 × openai 兼容上游:反向转换(默认 max_tokens + include_usage)
+		outbound, err = p.buildReverseRequest(r, upstreamURL, cfg, adpt)
+	case adpt.SupportsNativeProxy():
+		// openai 入口 × openai 原生透传族(现路径)
+		outbound, err = p.buildNativeRequest(r, upstreamURL, cfg, adpt)
+	default:
+		// openai 入口 × qwen/zhipu 等转换适配器(现路径,无默认注入)
 		outbound, err = p.buildConvertedRequest(r, upstreamURL, cfg, adpt)
 	}
 	if err != nil {
 		rc.ResponseStatus = http.StatusBadRequest
 		rc.EndTime = time.Now()
 		p.finalizeAudit(rc, 0, 0, 0)
-		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "bad_request", err.Error())
+		writeEntryError(w, r, http.StatusBadRequest, "invalid_request_error", "bad_request", err.Error())
 		return
 	}
 
@@ -216,7 +282,7 @@ func (p *ProxyCore) handleProxy(w http.ResponseWriter, r *http.Request, rc *Requ
 		rc.ResponseStatus = http.StatusGatewayTimeout
 		rc.EndTime = time.Now()
 		p.finalizeAudit(rc, 0, 0, 0)
-		writeOpenAIError(w, http.StatusGatewayTimeout, "api_error", "upstream_timeout", "upstream timeout or unreachable: "+err.Error())
+		writeEntryError(w, r, http.StatusGatewayTimeout, "api_error", "upstream_timeout", "upstream timeout or unreachable: "+err.Error())
 		return
 	}
 	defer resp.Body.Close()
@@ -231,11 +297,11 @@ func (p *ProxyCore) handleProxy(w http.ResponseWriter, r *http.Request, rc *Requ
 		rc.ResponseStatus = resp.StatusCode
 		rc.EndTime = time.Now()
 		p.finalizeAudit(rc, 0, 0, 0)
-		writeOpenAIError(w, http.StatusBadGateway, "api_error", "upstream_error", msg)
+		writeEntryError(w, r, http.StatusBadGateway, "api_error", "upstream_error", msg)
 		return
 	}
 
-	// 3.5 流式响应:劫持 SSE
+	// 3.5 流式响应:劫持 SSE(按入口/上游协议分三种模式)
 	if resp.StatusCode == http.StatusOK && isStreamRequest(r) {
 		p.handleStreaming(w, r, rc, resp, cfg, adpt)
 		return
@@ -251,10 +317,44 @@ func (p *ProxyCore) handleProxy(w http.ResponseWriter, r *http.Request, rc *Requ
 		rc.ResponseStatus = http.StatusBadGateway
 		rc.EndTime = time.Now()
 		p.finalizeAudit(rc, 0, 0, 0)
-		writeOpenAIError(w, http.StatusBadGateway, "api_error", "upstream_error", "failed to read upstream response")
+		writeEntryError(w, r, http.StatusBadGateway, "api_error", "upstream_error", "failed to read upstream response")
 		return
 	}
-	rc.ResponseBody = body
+
+	// 跨协议时把上游响应体转成客户端入口形状;同协议原样透传(现行为)
+	writeBody := body
+	switch {
+	case upProto == protoAnthropic && entry == EntryOpenAI:
+		// anthropic Message → openai chat.completion
+		var ur *adapter.UnifiedResponse
+		if ur, err = adapter.AnthropicParseResponse(body); err != nil {
+			rc.ResponseStatus = http.StatusBadGateway
+			rc.EndTime = time.Now()
+			p.finalizeAudit(rc, 0, 0, 0)
+			writeEntryError(w, r, http.StatusBadGateway, "api_error", "upstream_error", "failed to convert upstream response")
+			return
+		}
+		writeBody, err = json.Marshal(ur)
+	case upProto != protoAnthropic && entry == EntryAnthropic:
+		// openai 兼容响应 → unified(OpenAI 形)→ anthropic Message
+		var ur adapter.UnifiedResponse
+		if err = json.Unmarshal(body, &ur); err != nil {
+			rc.ResponseStatus = http.StatusBadGateway
+			rc.EndTime = time.Now()
+			p.finalizeAudit(rc, 0, 0, 0)
+			writeEntryError(w, r, http.StatusBadGateway, "api_error", "upstream_error", "failed to convert upstream response")
+			return
+		}
+		writeBody, err = adapter.AnthropicEncodeResponse(&ur, cfg.ProviderModel)
+	}
+	if err != nil {
+		rc.ResponseStatus = http.StatusBadGateway
+		rc.EndTime = time.Now()
+		p.finalizeAudit(rc, 0, 0, 0)
+		writeEntryError(w, r, http.StatusBadGateway, "api_error", "upstream_error", "failed to convert upstream response")
+		return
+	}
+	rc.ResponseBody = writeBody
 	rc.ResponseStatus = resp.StatusCode
 	p.updateQuota(rc)
 	p.recordTokens(rc)
@@ -262,9 +362,13 @@ func (p *ProxyCore) handleProxy(w http.ResponseWriter, r *http.Request, rc *Requ
 	// 写回客户端(透传上游响应头)；先按请求设定写截止，防止慢客户端长期占住连接
 	p.setNonStreamWriteDeadline(w, cfg)
 	copyResponseHeaders(w.Header(), resp.Header)
-	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+	ct := resp.Header.Get("Content-Type")
+	if !bytes.Equal(writeBody, body) { // 转换过形状:上游 Content-Type 未必适配,统一按 JSON
+		ct = "application/json"
+	}
+	w.Header().Set("Content-Type", ct)
 	w.WriteHeader(resp.StatusCode)
-	_, _ = w.Write(body)
+	_, _ = w.Write(writeBody)
 	rc.EndTime = time.Now()
 	p.finalizeAudit(rc, prompt, completion, total)
 }
@@ -295,7 +399,61 @@ func isStreamRequest(r *http.Request) bool {
 	return body.Stream
 }
 
-// handleStreaming 流式转发:劫持分片写客户端 + 投递审计 + Finalize
+// streamMode 流式转发模式(2×2 的流侧语义)
+type streamMode int
+
+const (
+	streamPassthrough streamMode = iota // 原样转发上游 SSE 行(现路径 + anthropic 原生透传)
+	streamDecode                        // anthropic 上游 SSE → openai 客户端 chunks(openai 入口 × anthropic)
+	streamEncode                        // openai 上游 chunks → anthropic 事件(anthropic 入口 × openai)
+)
+
+// streamModeFor 按(入口,上游协议)选流式转发模式
+func streamModeFor(rc *RequestContext, adpt adapter.ModelAdapter) streamMode {
+	if adapter.IsAnthropicProtocol(adpt) {
+		if rc.Entry == EntryAnthropic {
+			return streamPassthrough // anthropic ↔ anthropic 原样
+		}
+		return streamDecode
+	}
+	if rc.Entry == EntryAnthropic {
+		return streamEncode
+	}
+	return streamPassthrough
+}
+
+// streamRequestsUsage 客户端是否请求 OpenAI 流式用量尾块(stream_options.include_usage)
+func streamRequestsUsage(r *http.Request) bool {
+	var body struct {
+		StreamOptions struct {
+			IncludeUsage bool `json:"include_usage"`
+		} `json:"stream_options"`
+	}
+	_ = json.Unmarshal(rcBody(r), &body)
+	return body.StreamOptions.IncludeUsage
+}
+
+// observeStreamUsage 流式 Token 用量:openai 系从 usage 尾块整取(一次性);
+// anthropic 系按事件累计上报(observer,message_start→prompt、message_delta→completion,均累计值)
+func (p *ProxyCore) observeStreamUsage(rc *RequestContext, adpt adapter.ModelAdapter, payload []byte) {
+	if prompt, completion, total := adpt.ParseStreamUsage(payload); total > 0 {
+		rc.PromptTokens, rc.CompletionTokens, rc.TotalTokens = prompt, completion, total
+		return
+	}
+	if obs, ok := adpt.(adapter.StreamUsageObserver); ok {
+		if prompt, completion, ok := obs.ObserveUsage(payload); ok {
+			if prompt > 0 {
+				rc.PromptTokens = prompt
+			}
+			if completion > 0 {
+				rc.CompletionTokens = completion
+			}
+			rc.TotalTokens = rc.PromptTokens + rc.CompletionTokens
+		}
+	}
+}
+
+// handleStreaming 流式转发:按模式劫持分片写客户端 + 投递审计 + Finalize
 func (p *ProxyCore) handleStreaming(w http.ResponseWriter, r *http.Request, rc *RequestContext, upstreamResp *http.Response, cfg *plugin.ModelConfig, adpt adapter.ModelAdapter) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -313,41 +471,170 @@ func (p *ProxyCore) handleStreaming(w http.ResponseWriter, r *http.Request, rc *
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	rc.ResponseStatus = http.StatusOK
 
-	for scanner.Scan() {
-		line := scanner.Text()
-		// 写客户端
-		if _, err := w.Write([]byte(line + "\n")); err != nil {
-			break // 客户端断开
+	mode := streamModeFor(rc, adpt)
+
+	// 捕获一条写给客户端的 data 负载(审计=客户端侧线,与现透传口径一致)
+	captureChunk := func(payload []byte) {
+		chunk := plugin.SSEChunk{
+			Index:     len(rc.SSEChunks),
+			Data:      string(payload),
+			Timestamp: time.Now(),
+			EventType: "data",
 		}
-		// 捕获分片(行级):data: 前缀,payload 非空即捕获(含 [DONE],保证审计完整)
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "data:") {
-			payload := strings.TrimSpace(strings.TrimPrefix(trimmed, "data:"))
-			if payload != "" {
-				chunk := plugin.SSEChunk{
-					Index:     len(rc.SSEChunks),
-					Data:      payload,
-					Timestamp: time.Now(),
-					EventType: "data",
-				}
-				rc.SSEChunks = append(rc.SSEChunks, chunk)
-				if p.pipeline.auditor != nil {
-					if err := p.pipeline.auditor.SubmitSSEChunk(rc.RequestID, &chunk); err != nil {
-						p.logger.Warn("审计分片投递失败", zap.String("request_id", rc.RequestID), zap.Error(err))
-					}
-				}
-				// 解析 usage(末尾含 usage 分片 total>0 时生效;[DONE] 解析为 0 自动跳过)
-				if prompt, completion, total := adpt.ParseStreamUsage([]byte(payload)); total > 0 {
-					rc.PromptTokens, rc.CompletionTokens, rc.TotalTokens = prompt, completion, total
-				}
+		rc.SSEChunks = append(rc.SSEChunks, chunk)
+		if p.pipeline.auditor != nil {
+			if err := p.pipeline.auditor.SubmitSSEChunk(rc.RequestID, &chunk); err != nil {
+				p.logger.Warn("审计分片投递失败", zap.String("request_id", rc.RequestID), zap.Error(err))
 			}
 		}
+	}
+	// 写一条 data: 帧并捕获(转换流模式用);返回错误表示客户端断开
+	writeFrame := func(payload []byte) error {
+		if _, err := w.Write([]byte("data: ")); err != nil {
+			return err
+		}
+		if _, err := w.Write(payload); err != nil {
+			return err
+		}
+		if _, err := w.Write([]byte("\n\n")); err != nil {
+			return err
+		}
+		captureChunk(payload)
+		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(streamIdleWriteDeadline))
 		if f, ok := w.(http.Flusher); ok {
-			// 滚动写截止：活跃流不受总时长限制，分片间空闲超上限即回收连接
+			f.Flush()
+		}
+		return nil
+	}
+	// 透传模式:逐行原样写(保留空行/event 行),滚动写截止随每行滚动
+	writeLine := func(line string) error {
+		if _, err := w.Write([]byte(line + "\n")); err != nil {
+			return err
+		}
+		if f, ok := w.(http.Flusher); ok {
 			_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(streamIdleWriteDeadline))
 			f.Flush()
 		}
+		return nil
 	}
+	// 解析上游一行 data: 负载(非 data 行返回 nil)
+	dataPayload := func(line string) []byte {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "data:") {
+			return nil
+		}
+		payload := strings.TrimSpace(strings.TrimPrefix(trimmed, "data:"))
+		if payload == "" {
+			return nil
+		}
+		return []byte(payload)
+	}
+
+	clientGone := false // 客户端断连:不再补写收尾帧
+	switch mode {
+	case streamPassthrough:
+		for scanner.Scan() {
+			line := scanner.Text()
+			if err := writeLine(line); err != nil {
+				clientGone = true
+				break // 客户端断开
+			}
+			if payload := dataPayload(line); payload != nil {
+				captureChunk(payload)
+				p.observeStreamUsage(rc, adpt, payload)
+			}
+		}
+
+	case streamDecode:
+		// 上游 anthropic 事件逐条解成 openai chunk;anthropic 流无 [DONE],
+		// 由本模式在结束时补 usage 尾块(可选)与 [DONE]。
+		dec := adapter.NewAnthropicStreamDecoder()
+		var streamID, streamModel string
+		for scanner.Scan() {
+			payload := dataPayload(scanner.Text())
+			if payload == nil {
+				continue
+			}
+			var ev struct {
+				Type string `json:"type"`
+			}
+			_ = json.Unmarshal(payload, &ev)
+			if chunks, err := dec.Decode(payload); err == nil {
+				for i := range chunks {
+					if chunks[i].ID != "" {
+						streamID = chunks[i].ID
+					}
+					if chunks[i].Model != "" {
+						streamModel = chunks[i].Model
+					}
+					b, _ := json.Marshal(chunks[i])
+					if err := writeFrame(b); err != nil {
+						clientGone = true
+						break
+					}
+				}
+			}
+			p.observeStreamUsage(rc, adpt, payload)
+			if clientGone || ev.Type == "message_stop" { // 收尾帧在循环后统一补
+				break
+			}
+		}
+		if !clientGone {
+			if streamRequestsUsage(r) {
+				tail := adapter.UnifiedSSEChunk{
+					ID: streamID, Object: "chat.completion.chunk", Model: streamModel,
+					Choices: []adapter.SSEChoice{},
+					Usage: &adapter.TokenUsage{
+						PromptTokens: rc.PromptTokens, CompletionTokens: rc.CompletionTokens, TotalTokens: rc.TotalTokens,
+					},
+				}
+				b, _ := json.Marshal(tail)
+				if err := writeFrame(b); err != nil {
+					clientGone = true
+				}
+			}
+			if !clientGone {
+				if err := writeFrame([]byte("[DONE]")); err != nil {
+					clientGone = true
+				}
+			}
+		}
+
+	case streamEncode:
+		// 上游 openai chunks 逐条编码成 anthropic 事件;上游 [DONE] 触发 writer 收尾(message_stop)。
+		// id 由请求 ID 派生,保证确定性(anthropic 消息 id 无格式约束)
+		writer := adapter.NewAnthropicSSEWriter("msg_"+strings.ReplaceAll(rc.RequestID, "-", ""), cfg.ProviderModel)
+		for scanner.Scan() {
+			payload := dataPayload(scanner.Text())
+			if payload == nil {
+				continue
+			}
+			if string(payload) == "[DONE]" {
+				if events, err := writer.Finish(); err == nil {
+					for i := range events {
+						if err := writeFrame(events[i]); err != nil {
+							clientGone = true
+							break
+						}
+					}
+				}
+				break
+			}
+			if events, err := writer.Process(payload); err == nil {
+				for i := range events {
+					if err := writeFrame(events[i]); err != nil {
+						clientGone = true
+						break
+					}
+				}
+			}
+			p.observeStreamUsage(rc, adpt, payload)
+			if clientGone {
+				break
+			}
+		}
+	}
+
 	// 上游读取错误或单行超长(ErrTooLong):先标记断连落库(Disconnected=true),再 Finalize 防重复。
 	// 客户端断连会取消 r.Context() 从而中断上游读,此路径归因为 client_disconnected
 	// (与 Watch goroutine 一致),避免二者竞态下真实断连被误标为 upstream read error
@@ -373,8 +660,8 @@ func (p *ProxyCore) handleStreaming(w http.ResponseWriter, r *http.Request, rc *
 }
 
 // buildNativeRequest 原生透传:仅替换 model 字段,raw body 原样转发
-// (map 序列化会改变字段顺序,上游不敏感,可接受)
-func (p *ProxyCore) buildNativeRequest(r *http.Request, upstreamURL string, cfg *plugin.ModelConfig) (*http.Request, error) {
+// (map 序列化会改变字段顺序,上游不敏感,可接受);鉴权随适配器(anthropic 用 x-api-key)
+func (p *ProxyCore) buildNativeRequest(r *http.Request, upstreamURL string, cfg *plugin.ModelConfig, adpt adapter.ModelAdapter) (*http.Request, error) {
 	raw := make([]byte, len(rcBody(r)))
 	copy(raw, rcBody(r))
 	// 替换 model 字段
@@ -387,10 +674,10 @@ func (p *ProxyCore) buildNativeRequest(r *http.Request, upstreamURL string, cfg 
 	if err != nil {
 		return nil, err
 	}
-	return p.newUpstreamRequest(r, upstreamURL, cfg, newBody)
+	return p.newUpstreamRequest(r, upstreamURL, cfg, newBody, adpt)
 }
 
-// buildConvertedRequest 非原生适配器:TransformRequest 转换
+// buildConvertedRequest 非原生适配器:TransformRequest 转换(qwen/zhipu,openai 入口现路径)
 func (p *ProxyCore) buildConvertedRequest(r *http.Request, upstreamURL string, cfg *plugin.ModelConfig, adpt adapter.ModelAdapter) (*http.Request, error) {
 	var unified adapter.UnifiedRequest
 	if err := json.Unmarshal(rcBody(r), &unified); err != nil {
@@ -405,21 +692,75 @@ func (p *ProxyCore) buildConvertedRequest(r *http.Request, upstreamURL string, c
 		return nil, err
 	}
 	outbound.URL = parsed // 覆盖为上游地址
-	return p.attachUpstreamAuth(outbound, cfg)
+	return p.attachUpstreamAuth(outbound, cfg, adpt)
+}
+
+// buildAnthropicForwardRequest openai 入口 × anthropic 上游:openai body → 统一 → anthropic body。
+// model 替换为 ProviderModel;客户端未带 max_tokens 时按模型默认注入(anthropic 必填)
+func (p *ProxyCore) buildAnthropicForwardRequest(r *http.Request, upstreamURL string, cfg *plugin.ModelConfig, adpt adapter.ModelAdapter) (*http.Request, error) {
+	var unified adapter.UnifiedRequest
+	if err := json.Unmarshal(rcBody(r), &unified); err != nil {
+		return nil, err
+	}
+	unified.Model = cfg.ProviderModel
+	if unified.MaxTokens == nil && unified.MaxCompletionTokens == nil && cfg.MaxTokens > 0 {
+		mt := cfg.MaxTokens
+		unified.MaxTokens = &mt
+	}
+	outbound, err := adpt.TransformRequest(&unified, rcBody(r))
+	if err != nil {
+		return nil, err
+	}
+	parsed, err := url.Parse(upstreamURL)
+	if err != nil {
+		return nil, err
+	}
+	outbound.URL = parsed // 覆盖为上游地址
+	return p.attachUpstreamAuth(outbound, cfg, adpt)
+}
+
+// buildReverseRequest anthropic 入口 × openai 兼容上游:Anthropic Messages body → 统一 → openai body。
+// model 替换为 ProviderModel;默认 max_tokens 按需注入;流式置 stream_options.include_usage
+// 以便取回上游用量(供 anthropic 流 message_delta 与审计)
+func (p *ProxyCore) buildReverseRequest(r *http.Request, upstreamURL string, cfg *plugin.ModelConfig, adpt adapter.ModelAdapter) (*http.Request, error) {
+	unified, err := adapter.ParseAnthropicRequest(rcBody(r))
+	if err != nil {
+		return nil, err
+	}
+	unified.Model = cfg.ProviderModel
+	if unified.MaxTokens == nil && unified.MaxCompletionTokens == nil && cfg.MaxTokens > 0 {
+		mt := cfg.MaxTokens
+		unified.MaxTokens = &mt
+	}
+	if unified.Stream {
+		unified.StreamOptions = &adapter.StreamOptions{IncludeUsage: true}
+	}
+	body, err := json.Marshal(unified)
+	if err != nil {
+		return nil, err
+	}
+	return p.newUpstreamRequest(r, upstreamURL, cfg, body, adpt)
 }
 
 // newUpstreamRequest 组装上游请求(URL/方法/头/上游Key)
-func (p *ProxyCore) newUpstreamRequest(r *http.Request, upstreamURL string, cfg *plugin.ModelConfig, body []byte) (*http.Request, error) {
+func (p *ProxyCore) newUpstreamRequest(r *http.Request, upstreamURL string, cfg *plugin.ModelConfig, body []byte, adpt adapter.ModelAdapter) (*http.Request, error) {
 	outbound, err := http.NewRequestWithContext(r.Context(), r.Method, upstreamURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
-	return p.attachUpstreamAuth(outbound, cfg)
+	return p.attachUpstreamAuth(outbound, cfg, adpt)
 }
 
-// attachUpstreamAuth 设置上游鉴权与 Content-Type
-func (p *ProxyCore) attachUpstreamAuth(req *http.Request, cfg *plugin.ModelConfig) (*http.Request, error) {
+// attachUpstreamAuth 设置上游鉴权与 Content-Type。
+// anthropic 上游:去 Authorization,x-api-key + anthropic-version;其余现 Bearer
+func (p *ProxyCore) attachUpstreamAuth(req *http.Request, cfg *plugin.ModelConfig, adpt adapter.ModelAdapter) (*http.Request, error) {
 	req.Header.Set("Content-Type", "application/json")
+	if adapter.IsAnthropicProtocol(adpt) {
+		req.Header.Del("Authorization")
+		req.Header.Set("x-api-key", cfg.APIKey)
+		req.Header.Set("anthropic-version", "2023-06-01")
+		return req, nil
+	}
 	req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
 	return req, nil
 }
@@ -677,6 +1018,37 @@ func writeOpenAIError(w http.ResponseWriter, status int, etype, code, message st
 	_ = json.NewEncoder(w).Encode(openAIErrorBody{
 		Error: openAIError{Message: message, Type: etype, Param: nil, Code: code},
 	})
+}
+
+// anthropicErrorBody Anthropic 错误响应体
+type anthropicErrorBody struct {
+	Type  string       `json:"type"`
+	Error anthropicErr `json:"error"`
+}
+
+type anthropicErr struct {
+	Type    string `json:"type"`
+	Message string `json:"message"`
+}
+
+// writeAnthropicError 按 Anthropic 错误格式写响应
+func writeAnthropicError(w http.ResponseWriter, status int, etype, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(anthropicErrorBody{
+		Type:  "error",
+		Error: anthropicErr{Type: etype, Message: message},
+	})
+}
+
+// writeEntryError 按入口协议分形写错误:anthropic 入口写 Anthropic 形,其余写 OpenAI 形。
+// r 为 nil(共享中间件无 rc 且无请求可用)时按 OpenAI 形兜底
+func writeEntryError(w http.ResponseWriter, r *http.Request, status int, etype, code, message string) {
+	if r != nil && r.URL.Path == "/v1/messages" {
+		writeAnthropicError(w, status, etype, message)
+		return
+	}
+	writeOpenAIError(w, status, etype, code, message)
 }
 
 // selectUpstream 按 weight 加权随机选一个 enabled 上游

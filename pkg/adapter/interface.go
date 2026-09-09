@@ -142,7 +142,8 @@ type ToolFunction struct {
 // ToolCall 工具调用
 type ToolCall struct {
 	ID       string           `json:"id"`
-	Type     string           `json:"type"` // "function"
+	Index    int              `json:"index,omitempty"` // 流式 tool_calls 分片定位(非流式恒 0)
+	Type     string           `json:"type"`            // "function"
 	Function ToolCallFunction `json:"function"`
 }
 

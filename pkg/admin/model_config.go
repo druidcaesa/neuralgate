@@ -15,6 +15,7 @@
 package admin
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -36,6 +37,7 @@ type modelConfigRequest struct {
 	MaxRetries    int               `json:"max_retries"`                               // 0-5,默认 2
 	RetryInterval int               `json:"retry_interval"`                            // 1-30,默认 3
 	Weight        int               `json:"weight"`                                    // 1-100,默认 1
+	MaxTokens     int               `json:"max_tokens"`                                // 默认 max_tokens(0=不注入;Anthropic 语义),夹取 [0,1_000_000]
 	Enabled       *bool             `json:"enabled"`                                   // 默认 true
 	Tags          map[string]string `json:"tags"`
 }
@@ -52,6 +54,9 @@ func (req *modelConfigRequest) normalize() {
 	}
 	if req.Weight < 1 || req.Weight > 100 {
 		req.Weight = 1
+	}
+	if req.MaxTokens < 0 || req.MaxTokens > 1_000_000 {
+		req.MaxTokens = 0
 	}
 	if req.Enabled == nil {
 		t := true
@@ -80,7 +85,7 @@ func (s *AdminServer) createModelConfig(c *gin.Context) {
 		ID: uuid.NewString(), ModelName: req.Name, Provider: req.Provider,
 		ProviderModel: req.ProviderModel, BaseURL: req.BaseURL, APIKey: req.APIKey,
 		Timeout: time.Duration(req.Timeout), MaxRetries: req.MaxRetries, RetryInterval: time.Duration(req.RetryInterval),
-		Weight: req.Weight, Enabled: *req.Enabled, Tags: req.Tags,
+		Weight: req.Weight, MaxTokens: req.MaxTokens, Enabled: *req.Enabled, Tags: req.Tags,
 		CreatedAt: now, UpdatedAt: now,
 	}
 	if err := s.storage.SaveModelConfig(config); err != nil {
@@ -109,6 +114,7 @@ func (s *AdminServer) listModelConfigs(c *gin.Context) {
 		MaxRetries    int               `json:"max_retries"`
 		RetryInterval int               `json:"retry_interval"`
 		Weight        int               `json:"weight"`
+		MaxTokens     int               `json:"max_tokens"`
 		Enabled       bool              `json:"enabled"`
 		Tags          map[string]string `json:"tags"`
 		CreatedAt     time.Time         `json:"created_at"`
@@ -119,7 +125,7 @@ func (s *AdminServer) listModelConfigs(c *gin.Context) {
 			ID: cfg.ID, Name: cfg.ModelName, Provider: cfg.Provider,
 			ProviderModel: cfg.ProviderModel, BaseURL: cfg.BaseURL,
 			Timeout: int(cfg.Timeout), MaxRetries: cfg.MaxRetries, RetryInterval: int(cfg.RetryInterval),
-			Weight: cfg.Weight, Enabled: cfg.Enabled, Tags: cfg.Tags, CreatedAt: cfg.CreatedAt,
+			Weight: cfg.Weight, MaxTokens: cfg.MaxTokens, Enabled: cfg.Enabled, Tags: cfg.Tags, CreatedAt: cfg.CreatedAt,
 		})
 	}
 	OK(c, gin.H{"items": items, "total": total, "page": page, "size": size})
@@ -156,6 +162,7 @@ func (s *AdminServer) updateModelConfig(c *gin.Context) {
 	existing.MaxRetries = req.MaxRetries
 	existing.RetryInterval = time.Duration(req.RetryInterval)
 	existing.Weight = req.Weight
+	existing.MaxTokens = req.MaxTokens
 	existing.Enabled = *req.Enabled
 	existing.Tags = req.Tags
 	existing.UpdatedAt = time.Now()
@@ -176,7 +183,9 @@ func (s *AdminServer) deleteModelConfig(c *gin.Context) {
 	OK(c, gin.H{"id": id, "deleted": true})
 }
 
-// testModelConfig POST /api/models/:id/test:测试连接(轻量请求,返回延迟)
+// testModelConfig POST /api/models/:id/test:测试连接(轻量请求,返回延迟)。
+// 按上游协议分路:anthropic(内置 provider 或 tags[adapter]=anthropic)走 POST /v1/messages
+// + x-api-key/anthropic-version(最小请求带 max_tokens);其余走现 GET /v1/models + Bearer
 func (s *AdminServer) testModelConfig(c *gin.Context) {
 	id := c.Param("id")
 	config, err := s.storage.GetModelConfigByID(id)
@@ -186,8 +195,18 @@ func (s *AdminServer) testModelConfig(c *gin.Context) {
 	}
 	url := strings.TrimRight(config.BaseURL, "/") + "/v1/models"
 	client := &http.Client{Timeout: 5 * time.Second}
-	req, _ := http.NewRequest(http.MethodGet, url, nil)
-	req.Header.Set("Authorization", "Bearer "+config.APIKey)
+	var req *http.Request
+	if config.Provider == "anthropic" || config.Tags["adapter"] == "anthropic" {
+		url = strings.TrimRight(config.BaseURL, "/") + "/v1/messages"
+		body := fmt.Sprintf(`{"model":%q,"max_tokens":1,"messages":[{"role":"user","content":"hi"}]}`, config.ProviderModel)
+		req, _ = http.NewRequest(http.MethodPost, url, strings.NewReader(body))
+		req.Header.Set("x-api-key", config.APIKey)
+		req.Header.Set("anthropic-version", "2023-06-01")
+		req.Header.Set("Content-Type", "application/json")
+	} else {
+		req, _ = http.NewRequest(http.MethodGet, url, nil)
+		req.Header.Set("Authorization", "Bearer "+config.APIKey)
+	}
 	start := time.Now()
 	resp, err := client.Do(req)
 	latency := time.Since(start).Milliseconds()

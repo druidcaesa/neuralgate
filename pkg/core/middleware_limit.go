@@ -28,7 +28,7 @@ func RateLimitMiddleware(rateLimiter plugin.RateLimitPlugin) Middleware {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			rc, ok := RequestContextFrom(r.Context())
 			if !ok {
-				writeOpenAIError(w, http.StatusInternalServerError, "api_error", "internal_error", "internal error")
+				writeEntryError(w, r, http.StatusInternalServerError, "api_error", "internal_error", "internal error")
 				return
 			}
 			// 健康检查不计入限流桶
@@ -60,7 +60,7 @@ func RateLimitMiddleware(rateLimiter plugin.RateLimitPlugin) Middleware {
 				w.Header().Set("X-RateLimit-Remaining-Requests", "0")
 				w.Header().Set("X-RateLimit-Reset-Requests", strconv.FormatInt(resetAt.Unix(), 10))
 				w.Header().Set("Retry-After", "1")
-				writeOpenAIError(w, http.StatusTooManyRequests, "rate_limit_exceeded", code,
+				writeEntryError(w, r, http.StatusTooManyRequests, "rate_limit_exceeded", code,
 					msg+" (current="+strconv.FormatInt(current, 10)+", limit="+strconv.FormatInt(limit, 10)+", reset="+resetAt.Format(time.RFC3339)+")")
 				return
 			}

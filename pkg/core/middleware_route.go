@@ -31,7 +31,7 @@ func RouteMatchMiddleware(storage plugin.StoragePlugin, registry *adapter.Adapte
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			rc, ok := RequestContextFrom(r.Context())
 			if !ok {
-				writeOpenAIError(w, http.StatusInternalServerError, "api_error", "internal_error", "internal error")
+				writeEntryError(w, r, http.StatusInternalServerError, "api_error", "internal_error", "internal error")
 				return
 			}
 
@@ -51,13 +51,13 @@ func RouteMatchMiddleware(storage plugin.StoragePlugin, registry *adapter.Adapte
 			// 读取请求体(上限 1MB),缓存后恢复;超限显式 413(避免静默截断丢数据)
 			body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 			if err != nil {
-				writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "bad_request", "failed to read request body")
+				writeEntryError(w, r, http.StatusBadRequest, "invalid_request_error", "bad_request", "failed to read request body")
 				return
 			}
 			if len(body) >= 1<<20 {
 				extra, _ := io.ReadAll(io.LimitReader(r.Body, 1))
 				if len(extra) > 0 {
-					writeOpenAIError(w, http.StatusRequestEntityTooLarge, "invalid_request_error", "request_too_large", "request body exceeds 1MB limit")
+					writeEntryError(w, r, http.StatusRequestEntityTooLarge, "invalid_request_error", "request_too_large", "request body exceeds 1MB limit")
 					return
 				}
 			}
@@ -69,18 +69,18 @@ func RouteMatchMiddleware(storage plugin.StoragePlugin, registry *adapter.Adapte
 				Model string `json:"model"`
 			}
 			if err := json.Unmarshal(body, &reqBody); err != nil {
-				writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "bad_request", "invalid JSON body")
+				writeEntryError(w, r, http.StatusBadRequest, "invalid_request_error", "bad_request", "invalid JSON body")
 				return
 			}
 			if reqBody.Model == "" {
-				writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "bad_request", "model field is required")
+				writeEntryError(w, r, http.StatusBadRequest, "invalid_request_error", "bad_request", "model field is required")
 				return
 			}
 
 			// 查模型配置
 			config, err := storage.GetModelConfig(reqBody.Model)
 			if err != nil || config == nil || !config.Enabled {
-				writeOpenAIError(w, http.StatusNotFound, "invalid_request_error", "model_not_found", "model not found: "+reqBody.Model)
+				writeEntryError(w, r, http.StatusNotFound, "invalid_request_error", "model_not_found", "model not found: "+reqBody.Model)
 				return
 			}
 			rc.ModelConfig = config
@@ -98,15 +98,15 @@ func RouteMatchMiddleware(storage plugin.StoragePlugin, registry *adapter.Adapte
 			if key, err := storage.GetAPIKeyByID(rc.APIKeyID); err == nil && len(key.AllowedModels) > 0 {
 				allowed := slices.Contains(key.AllowedModels, config.ModelName)
 				if !allowed {
-					writeOpenAIError(w, http.StatusForbidden, "invalid_request_error", "model_access_denied", "model not allowed for this API key")
+					writeEntryError(w, r, http.StatusForbidden, "invalid_request_error", "model_access_denied", "model not allowed for this API key")
 					return
 				}
 			}
 
-			// 获取适配器:内置供应商用对应转换适配器;自定义(未注册)按 tags["adapter"] 选协议适配器,
-			// 缺省或 tag 未注册时回退 OpenAI 适配器(OpenAI 兼容透传)。
-			// tags["adapter"] 键由管理端「接入协议」字段写入,当前值域仅 openai 可选(Anthropic/Ollama
-			// 置灰预留,适配器未实现);该 tag 只对未注册的自定义 provider 生效,内置 provider 忽略之
+			// 获取适配器:内置供应商(openai/deepseek/anthropic 等已注册)直接返回对应适配器;
+			// 自定义(未注册)按 tags["adapter"] 选协议适配器,缺省或 tag 未注册时回退 OpenAI 适配器
+			// (OpenAI 兼容透传)。tags["adapter"] 键由管理端「接入协议」字段写入,值域 openai/anthropic;
+			// 该 tag 只对未注册的自定义 provider 生效,内置 provider 忽略之
 			adpt, err := registry.Get(config.Provider)
 			if err != nil {
 				if proto := config.Tags["adapter"]; proto != "" {

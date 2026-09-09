@@ -32,6 +32,7 @@ func TestBuiltinAdapters(t *testing.T) {
 		{"qwen", NewQwenAdapter(), false},
 		{"zhipu", NewZhipuAdapter(), false},
 		{"deepseek", NewDeepSeekAdapter(), true},
+		{"anthropic", NewAnthropicAdapter(), false},
 	}
 	for _, c := range cases {
 		if c.adapter.Name() != c.name {

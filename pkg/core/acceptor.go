@@ -45,7 +45,7 @@ func (a *Acceptor) Handler() http.Handler {
 	inner := a.handler
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if a.ipf != nil && !a.ipf.Allow(clientIP(r)) {
-			writeOpenAIError(w, http.StatusForbidden, "invalid_request_error", "forbidden", "access denied by IP filter")
+			writeEntryError(w, r, http.StatusForbidden, "invalid_request_error", "forbidden", "access denied by IP filter")
 			return
 		}
 		inner.ServeHTTP(w, r)
