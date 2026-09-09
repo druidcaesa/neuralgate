@@ -233,6 +233,8 @@ func main() {
 	pipeline.Use(core.ObservabilityMiddleware(metrics, logger))
 
 	acceptor := core.NewAcceptor(proxyCore.Handler(), ipf)
+	// 外层指标包裹:覆盖一切到达代理的请求(含鉴权/限流拒绝),见 pkg/core/metrics.go
+	proxyHandler := metrics.WrapOuter(acceptor.Handler())
 	// /metrics 在管道外层伺服: 免鉴权且不被路由中间件 404(运维采集端点)
 	rootHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/metrics" {
@@ -243,7 +245,7 @@ func main() {
 		if docsui.Serve(w, r) {
 			return
 		}
-		acceptor.Handler().ServeHTTP(w, r)
+		proxyHandler.ServeHTTP(w, r)
 	})
 
 	// 8. 启动双服务（并发）

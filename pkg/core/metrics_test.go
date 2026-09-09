@@ -20,47 +20,117 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/druidcaesa/neuralgate/pkg/plugin"
+	dto "github.com/prometheus/client_model/go"
 )
 
-// TestMetricsRenderSnapshot 状态码族计数与 Token 计数的渲染快照
-func TestMetricsRenderSnapshot(t *testing.T) {
-	m := NewMetrics()
-	m.observeRequest(200)
-	m.observeRequest(200)
-	m.observeRequest(404)
-	m.observeRequest(502)
-	m.observeTokens(120)
-	got := m.Render()
-	for _, want := range []string{
-		`ng_requests_total{status="2xx"} 2`,
-		`ng_requests_total{status="4xx"} 1`,
-		`ng_requests_total{status="5xx"} 1`,
-		`ng_tokens_total 120`,
-	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("渲染缺 %s\n实际:\n%s", want, got)
+// gatherAll 拉取独立 registry 全部系列,规整为 "name{label=value,...}" → 值。
+// 直方图取 _count(样本数),便于断言请求是否被记录。
+func gatherAll(t *testing.T, m *Metrics) map[string]float64 {
+	t.Helper()
+	fams, err := m.reg.Gather()
+	if err != nil {
+		t.Fatalf("Gather 失败: %v", err)
+	}
+	out := map[string]float64{}
+	for _, fam := range fams {
+		for _, mt := range fam.Metric {
+			var lbls []string
+			for _, lp := range mt.Label {
+				lbls = append(lbls, lp.GetName()+"="+lp.GetValue())
+			}
+			key := fam.GetName() + "{" + strings.Join(lbls, ",") + "}"
+			switch fam.GetType() {
+			case dto.MetricType_COUNTER:
+				out[key] = mt.GetCounter().GetValue()
+			case dto.MetricType_GAUGE:
+				out[key] = mt.GetGauge().GetValue()
+			case dto.MetricType_HISTOGRAM:
+				out[key] = float64(mt.GetHistogram().GetSampleCount())
+			}
 		}
+	}
+	return out
+}
+
+// TestWrapOuterCounts 外层包裹:被中间件拒绝(未及模型)的请求也应计入总请求与 in-flight
+func TestWrapOuterCounts(t *testing.T) {
+	m := NewMetrics()
+	h := m.WrapOuter(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests) // 429 → 4xx
+	}))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil))
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("响应应透传: %d", rec.Code)
+	}
+	got := gatherAll(t, m)
+	want := map[string]float64{
+		"ng_requests_total{status=4xx}": 1,
+		"ng_http_in_flight{}":           0,
+		"ng_requests_total{status=2xx}": 0,
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("指标 %s 应为 %v,实际 %v", k, v, got[k])
+		}
+	}
+	if got["ng_http_request_duration_seconds{}"] == 0 {
+		t.Errorf("整体耗时直方图应记录样本: %v", got["ng_http_request_duration_seconds{}"])
 	}
 }
 
-// TestObservabilityMiddlewareCounts 中间件采集状态与 Token；/metrics 由外层伺服不在此测
-func TestObservabilityMiddlewareCounts(t *testing.T) {
+// TestObservabilityMiddlewareModelMetrics 内层中间件:仅写模型维度与 Token,不再碰总请求计数
+func TestObservabilityMiddlewareModelMetrics(t *testing.T) {
 	m := NewMetrics()
-	pipelineLike := ObservabilityMiddleware(m, nil)(http.HandlerFunc(
-		func(w http.ResponseWriter, r *http.Request) {
-			rc, _ := RequestContextFrom(r.Context())
-			rc.TotalTokens = 77
-			w.WriteHeader(http.StatusTeapot) // 418 → 4xx 族
-		}))
+	h := ObservabilityMiddleware(m, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rc, _ := RequestContextFrom(r.Context())
+		rc.TotalTokens = 123
+		w.WriteHeader(http.StatusOK)
+	}))
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
-	rc := &RequestContext{RequestID: "rid-1", StartTime: time.Now()}
-	rec := httptest.NewRecorder()
-	pipelineLike.ServeHTTP(rec, req.WithContext(WithRequestContext(req.Context(), rc)))
-	if rec.Code != http.StatusTeapot {
-		t.Fatalf("下游响应应透传: %d", rec.Code)
+	rc := &RequestContext{
+		RequestID:   "rid-1",
+		StartTime:   time.Now(),
+		ModelConfig: &plugin.ModelConfig{ModelName: "gpt-4o", Provider: "openai"},
 	}
-	if !strings.Contains(m.Render(), `ng_requests_total{status="4xx"} 1`) ||
-		!strings.Contains(m.Render(), `ng_tokens_total 77`) {
-		t.Errorf("指标未采集:\n%s", m.Render())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req.WithContext(WithRequestContext(req.Context(), rc)))
+
+	got := gatherAll(t, m)
+	checks := map[string]float64{
+		"ng_model_requests_total{model=gpt-4o,provider=openai,status_class=2xx}": 1,
+		"ng_model_tokens_total{model=gpt-4o}":                                    123,
+		"ng_tokens_total{}":                                                      123,
+		// 总请求计数已被移除至外层,内层不得重复计
+		"ng_requests_total{status=2xx}": 0,
+	}
+	for k, v := range checks {
+		if got[k] != v {
+			t.Errorf("指标 %s 应为 %v,实际 %v", k, v, got[k])
+		}
+	}
+	if got["ng_model_request_duration_seconds{model=gpt-4o,provider=openai}"] == 0 {
+		t.Error("模型耗时直方图应记录样本")
+	}
+}
+
+// TestServeMetricsExposition /metrics 应答合法:200 且含核心指标名
+func TestServeMetricsExposition(t *testing.T) {
+	m := NewMetrics()
+	m.WrapOuter(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated) // 2xx
+	})).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/v1/models", nil))
+
+	rec := httptest.NewRecorder()
+	ServeMetrics(m, rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("状态码应为 200: %d", rec.Code)
+	}
+	for _, name := range []string{"ng_requests_total", "ng_http_in_flight", "ng_tokens_total"} {
+		if !strings.Contains(rec.Body.String(), name) {
+			t.Errorf("exposition 应含 %s", name)
+		}
 	}
 }
