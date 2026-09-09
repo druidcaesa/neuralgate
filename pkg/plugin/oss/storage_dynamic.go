@@ -125,6 +125,15 @@ func (d *dynamicStorage) Close() error { return d.impl.Close() }
 func (d *dynamicStorage) DeleteAuditLogsBefore(cutoff time.Time) (int64, error) {
 	return d.impl.DeleteAuditLogsBefore(cutoff)
 }
+func (d *dynamicStorage) DeleteSecurityEventsBefore(cutoff time.Time) (int64, error) {
+	return d.impl.DeleteSecurityEventsBefore(cutoff)
+}
+func (d *dynamicStorage) DeleteMCPAuditLogsBefore(cutoff time.Time) (int64, error) {
+	return d.impl.DeleteMCPAuditLogsBefore(cutoff)
+}
+func (d *dynamicStorage) DeleteOperationLogsBefore(cutoff time.Time) (int64, error) {
+	return d.impl.DeleteOperationLogsBefore(cutoff)
+}
 func (d *dynamicStorage) SaveTamperAlerts(alerts []*plugin.TamperAlert) error {
 	return d.impl.SaveTamperAlerts(alerts)
 }

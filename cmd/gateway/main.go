@@ -107,6 +107,9 @@ func main() {
 	}
 	logger.Info("插件工厂初始化完成", zap.String("storage_driver", cfg.Storage.Driver))
 
+	// 3.5 统一留存(OSS 基础能力,与授权无关):每小时清理超期日志,多副本幂等
+	stopRetention := startLogRetention(storage, cfg.Audit.RetentionDays, logger)
+
 	// 4. 从存储加载模型配置（内存存储返回空表，仅打印数量）
 	models, total, err := storage.ListModelConfigs(1, 100)
 	if err != nil {
@@ -343,12 +346,81 @@ func main() {
 	if exportStarted {
 		exporter.Close() // 最终一轮拉取兜住 auditor.Shutdown 落库的尾部日志
 	}
+	if stopRetention != nil {
+		stopRetention() // 留存 worker 先停,再关存储
+	}
 	if err := storage.Close(); err != nil {
 		logger.Warn("存储关闭异常", zap.Error(err))
 	} else {
 		logger.Info("存储已关闭")
 	}
 	logger.Info("NeuralGate 已退出")
+}
+
+// startLogRetention 启动统一留存 worker：每小时清理各日志表早于 audit.retention_days 的记录。
+// 留存语义:retentionDays > 0 启用(0 由 applyDefaults 补为 90);<=0 不启动(-1 显式禁用)。
+// 这是 OSS 基础能力,与 tamper 授权无关,OSS/enterprise 共用。
+// 多副本安全:删除幂等、分批内部收敛,两副本并发执行重复命中计数为 0,无需分布式锁。
+// 返回停止函数,须在 storage.Close 之前调用;未启用时返回 nil。
+func startLogRetention(storage plugin.StoragePlugin, retentionDays int, logger *zap.Logger) func() {
+	if retentionDays <= 0 {
+		logger.Info("审计留存未启用", zap.Int("retention_days", retentionDays))
+		return nil
+	}
+	retention := time.Duration(retentionDays) * 24 * time.Hour
+	run := func() {
+		cutoff := time.Now().Add(-retention)
+		checks := []struct {
+			name string
+			fn   func(time.Time) (int64, error)
+		}{
+			{"audit_logs", storage.DeleteAuditLogsBefore},
+			{"security_events", storage.DeleteSecurityEventsBefore},
+			{"mcp_audit_logs", storage.DeleteMCPAuditLogsBefore},
+			{"admin_operation_logs", storage.DeleteOperationLogsBefore},
+		}
+		for _, c := range checks {
+			n, err := c.fn(cutoff)
+			if err != nil {
+				logger.Warn("留存清理失败", zap.String("table", c.name), zap.Error(err))
+				continue
+			}
+			if n > 0 {
+				logger.Info("留存清理完成", zap.String("table", c.name), zap.Int64("deleted", n))
+			}
+		}
+	}
+	// 单轮 panic 不应带崩 worker：记录后下一轮继续
+	tick := func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Error("留存 worker panic", zap.Any("panic", r))
+			}
+		}()
+		run()
+	}
+
+	stopCh := make(chan struct{})
+	doneCh := make(chan struct{})
+	go func() {
+		defer close(doneCh)
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		tick() // 启动即清一轮,便于验收与启动留痕
+		for {
+			select {
+			case <-stopCh:
+				return
+			case <-ticker.C:
+				tick()
+			}
+		}
+	}()
+	logger.Info("审计留存已启用", zap.Int("retention_days", retentionDays))
+	return func() {
+		close(stopCh)
+		<-doneCh
+	}
 }
 
 // shouldStartExport 判断外推启动条件（配置启用 + 授权含 audit_stream）；不满足给出原因

@@ -422,20 +422,53 @@ func matchAuditLog(l *plugin.AuditLog, f plugin.AuditLogFilter) bool {
 	return true
 }
 
+// keepNewerInPlace 就地剔除 createdAt 早于 cutoff 的元素，返回剔除条数
+func keepNewerInPlace[T any](slice []*T, cutoff time.Time, createdAt func(*T) time.Time) ([]*T, int64) {
+	kept := slice[:0]
+	var n int64
+	for _, it := range slice {
+		if createdAt(it).Before(cutoff) {
+			n++
+			continue
+		}
+		kept = append(kept, it)
+	}
+	return kept, n
+}
+
 // DeleteAuditLogsBefore 删除 cutoff 之前的审计日志，返回删除条数
 func (s *MemStorage) DeleteAuditLogsBefore(cutoff time.Time) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	kept := s.auditLogs[:0]
-	var n int64
-	for _, l := range s.auditLogs {
-		if l.CreatedAt.Before(cutoff) {
-			n++
-			continue
-		}
-		kept = append(kept, l)
-	}
+	kept, n := keepNewerInPlace(s.auditLogs, cutoff, func(l *plugin.AuditLog) time.Time { return l.CreatedAt })
 	s.auditLogs = kept
+	return n, nil
+}
+
+// DeleteSecurityEventsBefore 删除 cutoff 之前的安全事件
+func (s *MemStorage) DeleteSecurityEventsBefore(cutoff time.Time) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	kept, n := keepNewerInPlace(s.securityEvents, cutoff, func(e *plugin.SecurityEvent) time.Time { return e.CreatedAt })
+	s.securityEvents = kept
+	return n, nil
+}
+
+// DeleteMCPAuditLogsBefore 删除 cutoff 之前的 MCP 调用审计
+func (s *MemStorage) DeleteMCPAuditLogsBefore(cutoff time.Time) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	kept, n := keepNewerInPlace(s.mcpAuditLogs, cutoff, func(l *plugin.MCPAuditLog) time.Time { return l.CreatedAt })
+	s.mcpAuditLogs = kept
+	return n, nil
+}
+
+// DeleteOperationLogsBefore 删除 cutoff 之前的管理操作日志
+func (s *MemStorage) DeleteOperationLogsBefore(cutoff time.Time) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	kept, n := keepNewerInPlace(s.adminOpLogs, cutoff, func(l *plugin.AdminOperationLog) time.Time { return l.CreatedAt })
+	s.adminOpLogs = kept
 	return n, nil
 }
 

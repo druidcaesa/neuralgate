@@ -17,8 +17,6 @@
 package main
 
 import (
-	"time"
-
 	"github.com/druidcaesa/neuralgate/pkg/config"
 	"github.com/druidcaesa/neuralgate/pkg/core"
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
@@ -33,7 +31,7 @@ func newPluginFactory() plugin.PluginFactory {
 	return enterprise.NewPluginFactory()
 }
 
-// setupTamper 注入指纹钩子并启动校验与留存任务；未满足门控条件时记录原因并返回 nil。
+// setupTamper 注入指纹钩子并启动哈希校验任务；未满足门控条件时记录原因并返回 nil。
 // 返回的停止函数须在 auditor.Shutdown 之前调用
 func setupTamper(gate core.LicenseGate, auditor plugin.AuditPipeline,
 	storage plugin.StoragePlugin, cfg config.AuditConfig, logger *zap.Logger) func() {
@@ -53,9 +51,9 @@ func setupTamper(gate core.LicenseGate, auditor plugin.AuditPipeline,
 	setter.SetFingerprintFunc(func(log *plugin.AuditLog) string {
 		return enterprise.Fingerprint(cfg.FingerprintAlgo, log)
 	})
-	retention := time.Duration(cfg.RetentionDays) * 24 * time.Hour
+	// 留存清理已迁移至共享 startLogRetention(OSS/enterprise 统一);tamper 仅保留哈希校验
 	tasks := enterprise.NewTasks(storage, cfg.FingerprintAlgo,
-		cfg.VerifyInterval, cfg.VerifyBatchSize, retention, logger)
+		cfg.VerifyInterval, cfg.VerifyBatchSize, logger)
 	tasks.Start()
 	logger.Info("审计防篡改已启用",
 		zap.String("algo", cfg.FingerprintAlgo),

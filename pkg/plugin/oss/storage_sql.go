@@ -797,18 +797,19 @@ func (s *SQLStorage) DeleteUpstream(id string) error {
 // deleteBatchSize 单批删除上限：无界单条 DELETE 会长时间持锁阻塞写入(C5 治理项)
 const deleteBatchSize = 5000
 
-// DeleteAuditLogsBefore 分批删除 cutoff 之前的审计日志，返回删除总条数。
-// 子查询定位批次(id IN SELECT ... LIMIT)，三方言通用；循环直至删净
-func (s *SQLStorage) DeleteAuditLogsBefore(cutoff time.Time) (int64, error) {
+// deleteTableBefore 分批删除某日志表 cutoff 之前记录，返回删除总条数。
+// 子查询定位批次(id IN SELECT ... LIMIT)，三方言通用；循环直至删净。
+// 表名来自内部常量不可注入；多副本并发调用幂等(重复命中删除计数 0)
+func (s *SQLStorage) deleteTableBefore(table string, cutoff time.Time) (int64, error) {
 	cut := timeToMS(cutoff)
 	var total int64
 	for {
 		res, err := s.exec(
-			"DELETE FROM audit_logs WHERE id IN "+
-				"(SELECT id FROM audit_logs WHERE created_at < ? LIMIT ?)",
+			"DELETE FROM "+table+" WHERE id IN "+
+				"(SELECT id FROM "+table+" WHERE created_at < ? LIMIT ?)",
 			cut, int64(deleteBatchSize))
 		if err != nil {
-			return total, fmt.Errorf("delete expired audit logs: %w", err)
+			return total, fmt.Errorf("delete expired %s: %w", table, err)
 		}
 		n, _ := res.RowsAffected()
 		total += n
@@ -816,6 +817,26 @@ func (s *SQLStorage) DeleteAuditLogsBefore(cutoff time.Time) (int64, error) {
 			return total, nil
 		}
 	}
+}
+
+// DeleteAuditLogsBefore 分批删除 cutoff 之前的审计日志
+func (s *SQLStorage) DeleteAuditLogsBefore(cutoff time.Time) (int64, error) {
+	return s.deleteTableBefore("audit_logs", cutoff)
+}
+
+// DeleteSecurityEventsBefore 分批删除 cutoff 之前的安全事件
+func (s *SQLStorage) DeleteSecurityEventsBefore(cutoff time.Time) (int64, error) {
+	return s.deleteTableBefore("security_events", cutoff)
+}
+
+// DeleteMCPAuditLogsBefore 分批删除 cutoff 之前的 MCP 调用审计
+func (s *SQLStorage) DeleteMCPAuditLogsBefore(cutoff time.Time) (int64, error) {
+	return s.deleteTableBefore("mcp_audit_logs", cutoff)
+}
+
+// DeleteOperationLogsBefore 分批删除 cutoff 之前的管理操作日志
+func (s *SQLStorage) DeleteOperationLogsBefore(cutoff time.Time) (int64, error) {
+	return s.deleteTableBefore("admin_operation_logs", cutoff)
 }
 
 // SaveTamperAlerts upsert 篡改告警：同一 AuditLogID 存在未处置告警则更新检查时间，否则插入

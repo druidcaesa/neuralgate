@@ -409,8 +409,12 @@ type StoragePlugin interface {
 	BatchSaveAuditLogs(logs []*AuditLog) error
 	QueryAuditLogs(filter AuditLogFilter, page, size int) ([]*AuditLog, int64, error)
 
-	// 留存清理：删除 cutoff 之前的审计日志，返回删除条数
+	// 留存清理：删除 cutoff 之前的各日志表记录，返回删除条数。
+	// 统一留存 worker 逐表调用；多副本并发删除幂等(分批删除,重复命中计数 0)
 	DeleteAuditLogsBefore(cutoff time.Time) (int64, error)
+	DeleteSecurityEventsBefore(cutoff time.Time) (int64, error)
+	DeleteMCPAuditLogsBefore(cutoff time.Time) (int64, error)
+	DeleteOperationLogsBefore(cutoff time.Time) (int64, error)
 
 	// 篡改告警：同一 AuditLogID 存在未处置告警则更新检查时间，否则插入
 	SaveTamperAlerts(alerts []*TamperAlert) error
