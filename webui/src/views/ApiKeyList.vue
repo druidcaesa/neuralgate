@@ -2,14 +2,19 @@
   <el-card>
     <div class="toolbar">
       <el-button type="primary" @click="openCreate">创建 Key</el-button>
-      <el-button @click="batchDialogVisible = true">批量创建</el-button>
+      <el-button @click="openBatch">批量创建</el-button>
       <el-button type="danger" :disabled="selectedIds.length === 0" @click="batchRemove">
         批量删除({{ selectedIds.length }})
       </el-button>
     </div>
     <el-table :data="keys" v-loading="loading" @selection-change="(rows: ApiKeyItem[]) => { selectedIds = rows.map(r => r.id) }">
       <el-table-column type="selection" width="45" />
-      <el-table-column prop="key_prefix" label="Key" min-width="140" />
+      <el-table-column label="Key(掩码)" min-width="150">
+        <template #default="{ row }">{{ row.key_mask || row.key_prefix }}</template>
+      </el-table-column>
+      <el-table-column label="租户" min-width="110">
+        <template #default="{ row }">{{ tenantName(row.tenant_id) }}</template>
+      </el-table-column>
       <el-table-column prop="name" label="名称" min-width="100" />
       <el-table-column label="状态" width="90">
         <template #default="{ row }">
@@ -45,6 +50,12 @@
       <el-form label-width="110px">
         <el-form-item label="名称前缀" required><el-input v-model="batchForm.name_prefix" maxlength="48" /></el-form-item>
         <el-form-item label="数量" required><el-input-number v-model="batchForm.count" :min="1" :max="100" /></el-form-item>
+        <el-form-item v-if="isSuper" label="关联租户">
+          <el-select v-model="batchForm.tenant_id" clearable filterable placeholder="留空=全局">
+            <el-option label="全局" value="" />
+            <el-option v-for="t in tenants" :key="t.id" :label="t.name" :value="t.id" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="额度(负=无限)"><el-input-number v-model="batchForm.quota" :min="-1" /></el-form-item>
       </el-form>
       <template #footer>
@@ -57,6 +68,12 @@
     <el-dialog v-model="createDialog" title="创建 API Key" width="520px">
       <el-form :model="form" label-width="110px">
         <el-form-item label="名称" required><el-input v-model="form.name" /></el-form-item>
+        <el-form-item v-if="isSuper" label="关联租户">
+          <el-select v-model="form.tenant_id" clearable filterable placeholder="留空=全局">
+            <el-option label="全局" value="" />
+            <el-option v-for="t in tenants" :key="t.id" :label="t.name" :value="t.id" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="额度(负=无限)"><el-input-number v-model="form.quota" :min="-1" /></el-form-item>
         <el-form-item label="限流(rps)"><el-input-number v-model="form.rate_limit" :min="1" :max="10000" /></el-form-item>
         <el-form-item label="允许模型">
@@ -91,7 +108,9 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { formatTime } from '../utils/time'
-import type { ApiKeyItem, ApiKeyCreateRequest, ModelItem } from '../types'
+import type { ApiKeyItem, ApiKeyCreateRequest, ModelItem, TenantItem } from '../types'
+import { getAdminIdentity } from '../api/auth'
+import { listTenants } from '../api/rbac'
 import { listModels } from '../api/model'
 import {
   listApiKeys, createApiKey, updateApiKeyStatus, deleteApiKey,
@@ -109,7 +128,26 @@ const plainDialog = ref(false)
 const plainKey = ref('')
 let plainConfirmed = false
 
-const form = reactive<ApiKeyCreateRequest>({ name: '', quota: -1, rate_limit: 10, allowed_models: [], expires_at: null })
+const form = reactive<ApiKeyCreateRequest>({ name: '', tenant_id: '', quota: -1, rate_limit: 10, allowed_models: [], expires_at: null })
+
+// 租户下拉(仅超管可选关联租户；租户内用户由后端强制归属自身租户)
+const tenants = ref<TenantItem[]>([])
+const isSuper = getAdminIdentity().is_super
+
+function tenantName(id: string): string {
+  if (!id) return '全局'
+  return tenants.value.find((t) => t.id === id)?.name ?? id
+}
+
+async function loadTenants() {
+  if (!isSuper) return
+  try {
+    const page = await listTenants({ page: 1, size: 100 })
+    tenants.value = page.items
+  } catch {
+    tenants.value = []
+  }
+}
 
 // 允许模型下拉：选项来自「模型管理」配置(留空=全部)；每次打开创建弹窗时刷新
 const modelOptions = ref<ModelItem[]>([])
@@ -129,13 +167,15 @@ async function load() {
     const data = await listApiKeys(page.value, size.value)
     keys.value = data.items
     total.value = data.total
+    await loadTenants()
   } finally {
     loading.value = false
   }
 }
 
 async function openCreate() {
-  Object.assign(form, { name: '', quota: -1, rate_limit: 10, allowed_models: [], expires_at: null })
+  Object.assign(form, { name: '', tenant_id: '', quota: -1, rate_limit: 10, allowed_models: [], expires_at: null })
+  await loadTenants()
   await refreshModelOptions()
   createDialog.value = true
 }
@@ -188,8 +228,14 @@ function closePlain() {
 // ===== 批量操作(Enterprise) =====
 const selectedIds = ref<string[]>([])
 const batchDialogVisible = ref(false)
-const batchForm = reactive({ name_prefix: '', count: 5, quota: -1 })
+const batchForm = reactive({ name_prefix: '', count: 5, tenant_id: '', quota: -1 })
 const batchPlainKeys = ref<string[]>([])
+
+async function openBatch() {
+  batchForm.tenant_id = ''
+  await loadTenants()
+  batchDialogVisible.value = true
+}
 
 async function doBatchCreate(): Promise<void> {
   if (!batchForm.name_prefix.trim()) {
@@ -215,7 +261,7 @@ async function batchRemove(): Promise<void> {
   await load()
 }
 
-onMounted(load)
+onMounted(() => { void load() })
 </script>
 
 <style scoped>

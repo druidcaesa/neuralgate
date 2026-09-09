@@ -28,6 +28,12 @@
         <template #default="{ row }">{{ formatTime(row.CreatedAt) }}</template>
       </el-table-column>
       <el-table-column prop="ModelName" label="模型" min-width="110" />
+      <el-table-column label="租户" min-width="100">
+        <template #default="{ row }">{{ tenantName(row.TenantID) }}</template>
+      </el-table-column>
+      <el-table-column label="Key" min-width="130">
+        <template #default="{ row }">{{ row.KeyMask || '-' }}</template>
+      </el-table-column>
       <el-table-column label="状态" width="90">
         <template #default="{ row }">
           <el-tag :type="row.ResponseStatus < 400 ? 'success' : 'danger'">{{ row.ResponseStatus }}</el-tag>
@@ -51,6 +57,8 @@
         <el-descriptions :column="2" border size="small">
           <el-descriptions-item label="请求ID">{{ detail.request_id }}</el-descriptions-item>
           <el-descriptions-item label="模型">{{ detail.model_name }}</el-descriptions-item>
+          <el-descriptions-item label="租户">{{ tenantName(detail.tenant_id) }}</el-descriptions-item>
+          <el-descriptions-item label="Key">{{ detail.key_mask || '-' }}</el-descriptions-item>
           <el-descriptions-item label="状态">{{ detail.response_status }}</el-descriptions-item>
           <el-descriptions-item label="Tokens">{{ detail.total_tokens }}</el-descriptions-item>
           <el-descriptions-item label="耗时(ms)">{{ detail.duration_ms }}</el-descriptions-item>
@@ -79,8 +87,9 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import { formatTime } from '../utils/time'
-import type { AuditDetail, AuditLogItem, AuditQueryParams } from '../types'
+import type { AuditDetail, AuditLogItem, AuditQueryParams, TenantItem } from '../types'
 import { listAuditLogs, getAuditDetail, auditExportURL } from '../api/audit'
+import { listTenants } from '../api/rbac'
 
 const logs = ref<AuditLogItem[]>([])
 const page = ref(1)
@@ -92,6 +101,21 @@ const detail = ref<AuditDetail | null>(null)
 const timeRange = ref<[Date, Date] | null>(null)
 
 const filters = reactive<AuditQueryParams>({ page: 1, size: 10, model_name: '', response_status: undefined, is_stream: undefined, keyword: '' })
+
+// 租户字典：审计行 tenant_id → 租户名展示(未关联/全局为空)
+const tenants = ref<TenantItem[]>([])
+function tenantName(id: string): string {
+  if (!id) return '(全局)'
+  return tenants.value.find((t) => t.id === id)?.name ?? id
+}
+async function loadTenants() {
+  try {
+    const page = await listTenants({ page: 1, size: 100 })
+    tenants.value = page.items
+  } catch {
+    tenants.value = []
+  }
+}
 
 async function load() {
   loading.value = true
@@ -141,7 +165,10 @@ function pretty(s: string): string {
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  void load()
+  void loadTenants()
+})
 </script>
 
 <style scoped>

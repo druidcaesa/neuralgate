@@ -25,6 +25,7 @@ export async function deleteApiKey(id: string): Promise<{ id: string }> {
 export interface APIKeyBatchCreatePayload {
   name_prefix: string
   count: number
+  tenant_id?: string
   quota?: number
   allowed_models?: string[]
 }

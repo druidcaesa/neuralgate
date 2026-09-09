@@ -4,8 +4,8 @@ import type { ApiResponse, Paged, PrivacyRuleItem, PrivacyWhitelistItem, Securit
 // ===== 规则库 =====
 export async function listPrivacyRules(ruleType?: string): Promise<PrivacyRuleItem[]> {
   const params = ruleType ? { rule_type: ruleType } : {}
-  const resp = await client.get<ApiResponse<PrivacyRuleItem[]>>('/privacy-rules', { params })
-  return resp.data.data ?? []
+  const resp = await client.get<ApiResponse<{ items: PrivacyRuleItem[] }>>('/privacy-rules', { params })
+  return resp.data.data?.items ?? []
 }
 
 export async function createPrivacyRule(rule: PrivacyRuleItem): Promise<{ id: string }> {
@@ -23,8 +23,8 @@ export async function deletePrivacyRule(id: string): Promise<void> {
 
 // ===== 白名单 =====
 export async function listPrivacyWhitelist(): Promise<PrivacyWhitelistItem[]> {
-  const resp = await client.get<ApiResponse<PrivacyWhitelistItem[]>>('/privacy-whitelist')
-  return resp.data.data ?? []
+  const resp = await client.get<ApiResponse<{ items: PrivacyWhitelistItem[] }>>('/privacy-whitelist')
+  return resp.data.data?.items ?? []
 }
 
 export async function createPrivacyWhitelistEntry(entry: PrivacyWhitelistItem): Promise<{ id: string }> {

@@ -57,7 +57,9 @@ export interface UpstreamRequest {
 // ===== API Key(列表 item 小写)=====
 export interface ApiKeyItem {
   id: string
+  key_mask: string
   key_prefix: string
+  tenant_id: string
   name: string
   status: string
   quota: number
@@ -96,6 +98,7 @@ export interface AuditLogItem {
   RequestID: string
   TenantID: string
   APIKeyID: string
+  KeyMask: string
   ModelName: string
   Provider: string
   RequestMethod: string
@@ -129,6 +132,8 @@ export interface AuditDetail {
   id: string
   request_id: string
   tenant_id: string
+  api_key_id: string
+  key_mask: string
   model_name: string
   provider: string
   request_body: string
@@ -273,6 +278,8 @@ export interface SecurityEventItem {
   request_id: string
   rule_name: string
   snippet: string
+  tenant_id: string
+  key_mask: string
   client_ip: string
   model_name: string
   created_at: string
@@ -364,6 +371,7 @@ export interface MCPAuditLogItem {
   request_id: string
   tenant_id: string
   api_key_id: string
+  key_mask: string
   tool_name: string
   tool_arguments: string
   tool_result: string

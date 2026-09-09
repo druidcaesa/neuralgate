@@ -34,6 +34,12 @@
           </el-tag>
         </template>
       </el-table-column>
+      <el-table-column label="租户" min-width="100">
+        <template #default="{ row }">{{ tenantName(row.tenant_id) }}</template>
+      </el-table-column>
+      <el-table-column label="Key" min-width="130">
+        <template #default="{ row }">{{ row.key_mask || '-' }}</template>
+      </el-table-column>
       <el-table-column prop="caller_agent" label="调用方" min-width="130" show-overflow-tooltip />
       <el-table-column label="耗时" width="100">
         <template #default="{ row }">{{ row.duration_ms }} ms</template>
@@ -70,7 +76,8 @@
           <el-descriptions-item label="请求 ID">{{ detail.request_id }}</el-descriptions-item>
           <el-descriptions-item label="耗时">{{ detail.duration_ms }} ms</el-descriptions-item>
           <el-descriptions-item label="调用方">{{ detail.caller_agent }}</el-descriptions-item>
-          <el-descriptions-item label="租户">{{ detail.tenant_id || '(global)' }}</el-descriptions-item>
+          <el-descriptions-item label="租户">{{ tenantName(detail.tenant_id) }}</el-descriptions-item>
+          <el-descriptions-item label="Key">{{ detail.key_mask || '-' }}</el-descriptions-item>
         </el-descriptions>
         <p v-if="detail.error_message" class="error-line">错误：{{ detail.error_message }}</p>
 
@@ -88,7 +95,8 @@
 import { onMounted, reactive, ref } from 'vue'
 import { formatTime } from '../utils/time'
 import { getMCPAuditLog, listMCPAuditLogs } from '../api/mcp'
-import type { MCPAuditLogItem } from '../types'
+import type { MCPAuditLogItem, TenantItem } from '../types'
+import { listTenants } from '../api/rbac'
 
 const rows = ref<MCPAuditLogItem[]>([])
 const total = ref(0)
@@ -98,6 +106,21 @@ const range = ref<[string, string] | null>(null)
 
 const detailVisible = ref(false)
 const detail = ref<MCPAuditLogItem | null>(null)
+
+// 租户字典：审计行 tenant_id → 租户名展示(未关联为空)
+const tenants = ref<TenantItem[]>([])
+function tenantName(id: string): string {
+  if (!id) return '(全局)'
+  return tenants.value.find((t) => t.id === id)?.name ?? id
+}
+async function loadTenants(): Promise<void> {
+  try {
+    const page = await listTenants({ page: 1, size: 100 })
+    tenants.value = page.items
+  } catch {
+    tenants.value = []
+  }
+}
 
 // JSON 美化；非合法 JSON 原样展示
 function pretty(text: string): string {
@@ -138,7 +161,10 @@ async function openDetail(row: MCPAuditLogItem): Promise<void> {
   detailVisible.value = true
 }
 
-onMounted(load)
+onMounted(() => {
+  void load()
+  void loadTenants()
+})
 </script>
 
 <style scoped>
