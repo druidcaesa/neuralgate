@@ -173,10 +173,10 @@ go build -tags enterprise -o neuralgate-enterprise ./cmd/gateway/
 
 ### 配置
 
-复制配置文件并修改：
+仓库随附参考配置 `config-bak.yaml`（密钥字段已清空，推荐经环境变量注入）。复制为本地开发配置后修改——`config.yaml` 已在 `.gitignore` 中，含本地密钥也不会误提交：
 
 ```bash
-cp config.yaml config.local.yaml
+cp config-bak.yaml config.yaml
 ```
 
 ```yaml
@@ -263,7 +263,7 @@ circuit_breaker:           # OSS：上游熔断，状态由真实流量驱动
 > **运维端点**（代理端口，免鉴权）：`/metrics`（Prometheus 文本格式，供采集）、
 > `/healthz`（存活探针）、`/readyz`（就绪探针：存储不可达或进程处于优雅下线窗口时返回 503，供负载均衡/滚动发布摘流）。
 
-> **模型配置不在 config.yaml 中**。模型通过管理后台页面（:8081）CRUD 管理，存储在数据库中，支持热更新——增删改模型后立即生效，无需重启。
+> **模型配置不存放在本地配置文件中（config.yaml / config-bak.yaml）**。模型通过管理后台页面（:8081）CRUD 管理，存储在数据库中，支持热更新——增删改模型后立即生效，无需重启。
 >
 > **集群协同（`cluster`，Enterprise）**：多副本部署且授权含 `cluster` 时启用——登录防爆破在副本间共享计数；合规报表/防篡改校验/审计外推等后台任务仅由 leader 副本执行（leader 由 Redis 租约竞选），leader 切换后审计外推从上次进度续拉、不重复导出。授权不含 `cluster` 或 Redis 不可达时自动回退单机：各副本独立运行、各自执行后台任务。
 >
@@ -274,7 +274,7 @@ circuit_breaker:           # OSS：上游熔断，状态由真实流量驱动
 ### 启动
 
 ```bash
-./neuralgate -config config.local.yaml
+./neuralgate -config config.yaml
 ```
 
 启动后：
@@ -343,7 +343,7 @@ Enterprise 授权可绑定到具体机器：**换设备后授权自动失效**�
 docker build --platform linux/amd64,linux/arm64 -t neuralgate:oss --build-arg BUILD_TAGS=oss .
 docker build --platform linux/amd64,linux/arm64 -t neuralgate:enterprise --build-arg BUILD_TAGS=enterprise .
 
-# 运行
+# 运行（先就绪本地配置: cp config-bak.yaml config.yaml，并注入密钥）
 docker run -d -p 8080:8080 -p 8081:8081 -v ./config.yaml:/etc/neuralgate/config.yaml neuralgate:oss
 ```
 
@@ -430,7 +430,7 @@ neuralgate/
 │   └── types/                          # 公共类型定义
 │       └── types.go                    # UnifiedRequest/Response/ModelConfig 等
 ├── webui/                              # 管理后台前端
-├── config.yaml                         # 配置文件模板
+├── config-bak.yaml                     # 参考配置模板（版本化，密钥经 env 注入）
 ├── go.mod
 ├── go.sum
 └── README.md

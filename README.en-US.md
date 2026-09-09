@@ -177,10 +177,10 @@ go build -tags enterprise -o neuralgate-enterprise ./cmd/gateway/
 
 ### Configuration
 
-Copy and edit the config file:
+The repo ships a reference config `config-bak.yaml` (secret fields cleared — meant to be injected via environment variables). Copy it to a local dev config and edit it: `config.yaml` is already in `.gitignore`, so a local secret kept there won't be committed accidentally:
 
 ```bash
-cp config.yaml config.local.yaml
+cp config-bak.yaml config.yaml
 ```
 
 ```yaml
@@ -272,7 +272,7 @@ circuit_breaker:           # OSS: upstream circuit breaker, state driven by real
 > returns 503 while storage is unreachable or the process is draining, for load
 > balancers / rolling deploys).
 
-> **Model configs are NOT in config.yaml.** Models are managed via the admin backend (:8081) CRUD, stored in the database, and support hot updates — add/edit/remove takes effect immediately without restart.
+> **Model configs are NOT kept in the local config file (`config.yaml` / `config-bak.yaml`).** Models are managed via the admin backend (:8081) CRUD, stored in the database, and support hot updates — add/edit/remove takes effect immediately without restart.
 >
 > **Cluster coordination (`cluster`, Enterprise)**: In a multi-replica deployment, once enabled with a license containing `cluster` — login brute-force counters are shared across replicas, and background jobs (compliance reports / tamper verification / audit export) run on the leader replica only (the leader is elected via a Redis lease). After a leader change, audit export resumes from its last exported position, so nothing is duplicated. If the license lacks `cluster` or Redis is unreachable, the gateway automatically falls back to single-node behavior: each replica runs independently and executes background jobs by itself.
 >
@@ -283,7 +283,7 @@ circuit_breaker:           # OSS: upstream circuit breaker, state driven by real
 ### Run
 
 ```bash
-./neuralgate -config config.local.yaml
+./neuralgate -config config.yaml
 ```
 
 On startup:
@@ -353,7 +353,7 @@ Notes:
 docker build --platform linux/amd64,linux/arm64 -t neuralgate:oss --build-arg BUILD_TAGS=oss .
 docker build --platform linux/amd64,linux/arm64 -t neuralgate:enterprise --build-arg BUILD_TAGS=enterprise .
 
-# Run
+# Run (create a local config first: cp config-bak.yaml config.yaml, then inject the key)
 docker run -d -p 8080:8080 -p 8081:8081 -v ./config.yaml:/etc/neuralgate/config.yaml neuralgate:oss
 ```
 
@@ -440,7 +440,7 @@ neuralgate/
 │   └── types/                          # Common type definitions
 │       └── types.go                    # UnifiedRequest/Response/ModelConfig etc.
 ├── webui/                              # Admin frontend
-├── config.yaml                         # Config template
+├── config-bak.yaml                     # Reference config template (versioned, secrets via env)
 ├── go.mod
 ├── go.sum
 └── README.md
