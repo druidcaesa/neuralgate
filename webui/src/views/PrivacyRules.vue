@@ -37,7 +37,9 @@
     <el-table v-else :data="whitelist" v-loading="loading" border>
       <el-table-column prop="pattern" label="命中正则(整体跳过隐私检查)" min-width="280" show-overflow-tooltip />
       <el-table-column prop="note" label="备注" min-width="160" show-overflow-tooltip />
-      <el-table-column prop="created_at" label="创建时间" width="170" />
+      <el-table-column label="创建时间" width="170">
+        <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
+      </el-table-column>
       <el-table-column label="操作" width="90">
         <template #default="{ row }">
           <el-popconfirm title="确认删除该白名单条目？" @confirm="removeWhitelist(row.id)">
@@ -61,14 +63,27 @@
             <el-option label="输出风控" value="output" />
           </el-select>
         </el-form-item>
-        <el-form-item label="正则">
-          <el-input v-model="form.pattern" placeholder="合法正则表达式" />
+        <div class="rule-builder">
+          <RegexPatternField
+            :key="dialogKey"
+            :rule-kind="form.rule_type"
+            v-model="form.pattern"
+            :show-replacement="form.rule_type !== 'injection'"
+            :preview-replacement="form.replacement"
+            @set-replacement="onAutoReplacement"
+          />
+        </div>
+        <el-form-item v-if="form.rule_type !== 'injection'" label="替换为">
+          <el-input
+            v-model="form.replacement"
+            maxlength="128"
+            placeholder="命中后整段替换为(字面量,不解析 $1)"
+            @update:model-value="replacementDirty = true"
+          />
+          <div class="field-hint">可视化生成会按所选类型自动填充，可手动修改。</div>
         </el-form-item>
-        <el-form-item label="替换为">
-          <el-input v-model="form.replacement" :disabled="form.rule_type === 'injection'" placeholder="字面量,不解析 $1;注入检测忽略" />
-        </el-form-item>
-        <el-form-item label="作用域">
-          <el-select v-model="form.scope" :disabled="form.rule_type === 'injection'">
+        <el-form-item v-if="form.rule_type !== 'injection'" label="作用域">
+          <el-select v-model="form.scope">
             <el-option label="请求侧" value="request" />
             <el-option label="响应侧" value="response" />
             <el-option label="双向" value="both" />
@@ -76,9 +91,13 @@
         </el-form-item>
       </el-form>
       <el-form v-else label-width="80px">
-        <el-form-item label="正则">
-          <el-input v-model="whitelistForm.pattern" placeholder="请求内容命中即跳过脱敏与注入检测" />
-        </el-form-item>
+        <div class="rule-builder">
+          <RegexPatternField
+            :key="dialogKey"
+            rule-kind="whitelist"
+            v-model="whitelistForm.pattern"
+          />
+        </div>
         <el-form-item label="备注">
           <el-input v-model="whitelistForm.note" maxlength="255" />
         </el-form-item>
@@ -94,7 +113,9 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
+import { formatTime } from '../utils/time'
 import type { PrivacyRuleItem, PrivacyWhitelistItem } from '../types'
+import RegexPatternField from '../components/RegexPatternField.vue'
 import {
   createPrivacyRule, createPrivacyWhitelistEntry, deletePrivacyRule, deletePrivacyWhitelistEntry,
   listPrivacyRules, listPrivacyWhitelist, updatePrivacyRule
@@ -107,9 +128,18 @@ const loading = ref(false)
 const saving = ref(false)
 const dialogVisible = ref(false)
 const editingId = ref('')
+// 每次打开弹窗递增，强制重挂载 RegexPatternField，按当前 pattern 决定默认模式
+const dialogKey = ref(0)
+// “替换为”是否已被手动改过：手动改过后不再被可视化生成覆盖
+const replacementDirty = ref(false)
 
 const form = reactive<PrivacyRuleItem>({ rule_type: 'pii', name: '', pattern: '', replacement: '', scope: 'both', enabled: true })
 const whitelistForm = reactive<PrivacyWhitelistItem>({ pattern: '', note: '', enabled: true })
+
+// 可视化生成推来的默认替换值：仅当用户未手动改过“替换为”时采纳
+function onAutoReplacement(v: string) {
+  if (!replacementDirty.value) form.replacement = v
+}
 
 async function load() {
   if (activeTab.value === 'whitelist') {
@@ -132,6 +162,8 @@ async function load() {
 
 function openCreate() {
   editingId.value = ''
+  dialogKey.value++
+  replacementDirty.value = false
   if (activeTab.value === 'whitelist') {
     Object.assign(whitelistForm, { pattern: '', note: '' })
   } else {
@@ -147,6 +179,8 @@ function openCreate() {
 
 function openEdit(row: PrivacyRuleItem) {
   editingId.value = row.id ?? ''
+  dialogKey.value++
+  replacementDirty.value = false
   Object.assign(form, row)
   if (row.rule_type === 'injection') form.scope = 'request'
   dialogVisible.value = true
@@ -209,4 +243,6 @@ onMounted(load)
 <style scoped>
 .toolbar { margin-bottom: 12px; display: flex; gap: 8px; }
 .tip { color: #909399; font-size: 12px; margin-top: 10px; }
+.rule-builder { margin: 6px 0 14px; }
+.field-hint { color: #909399; font-size: 12px; line-height: 1.5; margin-top: 2px; }
 </style>
