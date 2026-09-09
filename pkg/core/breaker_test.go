@@ -17,6 +17,8 @@ package core
 import (
 	"testing"
 	"time"
+
+	"github.com/druidcaesa/neuralgate/pkg/plugin"
 )
 
 // newBreaker 直接驱动单个上游状态机:与注册表条目同构,便于白盒断言状态流转
@@ -110,5 +112,43 @@ func TestRegistryAllowFiltersAndExpires(t *testing.T) {
 	}
 	if !reg.Allow("u1") {
 		t.Fatal("重新出现应重建 closed")
+	}
+}
+
+// pickHealthy 选路:剔除 open 后加权随机;全开 → (nil,true)
+func TestPickHealthyFiltersOpenAndFlagsAllBlocked(t *testing.T) {
+	now := time.Unix(1000, 0)
+	reg := NewRegistry(NewBreakerConfig(1, time.Minute, time.Second, 1, 0, func() time.Time { return now }))
+	ups := []plugin.Upstream{
+		{ID: "a", Enabled: true, Weight: 1},
+		{ID: "b", Enabled: true, Weight: 1},
+		{ID: "c", Enabled: false, Weight: 1}, // disabled 不参与
+	}
+	reg.Record("a", false) // a → open
+	sel, blocked := pickHealthy(ups, reg)
+	if blocked {
+		t.Error("存在 b 可用, 不应 blocked")
+	}
+	if sel == nil || sel.ID != "b" {
+		t.Fatalf("应只选中 b, got %+v", sel)
+	}
+
+	reg.Record("b", false) // b → open; 全部 open
+	sel, blocked = pickHealthy(ups, reg)
+	if !blocked || sel != nil {
+		t.Fatalf("全 open 应 blocked, got sel=%+v blocked=%v", sel, blocked)
+	}
+}
+
+// 注册表为 nil 时(特性关闭)行为逐字节不变:回退原 selectUpstream
+func TestPickHealthyNilRegistryFallsBack(t *testing.T) {
+	ups := []plugin.Upstream{{ID: "a", Enabled: true, Weight: 1}}
+	sel, blocked := pickHealthy(ups, nil)
+	if blocked || sel == nil || sel.ID != "a" {
+		t.Fatalf("nil 注册表应回退原选择, got %+v blocked=%v", sel, blocked)
+	}
+	sel, blocked = pickHealthy(nil, nil) // 空列表: 不 blocked, 返回 nil 由调用方回退默认上游
+	if blocked || sel != nil {
+		t.Fatalf("空列表不应 blocked, sel=%v", sel)
 	}
 }

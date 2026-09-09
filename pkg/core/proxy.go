@@ -81,6 +81,7 @@ type ProxyCore struct {
 	pipeline *Pipeline
 	registry *adapter.AdapterRegistry
 	logger   *zap.Logger // 审计链路失败等静默路径的记录器（默认 Nop）
+	breaker  *BreakerRegistry
 }
 
 // NewProxyCore 创建代理内核
@@ -93,6 +94,12 @@ func (p *ProxyCore) WithLogger(l *zap.Logger) *ProxyCore {
 	if l != nil {
 		p.logger = l
 	}
+	return p
+}
+
+// WithBreaker 注入上游熔断注册表;nil=不启用(零行为变化)。须在服务启动前调用
+func (p *ProxyCore) WithBreaker(b *BreakerRegistry) *ProxyCore {
+	p.breaker = b
 	return p
 }
 
@@ -218,11 +225,20 @@ func (p *ProxyCore) handleProxy(w http.ResponseWriter, r *http.Request, rc *Requ
 		return
 	}
 
-	// 负载均衡:选中上游覆盖默认 base_url/api_key(局部副本,不改存储)
-	if up := selectUpstream(rc.Upstreams); up != nil {
+	// 负载均衡:熔断感知选路(覆盖默认 base_url/api_key,局部副本)
+	sel, allBlocked := pickHealthy(rc.Upstreams, p.breaker)
+	if allBlocked {
+		rc.ResponseStatus = http.StatusServiceUnavailable
+		rc.EndTime = time.Now()
+		p.finalizeAudit(rc, 0, 0, 0)
+		writeEntryError(w, r, http.StatusServiceUnavailable, "api_error", "upstream_unavailable",
+			"all upstreams are temporarily unavailable")
+		return
+	}
+	if sel != nil {
 		cfgCopy := *cfg
-		cfgCopy.BaseURL = up.BaseURL
-		cfgCopy.APIKey = up.APIKey
+		cfgCopy.BaseURL = sel.BaseURL
+		cfgCopy.APIKey = sel.APIKey
 		cfg = &cfgCopy
 	}
 
@@ -279,6 +295,7 @@ func (p *ProxyCore) handleProxy(w http.ResponseWriter, r *http.Request, rc *Requ
 
 	// 2. 转发(重试)
 	resp, err := p.doWithRetry(outbound, cfg)
+	p.recordBreaker(sel, err, respStatus(resp, err))
 	if err != nil {
 		rc.ResponseStatus = http.StatusGatewayTimeout
 		rc.EndTime = time.Now()
@@ -903,10 +920,19 @@ func (p *ProxyCore) handlePassThrough(w http.ResponseWriter, r *http.Request, rc
 		return
 	}
 	// 负载均衡:透传端点也支持多上游(选中则覆盖 base_url/api_key,局部副本)
-	if up := selectUpstream(rc.Upstreams); up != nil {
+	sel, allBlocked := pickHealthy(rc.Upstreams, p.breaker)
+	if allBlocked {
+		rc.ResponseStatus = http.StatusServiceUnavailable
+		rc.EndTime = time.Now()
+		p.finalizeAudit(rc, 0, 0, 0)
+		writeOpenAIError(w, http.StatusServiceUnavailable, "api_error", "upstream_unavailable",
+			"all upstreams are temporarily unavailable")
+		return
+	}
+	if sel != nil {
 		cfgCopy := *cfg
-		cfgCopy.BaseURL = up.BaseURL
-		cfgCopy.APIKey = up.APIKey
+		cfgCopy.BaseURL = sel.BaseURL
+		cfgCopy.APIKey = sel.APIKey
 		cfg = &cfgCopy
 	}
 	body, err := io.ReadAll(r.Body)
@@ -957,6 +983,7 @@ func (p *ProxyCore) handlePassThrough(w http.ResponseWriter, r *http.Request, rc
 	outbound.Header.Set("Authorization", "Bearer "+cfg.APIKey)
 
 	resp, err := p.doWithRetry(outbound, cfg)
+	p.recordBreaker(sel, err, respStatus(resp, err))
 	if err != nil {
 		rc.ResponseStatus = http.StatusGatewayTimeout
 		rc.EndTime = time.Now()
@@ -1090,6 +1117,54 @@ func selectUpstream(ups []plugin.Upstream) *plugin.Upstream {
 		r -= w
 	}
 	return &enabled[len(enabled)-1] // 兜底(浮点/边界)
+}
+
+// pickHealthy 熔断感知选路:剔除 open 上游后在剩余(含 half-open 试探槽)里按原逻辑
+// 加权随机。reg 为 nil(特性关闭)时语义=原 selectUpstream。全部候选不可用(存在 enabled
+// 上游但全被熔断/试探槽占满)→ (nil, true) 供调用方快速 503
+func pickHealthy(ups []plugin.Upstream, reg *BreakerRegistry) (*plugin.Upstream, bool) {
+	// 先统计是否存在可参与选路的候选(任一 enabled)
+	hasEnabled := false
+	for _, u := range ups {
+		if u.Enabled {
+			hasEnabled = true
+			break
+		}
+	}
+	if !hasEnabled {
+		return nil, false // 无候选: 调用方回退默认上游(现行为)
+	}
+	if reg == nil {
+		return selectUpstream(ups), false
+	}
+	available := make([]plugin.Upstream, 0, len(ups))
+	for _, u := range ups {
+		if u.Enabled && reg.Allow(u.ID) {
+			available = append(available, u)
+		}
+	}
+	if len(available) == 0 {
+		return nil, true
+	}
+	return selectUpstream(available), false
+}
+
+// respStatus 取响应状态码;错误时为 0(供熔断失败判定)
+func respStatus(resp *http.Response, err error) int {
+	if err != nil || resp == nil {
+		return 0
+	}
+	return resp.StatusCode
+}
+
+// recordBreaker 回写熔断结果:连通且状态<500 记成功,否则失败。sel 为 nil 且未走上游
+// (blocked 分支已提前 return;此处仅 sel!=nil 时调用)为空操作
+func (p *ProxyCore) recordBreaker(sel *plugin.Upstream, err error, status int) {
+	if p.breaker == nil || sel == nil {
+		return
+	}
+	ok := err == nil && status > 0 && status < 500
+	p.breaker.Record(sel.ID, ok)
 }
 
 // passthroughEndpoints 透传端点 → 允许的 HTTP 方法集合(PRD 8.5)
