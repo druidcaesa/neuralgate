@@ -113,8 +113,10 @@ func TestAdminAPIKeyCRUD(t *testing.T) {
 	if strings.Contains(listBody, sumHex) {
 		t.Fatalf("list leaks key hash: %s", listBody)
 	}
-	if !strings.Contains(listBody, "****") {
-		t.Fatalf("list key not masked: %s", listBody)
+	// Key 掩码展示头+尾(ng-xxx…yyy),不泄露明文与中段
+	tail := created.Data.Key[len(created.Data.Key)-4:]
+	if !strings.Contains(listBody, "…") || !strings.Contains(listBody, tail) {
+		t.Fatalf("list key not masked(head+tail): %s", listBody)
 	}
 
 	// 禁用

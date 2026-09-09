@@ -72,6 +72,7 @@ type MCPAuditLog struct {
 	RequestID     string    `json:"request_id"`
 	TenantID      string    `json:"tenant_id"`
 	APIKeyID      string    `json:"api_key_id"`
+	KeyMask       string    `json:"key_mask"`
 	ToolName      string    `json:"tool_name"`
 	ToolArguments string    `json:"tool_arguments"`
 	ToolResult    string    `json:"tool_result"`
@@ -105,6 +106,7 @@ type APIKey struct {
 	ID            string       // 主键ID
 	KeyHash       string       // Key的SHA256哈希（不存明文）
 	KeyPrefix     string       // Key前缀（用于展示，如 "ng-xxxx"）
+	KeySuffix     string       // Key尾缀（末 4 hex，用于展示 ng-xxx…yyy 掩码）
 	TenantID      string       // 所属租户ID
 	TenantName    string       // 租户名称
 	Name          string       // Key名称/备注
@@ -117,6 +119,14 @@ type APIKey struct {
 	CreatedAt     time.Time    // 创建时间
 	UpdatedAt     time.Time    // 更新时间
 	CreatedBy     string       // 创建人
+}
+
+// Mask 返回可展示掩码 ng-{前8hex}…{后4hex}；前缀为空则整段为空（历史 Key 无尾缀时退化为前缀）
+func (k *APIKey) Mask() string {
+	if k.KeySuffix == "" {
+		return k.KeyPrefix
+	}
+	return k.KeyPrefix + "…" + k.KeySuffix
 }
 
 type APIKeyStatus string
@@ -153,6 +163,7 @@ type AuditLog struct {
 	RequestID         string            // 请求唯一ID
 	TenantID          string            // 租户ID
 	APIKeyID          string            // API Key ID
+	KeyMask           string            // API Key 掩码(ng-xxx…yyy,随行落库便于追踪)
 	ModelName         string            // 模型名称
 	Provider          string            // 供应商
 	RequestMethod     string            // HTTP方法
@@ -277,6 +288,8 @@ type SecurityEvent struct {
 	RequestID string    `json:"request_id"`
 	RuleName  string    `json:"rule_name"`
 	Snippet   string    `json:"snippet"` // 截断 256 字符
+	TenantID  string    `json:"tenant_id"`
+	KeyMask   string    `json:"key_mask"`
 	ClientIP  string    `json:"client_ip"`
 	ModelName string    `json:"model_name"`
 	CreatedAt time.Time `json:"created_at"`

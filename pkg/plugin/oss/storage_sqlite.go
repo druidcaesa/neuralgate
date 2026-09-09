@@ -30,6 +30,7 @@ func sqliteTableStmts() []string {
 			id TEXT PRIMARY KEY,
 			key_hash TEXT NOT NULL UNIQUE,
 			key_prefix TEXT NOT NULL DEFAULT '',
+			key_suffix TEXT NOT NULL DEFAULT '',
 			tenant_id TEXT NOT NULL DEFAULT '',
 			name TEXT NOT NULL DEFAULT '',
 			status TEXT NOT NULL DEFAULT 'active',
@@ -66,6 +67,7 @@ func sqliteTableStmts() []string {
 			request_id TEXT NOT NULL,
 			tenant_id TEXT NOT NULL DEFAULT '',
 			api_key_id TEXT NOT NULL DEFAULT '',
+			key_mask TEXT NOT NULL DEFAULT '',
 			model_name TEXT NOT NULL DEFAULT '',
 			provider TEXT NOT NULL DEFAULT '',
 			request_method TEXT NOT NULL DEFAULT '',
@@ -189,6 +191,8 @@ func sqliteTableStmts() []string {
 			request_id TEXT NOT NULL,
 			rule_name TEXT NOT NULL DEFAULT '',
 			snippet TEXT NOT NULL DEFAULT '',
+			tenant_id TEXT NOT NULL DEFAULT '',
+			key_mask TEXT NOT NULL DEFAULT '',
 			client_ip TEXT NOT NULL DEFAULT '',
 			model_name TEXT NOT NULL DEFAULT '',
 			created_at INTEGER NOT NULL
@@ -217,6 +221,7 @@ func sqliteTableStmts() []string {
 			request_id TEXT NOT NULL DEFAULT '',
 			tenant_id TEXT NOT NULL DEFAULT '',
 			api_key_id TEXT NOT NULL DEFAULT '',
+			key_mask TEXT NOT NULL DEFAULT '',
 			tool_name TEXT NOT NULL DEFAULT '',
 			tool_arguments TEXT NOT NULL DEFAULT '',
 			tool_result TEXT NOT NULL DEFAULT '',
@@ -365,6 +370,51 @@ func migrateSQLiteOperationLogColumns(db *sql.DB) error {
 		}
 		if _, err := db.Exec("ALTER TABLE admin_operation_logs ADD COLUMN " + col + " TEXT NOT NULL DEFAULT ''"); err != nil {
 			return fmt.Errorf("add column %s: %w", col, err)
+		}
+	}
+	return nil
+}
+
+// migrateSQLiteTenantTraceColumns 存量库补租户/掩码追踪列：
+// api_keys.key_suffix、audit_logs.key_mask、security_events.tenant_id/key_mask、
+// mcp_audit_logs.key_mask（审计按租户汇总与 Key 掩码展示所需；已存在则跳过）
+func migrateSQLiteTenantTraceColumns(db *sql.DB) error {
+	plans := []struct{ table, col, ddl string }{
+		{"api_keys", "key_suffix", "ALTER TABLE api_keys ADD COLUMN key_suffix TEXT NOT NULL DEFAULT ''"},
+		{"audit_logs", "key_mask", "ALTER TABLE audit_logs ADD COLUMN key_mask TEXT NOT NULL DEFAULT ''"},
+		{"security_events", "tenant_id", "ALTER TABLE security_events ADD COLUMN tenant_id TEXT NOT NULL DEFAULT ''"},
+		{"security_events", "key_mask", "ALTER TABLE security_events ADD COLUMN key_mask TEXT NOT NULL DEFAULT ''"},
+		{"mcp_audit_logs", "key_mask", "ALTER TABLE mcp_audit_logs ADD COLUMN key_mask TEXT NOT NULL DEFAULT ''"},
+	}
+	existing := map[string]map[string]bool{}
+	for _, p := range plans {
+		if existing[p.table] == nil {
+			existing[p.table] = map[string]bool{}
+			rows, err := db.Query("PRAGMA table_info(" + p.table + ")")
+			if err != nil {
+				return err
+			}
+			for rows.Next() {
+				var cid int
+				var name, ctype string
+				var notNull, pk int
+				var dfltValue interface{}
+				if err := rows.Scan(&cid, &name, &ctype, &notNull, &dfltValue, &pk); err != nil {
+					rows.Close()
+					return err
+				}
+				existing[p.table][name] = true
+			}
+			rows.Close()
+			if err := rows.Err(); err != nil {
+				return err
+			}
+		}
+		if existing[p.table][p.col] {
+			continue
+		}
+		if _, err := db.Exec(p.ddl); err != nil {
+			return fmt.Errorf("add column %s.%s: %w", p.table, p.col, err)
 		}
 	}
 	return nil

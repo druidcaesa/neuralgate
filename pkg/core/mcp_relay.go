@@ -150,6 +150,7 @@ func (r *MCPRelay) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				ID: rc.RequestID, RequestID: rc.RequestID,
 				RequestMethod: req.Method, RequestPath: req.URL.Path,
 				ClientIP: rc.ClientIP, TenantID: rc.TenantID, APIKeyID: rc.APIKeyID,
+				KeyMask:   rc.KeyMask,
 				CreatedAt: rc.StartTime,
 			},
 		})
@@ -355,6 +356,7 @@ func (r *MCPRelay) buildToolCallEntry(rc *RequestContext, callerAgent string, pa
 		RequestID:     rc.RequestID,
 		TenantID:      rc.TenantID,
 		APIKeyID:      rc.APIKeyID,
+		KeyMask:       rc.KeyMask,
 		ToolName:      params.Name,
 		ToolArguments: string(params.Arguments),
 		ToolResult:    resultText,

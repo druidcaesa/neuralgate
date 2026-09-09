@@ -55,6 +55,12 @@ func (s *AdminServer) createAPIKey(c *gin.Context) {
 	}
 	if forced := s.scopeTenant(c); forced != nil {
 		req.TenantID = *forced // 租户内用户创建的 Key 强制归属自身租户
+	} else if req.TenantID != "" {
+		// 超管可选关联租户：目标须存在(限流/审计按租户归集才有意义)
+		if _, err := s.storage.GetTenantByID(req.TenantID); err != nil {
+			Error(c, http.StatusBadRequest, 400, "tenant not found")
+			return
+		}
 	}
 	if req.ExpiresAt != nil && req.ExpiresAt.Before(time.Now()) {
 		Error(c, http.StatusBadRequest, 400, "expires_at must be in the future")
@@ -79,7 +85,8 @@ func (s *AdminServer) createAPIKey(c *gin.Context) {
 	key := &plugin.APIKey{
 		ID:            uuid.NewString(),
 		KeyHash:       hex.EncodeToString(sum[:]),
-		KeyPrefix:     rawKey[:11], // ng- + 8 hex
+		KeyPrefix:     rawKey[:11],            // ng- + 8 hex(前缀展示)
+		KeySuffix:     rawKey[len(rawKey)-4:], // 末 4 hex(掩码 ng-xxx…yyy)
 		TenantID:      req.TenantID,
 		Name:          req.Name,
 		Status:        plugin.APIKeyStatusActive,
@@ -96,8 +103,9 @@ func (s *AdminServer) createAPIKey(c *gin.Context) {
 	}
 	OK(c, gin.H{
 		"id": key.ID, "key": rawKey, "key_prefix": key.KeyPrefix,
-		"name": key.Name, "quota": key.Quota, "rate_limit": key.RateLimit,
-		"allowed_models": key.AllowedModels, "expires_at": key.ExpiresAt,
+		"tenant_id": key.TenantID, "name": key.Name, "quota": key.Quota,
+		"rate_limit": key.RateLimit, "allowed_models": key.AllowedModels,
+		"expires_at": key.ExpiresAt,
 	})
 }
 
@@ -116,7 +124,9 @@ func (s *AdminServer) listAPIKeys(c *gin.Context) {
 	}
 	type item struct {
 		ID            string     `json:"id"`
+		KeyMask       string     `json:"key_mask"` // 掩码 ng-xxx…yyy；历史 Key 无尾缀退化为前缀
 		KeyPrefix     string     `json:"key_prefix"`
+		TenantID      string     `json:"tenant_id"` // 空=全局
 		Name          string     `json:"name"`
 		Status        string     `json:"status"`
 		Quota         int64      `json:"quota"`
@@ -129,8 +139,8 @@ func (s *AdminServer) listAPIKeys(c *gin.Context) {
 	items := make([]item, 0, len(keys))
 	for _, k := range keys {
 		items = append(items, item{
-			ID: k.ID, KeyPrefix: k.KeyPrefix + "****", Name: k.Name,
-			Status: string(k.Status), Quota: k.Quota, UsedQuota: k.UsedQuota,
+			ID: k.ID, KeyMask: k.Mask(), KeyPrefix: k.KeyPrefix, TenantID: k.TenantID,
+			Name: k.Name, Status: string(k.Status), Quota: k.Quota, UsedQuota: k.UsedQuota,
 			RateLimit: k.RateLimit, AllowedModels: k.AllowedModels,
 			ExpiresAt: k.ExpiresAt, CreatedAt: k.CreatedAt,
 		})
@@ -211,6 +221,12 @@ func (s *AdminServer) batchCreateAPIKeys(c *gin.Context) {
 	}
 	if forced := s.scopeTenant(c); forced != nil {
 		req.TenantID = *forced
+	} else if req.TenantID != "" {
+		// 超管可选关联租户：目标须存在(与单键创建一致)
+		if _, err := s.storage.GetTenantByID(req.TenantID); err != nil {
+			Error(c, http.StatusBadRequest, 400, "tenant not found")
+			return
+		}
 	}
 	now := time.Now()
 	items := make([]gin.H, 0, req.Count)
@@ -225,7 +241,8 @@ func (s *AdminServer) batchCreateAPIKeys(c *gin.Context) {
 		key := &plugin.APIKey{
 			ID:            uuid.NewString(),
 			KeyHash:       hex.EncodeToString(sum[:]),
-			KeyPrefix:     rawKey[:11],
+			KeyPrefix:     rawKey[:11],            // ng- + 8 hex(前缀展示)
+			KeySuffix:     rawKey[len(rawKey)-4:], // 末 4 hex(掩码 ng-xxx…yyy)
 			TenantID:      req.TenantID,
 			Name:          req.NamePrefix + "-" + fmt.Sprintf("%02d", i),
 			Status:        plugin.APIKeyStatusActive,

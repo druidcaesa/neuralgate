@@ -73,6 +73,7 @@ func AuthMiddleware(storage plugin.StoragePlugin) Middleware {
 			}
 			rc.APIKeyID = key.ID
 			rc.TenantID = key.TenantID
+			rc.KeyMask = key.Mask()
 
 			// 状态校验(与下方 ExpiresAt 时间检查互为补充,两者都拒)
 			switch key.Status {

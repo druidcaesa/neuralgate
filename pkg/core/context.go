@@ -27,6 +27,7 @@ type RequestContext struct {
 	RequestID        string               // 全局唯一请求ID
 	TenantID         string               // 租户ID
 	APIKeyID         string               // API Key ID
+	KeyMask          string               // API Key 掩码(ng-xxx…yyy,审计随行落库)
 	ModelConfig      *plugin.ModelConfig  // 匹配到的模型配置
 	Adapter          adapter.ModelAdapter // 模型适配器实例
 	Upstreams        []plugin.Upstream    // 负载均衡上游列表(为空则用 ModelConfig 默认上游)

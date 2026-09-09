@@ -138,6 +138,17 @@ func (s *SQLStorage) Init(config map[string]interface{}) error {
 		s.db = nil
 		return fmt.Errorf("migrate model config columns: %w", err)
 	}
+	if driver == "mysql" {
+		err = migrateMySQLTenantTraceColumns(db)
+	} else if driver == "sqlite" {
+		err = migrateSQLiteTenantTraceColumns(db)
+	}
+	if err != nil {
+		_ = db.Close()
+		s.driver = ""
+		s.db = nil
+		return fmt.Errorf("migrate tenant trace columns: %w", err)
+	}
 	if driver == "mysql" || driver == "sqlite" {
 		if err := backfillOperationLogColumns(db, s.ph); err != nil {
 			_ = db.Close()
@@ -211,7 +222,7 @@ func marshalJSON(v interface{}) string {
 
 // ===== API Key 管理 =====
 
-const apiKeyCols = "id, key_hash, key_prefix, tenant_id, name, status, quota, used_quota, rate_limit, allowed_models, expires_at, created_at, updated_at, created_by, deleted"
+const apiKeyCols = "id, key_hash, key_prefix, key_suffix, tenant_id, name, status, quota, used_quota, rate_limit, allowed_models, expires_at, created_at, updated_at, created_by, deleted"
 
 func scanAPIKey(row interface{ Scan(...interface{}) error }) (*plugin.APIKey, error) {
 	var k plugin.APIKey
@@ -219,7 +230,7 @@ func scanAPIKey(row interface{ Scan(...interface{}) error }) (*plugin.APIKey, er
 	var expiresAt sql.NullString
 	var createdAt, updatedAt string
 	var deleted int
-	if err := row.Scan(&k.ID, &k.KeyHash, &k.KeyPrefix, &k.TenantID, &k.Name,
+	if err := row.Scan(&k.ID, &k.KeyHash, &k.KeyPrefix, &k.KeySuffix, &k.TenantID, &k.Name,
 		&k.Status, &k.Quota, &k.UsedQuota, &k.RateLimit, &allowedModels,
 		&expiresAt, &createdAt, &updatedAt, &k.CreatedBy, &deleted); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -258,11 +269,11 @@ func (s *SQLStorage) SaveAPIKey(key *plugin.APIKey) error {
 	updated := timeToMS(key.UpdatedAt)
 	// UPSERT 冲突更新子句:MySQL 用 VALUES(col),SQLite 用 excluded.col;
 	// 更新列与 INSERT 列(除 id/created_at)对应,deleted 随重新保存恢复为 0。
-	return s.saveUpsert(`INSERT INTO api_keys (id, key_hash, key_prefix, tenant_id, name, status, quota, used_quota, rate_limit, allowed_models, expires_at, created_at, updated_at, created_by, deleted)
-		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`, []interface{}{
-		key.ID, key.KeyHash, key.KeyPrefix, key.TenantID, key.Name, string(key.Status),
+	return s.saveUpsert(`INSERT INTO api_keys (id, key_hash, key_prefix, key_suffix, tenant_id, name, status, quota, used_quota, rate_limit, allowed_models, expires_at, created_at, updated_at, created_by, deleted)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`, []interface{}{
+		key.ID, key.KeyHash, key.KeyPrefix, key.KeySuffix, key.TenantID, key.Name, string(key.Status),
 		key.Quota, key.UsedQuota, key.RateLimit, allowed, expiresAt, created, updated, key.CreatedBy},
-		[]string{"id"}, []string{"key_hash", "key_prefix", "tenant_id", "name", "status",
+		[]string{"id"}, []string{"key_hash", "key_prefix", "key_suffix", "tenant_id", "name", "status",
 			"quota", "used_quota", "rate_limit", "allowed_models", "expires_at",
 			"updated_at", "created_by", "deleted"})
 }
@@ -484,13 +495,13 @@ func (s *SQLStorage) DeleteModelConfig(id string) error {
 
 // ===== 审计日志 =====
 
-const auditLogCols = "id, request_id, tenant_id, api_key_id, model_name, provider, request_method, request_path, request_headers, request_body, response_status, response_body, sse_chunks, prompt_tokens, completion_tokens, total_tokens, duration_ms, client_ip, is_stream, disconnected, disconnect_reason, sha256_fingerprint, created_at"
+const auditLogCols = "id, request_id, tenant_id, api_key_id, key_mask, model_name, provider, request_method, request_path, request_headers, request_body, response_status, response_body, sse_chunks, prompt_tokens, completion_tokens, total_tokens, duration_ms, client_ip, is_stream, disconnected, disconnect_reason, sha256_fingerprint, created_at"
 
 func (s *SQLStorage) scanAuditLog(row interface{ Scan(...interface{}) error }) (*plugin.AuditLog, error) {
 	var l plugin.AuditLog
 	var headers, chunks, createdAt string
 	var isStream, disconnected int
-	if err := row.Scan(&l.ID, &l.RequestID, &l.TenantID, &l.APIKeyID, &l.ModelName,
+	if err := row.Scan(&l.ID, &l.RequestID, &l.TenantID, &l.APIKeyID, &l.KeyMask, &l.ModelName,
 		&l.Provider, &l.RequestMethod, &l.RequestPath, &headers, &l.RequestBody,
 		&l.ResponseStatus, &l.ResponseBody, &chunks, &l.PromptTokens, &l.CompletionTokens,
 		&l.TotalTokens, &l.Duration, &l.ClientIP, &isStream, &disconnected,
@@ -517,9 +528,9 @@ type sqlExecer interface {
 
 func insertAuditLog(ex sqlExecer, log *plugin.AuditLog) error {
 	_, err := ex.Exec(
-		`INSERT INTO audit_logs (id, request_id, tenant_id, api_key_id, model_name, provider, request_method, request_path, request_headers, request_body, response_status, response_body, sse_chunks, prompt_tokens, completion_tokens, total_tokens, duration_ms, client_ip, is_stream, disconnected, disconnect_reason, sha256_fingerprint, created_at)
-		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		log.ID, log.RequestID, log.TenantID, log.APIKeyID, log.ModelName, log.Provider,
+		`INSERT INTO audit_logs (id, request_id, tenant_id, api_key_id, key_mask, model_name, provider, request_method, request_path, request_headers, request_body, response_status, response_body, sse_chunks, prompt_tokens, completion_tokens, total_tokens, duration_ms, client_ip, is_stream, disconnected, disconnect_reason, sha256_fingerprint, created_at)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		log.ID, log.RequestID, log.TenantID, log.APIKeyID, log.KeyMask, log.ModelName, log.Provider,
 		log.RequestMethod, log.RequestPath, marshalJSON(log.RequestHeaders), log.RequestBody,
 		log.ResponseStatus, log.ResponseBody, marshalJSON(log.SSEChunks),
 		log.PromptTokens, log.CompletionTokens, log.TotalTokens, log.Duration,
@@ -1018,7 +1029,7 @@ func (s *SQLStorage) ListPrivacyWhitelistEntries() ([]*plugin.PrivacyWhitelistEn
 	return entries, rows.Err()
 }
 
-const securityEventCols = "id, request_id, rule_name, snippet, client_ip, model_name, created_at"
+const securityEventCols = "id, request_id, rule_name, snippet, tenant_id, key_mask, client_ip, model_name, created_at"
 
 func (s *SQLStorage) SaveSecurityEvent(event *plugin.SecurityEvent) error {
 	if event.ID == "" {
@@ -1028,9 +1039,9 @@ func (s *SQLStorage) SaveSecurityEvent(event *plugin.SecurityEvent) error {
 		event.CreatedAt = time.Now()
 	}
 	if _, err := s.exec(
-		"INSERT INTO security_events ("+securityEventCols+") VALUES (?, ?, ?, ?, ?, ?, ?)",
-		event.ID, event.RequestID, event.RuleName, event.Snippet, event.ClientIP, event.ModelName,
-		timeToMS(event.CreatedAt),
+		"INSERT INTO security_events ("+securityEventCols+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		event.ID, event.RequestID, event.RuleName, event.Snippet, event.TenantID, event.KeyMask,
+		event.ClientIP, event.ModelName, timeToMS(event.CreatedAt),
 	); err != nil {
 		return fmt.Errorf("save security event: %w", err)
 	}
@@ -1055,7 +1066,8 @@ func (s *SQLStorage) ListSecurityEvents(page, size int) ([]*plugin.SecurityEvent
 	for rows.Next() {
 		e := &plugin.SecurityEvent{}
 		var createdMS int64
-		if err := rows.Scan(&e.ID, &e.RequestID, &e.RuleName, &e.Snippet, &e.ClientIP, &e.ModelName, &createdMS); err != nil {
+		if err := rows.Scan(&e.ID, &e.RequestID, &e.RuleName, &e.Snippet, &e.TenantID, &e.KeyMask,
+			&e.ClientIP, &e.ModelName, &createdMS); err != nil {
 			return nil, 0, err
 		}
 		e.CreatedAt = msToTime(createdMS)
@@ -1555,12 +1567,12 @@ func (s *SQLStorage) DeleteMCPServer(id string) error {
 
 // ===== MCP 工具调用审计(E7) =====
 
-const mcpAuditCols = "id, request_id, tenant_id, api_key_id, tool_name, tool_arguments, tool_result, caller_agent, duration_ms, status, error_message, client_ip, created_at"
+const mcpAuditCols = "id, request_id, tenant_id, api_key_id, key_mask, tool_name, tool_arguments, tool_result, caller_agent, duration_ms, status, error_message, client_ip, created_at"
 
 func scanMCPAudit(row interface{ Scan(...interface{}) error }) (*plugin.MCPAuditLog, error) {
 	e := &plugin.MCPAuditLog{}
 	var createdMS int64
-	if err := row.Scan(&e.ID, &e.RequestID, &e.TenantID, &e.APIKeyID, &e.ToolName,
+	if err := row.Scan(&e.ID, &e.RequestID, &e.TenantID, &e.APIKeyID, &e.KeyMask, &e.ToolName,
 		&e.ToolArguments, &e.ToolResult, &e.CallerAgent, &e.DurationMS,
 		&e.Status, &e.ErrorMessage, &e.ClientIP, &createdMS); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -1614,8 +1626,8 @@ func (s *SQLStorage) SaveMCPAuditLog(entry *plugin.MCPAuditLog) error {
 		entry.CreatedAt = now
 	}
 	if _, err := s.exec(
-		"INSERT INTO mcp_audit_logs ("+mcpAuditCols+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		entry.ID, entry.RequestID, entry.TenantID, entry.APIKeyID, entry.ToolName,
+		"INSERT INTO mcp_audit_logs ("+mcpAuditCols+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		entry.ID, entry.RequestID, entry.TenantID, entry.APIKeyID, entry.KeyMask, entry.ToolName,
 		entry.ToolArguments, entry.ToolResult, entry.CallerAgent, entry.DurationMS,
 		entry.Status, entry.ErrorMessage, entry.ClientIP, timeToMS(entry.CreatedAt),
 	); err != nil {

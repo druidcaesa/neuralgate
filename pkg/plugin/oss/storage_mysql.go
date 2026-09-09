@@ -28,6 +28,7 @@ func mysqlCreateTables(db *sql.DB) error {
 			id VARCHAR(64) PRIMARY KEY,
 			key_hash VARCHAR(64) NOT NULL UNIQUE,
 			key_prefix VARCHAR(32) NOT NULL DEFAULT '',
+			key_suffix VARCHAR(32) NOT NULL DEFAULT '',
 			tenant_id VARCHAR(64) NOT NULL DEFAULT '',
 			name VARCHAR(64) NOT NULL DEFAULT '',
 			status VARCHAR(16) NOT NULL DEFAULT 'active',
@@ -64,6 +65,7 @@ func mysqlCreateTables(db *sql.DB) error {
 			request_id VARCHAR(64) NOT NULL,
 			tenant_id VARCHAR(64) NOT NULL DEFAULT '',
 			api_key_id VARCHAR(64) NOT NULL DEFAULT '',
+			key_mask VARCHAR(32) NOT NULL DEFAULT '',
 			model_name VARCHAR(64) NOT NULL DEFAULT '',
 			provider VARCHAR(32) NOT NULL DEFAULT '',
 			request_method VARCHAR(16) NOT NULL DEFAULT '',
@@ -187,6 +189,8 @@ func mysqlCreateTables(db *sql.DB) error {
 			request_id VARCHAR(64) NOT NULL,
 			rule_name VARCHAR(64) NOT NULL DEFAULT '',
 			snippet VARCHAR(1024) NOT NULL DEFAULT '',
+			tenant_id VARCHAR(64) NOT NULL DEFAULT '',
+			key_mask VARCHAR(32) NOT NULL DEFAULT '',
 			client_ip VARCHAR(64) NOT NULL DEFAULT '',
 			model_name VARCHAR(64) NOT NULL DEFAULT '',
 			created_at BIGINT NOT NULL,
@@ -216,6 +220,7 @@ func mysqlCreateTables(db *sql.DB) error {
 			request_id VARCHAR(64) NOT NULL DEFAULT '',
 			tenant_id VARCHAR(64) NOT NULL DEFAULT '',
 			api_key_id VARCHAR(64) NOT NULL DEFAULT '',
+			key_mask VARCHAR(32) NOT NULL DEFAULT '',
 			tool_name VARCHAR(256) NOT NULL DEFAULT '',
 			tool_arguments LONGTEXT NOT NULL,
 			tool_result LONGTEXT NOT NULL,
@@ -364,6 +369,36 @@ func migrateMySQLOperationLogColumns(db *sql.DB) error {
 		}
 		if _, err := db.Exec("ALTER TABLE admin_operation_logs ADD COLUMN `" + col + "` VARCHAR(32) NOT NULL DEFAULT ''"); err != nil {
 			return fmt.Errorf("add column %s: %w", col, err)
+		}
+	}
+	return nil
+}
+
+// migrateMySQLTenantTraceColumns 存量库补租户/掩码追踪列：
+// api_keys.key_suffix、audit_logs.key_mask、security_events.tenant_id/key_mask、
+// mcp_audit_logs.key_mask（审计按租户汇总与 Key 掩码展示所需；information_schema 判列）
+func migrateMySQLTenantTraceColumns(db *sql.DB) error {
+	adds := []struct{ table, col, ddl string }{
+		{"api_keys", "key_suffix", "ALTER TABLE api_keys ADD COLUMN key_suffix VARCHAR(32) NOT NULL DEFAULT ''"},
+		{"audit_logs", "key_mask", "ALTER TABLE audit_logs ADD COLUMN key_mask VARCHAR(32) NOT NULL DEFAULT ''"},
+		{"security_events", "tenant_id", "ALTER TABLE security_events ADD COLUMN tenant_id VARCHAR(64) NOT NULL DEFAULT ''"},
+		{"security_events", "key_mask", "ALTER TABLE security_events ADD COLUMN key_mask VARCHAR(32) NOT NULL DEFAULT ''"},
+		{"mcp_audit_logs", "key_mask", "ALTER TABLE mcp_audit_logs ADD COLUMN key_mask VARCHAR(32) NOT NULL DEFAULT ''"},
+	}
+	for _, a := range adds {
+		var count int
+		if err := db.QueryRow(`
+			SELECT COUNT(*) FROM information_schema.COLUMNS
+			WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?`,
+			a.table, a.col,
+		).Scan(&count); err != nil {
+			return fmt.Errorf("check column %s.%s: %w", a.table, a.col, err)
+		}
+		if count > 0 {
+			continue
+		}
+		if _, err := db.Exec(a.ddl); err != nil {
+			return fmt.Errorf("add column %s.%s: %w", a.table, a.col, err)
 		}
 	}
 	return nil

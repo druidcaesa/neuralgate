@@ -236,6 +236,7 @@ func (p *ProxyCore) handleProxy(w http.ResponseWriter, r *http.Request, rc *Requ
 			Data: &plugin.AuditLog{
 				ID: rc.RequestID, RequestID: rc.RequestID,
 				TenantID: rc.TenantID, APIKeyID: rc.APIKeyID,
+				KeyMask:   rc.KeyMask,
 				ModelName: cfg.ModelName, Provider: cfg.Provider,
 				RequestMethod: rc.RequestMethod, RequestPath: rc.RequestPath,
 				RequestHeaders: rc.RequestHeaders, RequestBody: string(rc.RequestBody),
@@ -925,6 +926,7 @@ func (p *ProxyCore) handlePassThrough(w http.ResponseWriter, r *http.Request, rc
 			Data: &plugin.AuditLog{
 				ID: rc.RequestID, RequestID: rc.RequestID,
 				TenantID: rc.TenantID, APIKeyID: rc.APIKeyID,
+				KeyMask:   rc.KeyMask,
 				ModelName: cfg.ModelName, Provider: cfg.Provider,
 				RequestMethod: rc.RequestMethod, RequestPath: rc.RequestPath,
 				RequestHeaders: rc.RequestHeaders, RequestBody: string(body),

@@ -76,6 +76,7 @@ func (s *AdminServer) getAuditLog(c *gin.Context) {
 	log := logs[0]
 	resp := gin.H{
 		"id": log.ID, "request_id": log.RequestID, "tenant_id": log.TenantID,
+		"api_key_id": log.APIKeyID, "key_mask": log.KeyMask,
 		"model_name": log.ModelName, "provider": log.Provider,
 		"request_body": log.RequestBody, "response_body": log.ResponseBody,
 		"response_status": log.ResponseStatus, "sse_chunks": log.SSEChunks,
@@ -114,10 +115,10 @@ func (s *AdminServer) exportAuditLogs(c *gin.Context) {
 		c.Header("Content-Type", "text/csv")
 		c.Header("Content-Disposition", "attachment; filename=audit-logs.csv")
 		cw := csv.NewWriter(c.Writer)
-		_ = cw.Write([]string{"id", "request_id", "tenant_id", "model_name", "response_status", "total_tokens", "duration_ms", "is_stream", "created_at"})
+		_ = cw.Write([]string{"id", "request_id", "tenant_id", "api_key_id", "key_mask", "model_name", "response_status", "total_tokens", "duration_ms", "is_stream", "created_at"})
 		for _, l := range all {
 			_ = cw.Write([]string{
-				l.ID, l.RequestID, l.TenantID, l.ModelName,
+				l.ID, l.RequestID, l.TenantID, l.APIKeyID, l.KeyMask, l.ModelName,
 				strconv.Itoa(l.ResponseStatus), strconv.Itoa(l.TotalTokens),
 				strconv.FormatInt(l.Duration, 10), strconv.FormatBool(l.IsStream),
 				l.CreatedAt.Format(time.RFC3339),
