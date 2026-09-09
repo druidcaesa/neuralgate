@@ -192,7 +192,7 @@ func main() {
 	}
 
 	// 12. 合规运维（compliance 门控，接线随构建版本；报表调度 + 手动补生成注入）
-	stopCompliance := setupCompliance(gate, *cfg, storage, logger, adminServer)
+	complianceJob := setupCompliance(gate, *cfg, storage, logger, adminServer)
 
 	// 13. MCP 中继（通道 OSS+ 恒可用；审计随构建版本与 mcp_audit 门控）
 	// 须在 acceptor 创建（pipeline.Build 快照链）之前挂载
@@ -228,8 +228,29 @@ func main() {
 		}
 	}
 
-	// 9. 审计防篡改（tamper_proof 门控，接线随构建版本）
-	stopTamper := setupTamper(gate, auditor, storage, cfg.Audit, logger)
+	// 9. 审计防篡改（tamper_proof 门控，接线随构建版本；工厂仅构造,启动见统一启停块）
+	tamperJob := setupTamper(gate, auditor, storage, cfg.Audit, logger)
+
+	// 后台任务统一启停:setupCluster 返回 stop → Coordinator 按 leader 启停各任务;
+	// 返回 nil(未启用/OSS/Redis 降级) → 单机直接全量 Start(今天的行为)
+	jobs := []jobHandle{tamperJob, complianceJob}
+	var stopJobs func()
+	if stop := setupCluster(gate, *cfg, adminServer, exporter, exportStarted, jobs, logger); stop != nil {
+		stopJobs = stop
+	} else {
+		for _, j := range jobs {
+			if j != nil {
+				j.Start()
+			}
+		}
+		stopJobs = func() {
+			for _, j := range jobs {
+				if j != nil {
+					j.Stop()
+				}
+			}
+		}
+	}
 
 	// 10. 数据隐私合规（privacy 门控，接线随构建版本；无后台任务故无需停止函数）
 	setupPrivacy(gate, *cfg, pipeline, auditor, storage, logger)
@@ -349,11 +370,8 @@ func main() {
 	} else {
 		logger.Info("管理后台已关闭", zap.String("addr", cfg.Server.AdminAddr))
 	}
-	if stopTamper != nil {
-		stopTamper() // 先停校验/清理任务，再落库尾部日志
-	}
-	if stopCompliance != nil {
-		stopCompliance() // 停报表调度循环，避免关闭中的存储被继续查询
+	if stopJobs != nil {
+		stopJobs() // 停防篡改/合规:集群经 Coordinator 让出 leader 并 Stop;单机直接 Stop
 	}
 	if err := auditor.Shutdown(); err != nil {
 		logger.Warn("审计管道关闭异常", zap.Error(err))

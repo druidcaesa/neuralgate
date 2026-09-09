@@ -17,8 +17,10 @@ package main
 import (
 	"testing"
 
+	"github.com/druidcaesa/neuralgate/pkg/config"
 	"github.com/druidcaesa/neuralgate/pkg/core"
 	"github.com/druidcaesa/neuralgate/pkg/license"
+	"go.uber.org/zap"
 )
 
 // featureGate 测试用固定清单门控
@@ -145,5 +147,14 @@ func TestShouldStartDistributedRateLimit(t *testing.T) {
 	other := featureGate{license.FeaturePrivacy: true}
 	if ok, _ := shouldStartDistributedRateLimit(other, true); ok {
 		t.Error("仅含其他功能不应启动")
+	}
+}
+
+// TestClusterOssStub setupCluster 在集群未启用时恒返回 nil → 调用方走单机全量启动(降级)。
+// 无 build tag:OSS/enterprise 双构建均编译并运行——OSS 版为恒 nil stub;
+// enterprise 版因 config.Default() 的 Cluster.Enabled=false 在门控处短路,同样应返回 nil(不触 Redis)
+func TestClusterOssStub(t *testing.T) {
+	if stop := setupCluster(core.NopGate(), *config.Default(), nil, nil, false, nil, zap.NewNop()); stop != nil {
+		t.Fatal("集群未启用/OSS 下 setupCluster 应为 nil(降级单机)")
 	}
 }

@@ -31,10 +31,10 @@ func newPluginFactory() plugin.PluginFactory {
 	return enterprise.NewPluginFactory()
 }
 
-// setupTamper 注入指纹钩子并启动哈希校验任务；未满足门控条件时记录原因并返回 nil。
-// 返回的停止函数须在 auditor.Shutdown 之前调用
+// setupTamper 注入指纹钩子并构造防篡改校验任务(不启动),返回句柄;门控不满足返回 nil。
+// 集群时由 Coordinator 按 leader 启停,单机由 main 直接 Start
 func setupTamper(gate core.LicenseGate, auditor plugin.AuditPipeline,
-	storage plugin.StoragePlugin, cfg config.AuditConfig, logger *zap.Logger) func() {
+	storage plugin.StoragePlugin, cfg config.AuditConfig, logger *zap.Logger) jobHandle {
 	setter, can := auditor.(plugin.FingerprintHook)
 	if !can {
 		logger.Warn("审计器不支持指纹注入")
@@ -52,13 +52,8 @@ func setupTamper(gate core.LicenseGate, auditor plugin.AuditPipeline,
 		return enterprise.Fingerprint(cfg.FingerprintAlgo, log)
 	})
 	// 留存清理已迁移至共享 startLogRetention(OSS/enterprise 统一);tamper 仅保留哈希校验
-	tasks := enterprise.NewTasks(storage, cfg.FingerprintAlgo,
+	return enterprise.NewTasks(storage, cfg.FingerprintAlgo,
 		cfg.VerifyInterval, cfg.VerifyBatchSize, logger)
-	tasks.Start()
-	logger.Info("审计防篡改已启用",
-		zap.String("algo", cfg.FingerprintAlgo),
-		zap.Duration("verify_interval", cfg.VerifyInterval))
-	return tasks.Stop
 }
 
 // setupDistributedRateLimit 分布式限流装配：门控满足时以 Redis 集中计数

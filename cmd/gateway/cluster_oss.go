@@ -17,21 +17,15 @@
 package main
 
 import (
+	"github.com/druidcaesa/neuralgate/pkg/admin"
 	"github.com/druidcaesa/neuralgate/pkg/config"
 	"github.com/druidcaesa/neuralgate/pkg/core"
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
-	"github.com/druidcaesa/neuralgate/pkg/plugin/oss"
 	"go.uber.org/zap"
 )
 
-const edition = "oss"
-
-// newPluginFactory 由 BuildTag 决定返回哪个版本的插件工厂
-func newPluginFactory() plugin.PluginFactory {
-	return oss.NewPluginFactory()
-}
-
-// setupTamper OSS 版无防篡改能力，恒返回 nil(签名与 enterprise 版一致)
-func setupTamper(core.LicenseGate, plugin.AuditPipeline, plugin.StoragePlugin, config.AuditConfig, *zap.Logger) jobHandle {
+// setupCluster OSS 版无集群能力,恒返回 nil(签名与 enterprise 版一致;不 import enterprise)
+func setupCluster(core.LicenseGate, config.Config, *admin.AdminServer,
+	plugin.LogExporter, bool, []jobHandle, *zap.Logger) func() {
 	return nil
 }
