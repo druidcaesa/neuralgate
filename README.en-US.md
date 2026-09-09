@@ -187,12 +187,14 @@ storage:
   driver: mysql
 
   # REQUIRED! Encryption key for upstream API keys; startup fails when missing.
-  # Generate with: openssl rand -hex 32
+  # Recommended: inject via the NEURALGATE_STORAGE_ENCRYPT_KEY env var to avoid
+  # keeping the secret in a committed file (generate with: openssl rand -hex 32)
   encrypt_key: ""
 
-  # Env overrides (take precedence over this file): NEURALGATE_PROXY_ADDR /
-  # NEURALGATE_ADMIN_ADDR / NEURALGATE_STORAGE_DSN / NEURALGATE_LOG_LEVEL /
-  # NEURALGATE_ADMIN_BOOTSTRAP_PASSWORD
+  # Env overrides (take precedence over this file):
+  # NEURALGATE_PROXY_ADDR / NEURALGATE_ADMIN_ADDR / NEURALGATE_STORAGE_DSN /
+  # NEURALGATE_LOG_LEVEL / NEURALGATE_ADMIN_BOOTSTRAP_PASSWORD /
+  # NEURALGATE_STORAGE_ENCRYPT_KEY / NEURALGATE_REDIS_PASSWORD / NEURALGATE_ADMIN_SESSION_SECRET
 
   # ----- MySQL (default, OSS+Enterprise) -----
   dsn: "user:pass@tcp(host:3306)/neuralgate?charset=utf8mb4"
@@ -218,7 +220,7 @@ audit:
   batch_size: 100
   flush_interval: 5s
   enable_sha256: true       # Enterprise
-  retention_days: 90
+  retention_days: 90        # unified retention for audit/security-event/MCP-audit/operation logs (OSS+Enterprise); 0=default 90, -1=disable
 
 rate_limit:
   strategy: token_bucket
@@ -235,11 +237,13 @@ log:
 ```
 
 > **Security notice**: `encrypt_key` is mandatory as of this release (built-in
-> default removed). Add it to your config before upgrading, otherwise the
-> gateway refuses to start.
+> default removed). Add it to your config before upgrading (or inject via the
+> `NEURALGATE_STORAGE_ENCRYPT_KEY` env var), otherwise the gateway refuses to start.
 >
-> **Ops endpoint**: the proxy port serves `/metrics` (Prometheus text format,
-> unauthenticated) for scraping.
+> **Ops endpoints** (proxy port, unauthenticated): `/metrics` (Prometheus text
+> format, for scraping), `/healthz` (liveness), and `/readyz` (readiness —
+> returns 503 while storage is unreachable or the process is draining, for load
+> balancers / rolling deploys).
 
 > **Model configs are NOT in config.yaml.** Models are managed via the admin backend (:8081) CRUD, stored in the database, and support hot updates — add/edit/remove takes effect immediately without restart.
 
@@ -272,7 +276,9 @@ curl http://127.0.0.1:8081/api/models -H 'X-Admin-Token: <token>'
 Notes:
 
 - Admin credentials are stored in the database; no passwords are kept in config files
-- Re-login is required after service restart; rotate your credential via "Change Password" in the top-right menu
+- By default the session signing key is random per process, so re-login is required after a restart. To share sessions across replicas (multi-node deployments), set the same `admin.session_secret` on every replica (recommended: inject via `NEURALGATE_ADMIN_SESSION_SECRET`) — sessions then survive restarts and are accepted by any replica
+- Session lifetime defaults to 24h; tune it with `admin.session_ttl`
+- Rotate your credential via "Change Password" in the top-right menu
 - CORS is disabled by default (same-origin deployment); for cross-origin access, configure the `admin.allowed_origins` whitelist
 
 ### Commercial License (Device-Bound)

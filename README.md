@@ -186,12 +186,14 @@ storage:
   # 可选值: mysql(默认) / sqlite / dm(Enterprise) / kingbase(Enterprise)
   driver: mysql
 
-  # 必填！上游 API Key 的加密密钥，缺失时启动失败
-  # 生成方式: openssl rand -hex 32
+  # 必填！上游 API Key 的加密密钥，缺失时启动失败；推荐经环境变量注入以免明文落配置
+  # NEURALGATE_STORAGE_ENCRYPT_KEY（本地生成: openssl rand -hex 32）
   encrypt_key: ""
 
-  # 环境变量覆盖(优先于本文件): NEURALGATE_PROXY_ADDR / NEURALGATE_ADMIN_ADDR /
-  # NEURALGATE_STORAGE_DSN / NEURALGATE_LOG_LEVEL / NEURALGATE_ADMIN_BOOTSTRAP_PASSWORD
+  # 环境变量覆盖(优先于本文件):
+  # NEURALGATE_PROXY_ADDR / NEURALGATE_ADMIN_ADDR / NEURALGATE_STORAGE_DSN /
+  # NEURALGATE_LOG_LEVEL / NEURALGATE_ADMIN_BOOTSTRAP_PASSWORD /
+  # NEURALGATE_STORAGE_ENCRYPT_KEY / NEURALGATE_REDIS_PASSWORD / NEURALGATE_ADMIN_SESSION_SECRET
 
   # ----- MySQL (默认，OSS+Enterprise 均可用) -----
   dsn: "user:pass@tcp(host:3306)/neuralgate?charset=utf8mb4"
@@ -217,7 +219,7 @@ audit:
   batch_size: 100
   flush_interval: 5s
   enable_sha256: true       # Enterprise
-  retention_days: 90
+  retention_days: 90        # 审计/安全事件/MCP审计/操作日志统一留存(OSS+Enterprise 均生效)；0=默认90,-1=禁用
 
 rate_limit:
   strategy: token_bucket
@@ -234,9 +236,10 @@ log:
 ```
 
 > **安全提示**：`encrypt_key` 自本版本起必须显式配置（已移除内置默认值），
-> 升级部署时请在配置文件中补充该字段，否则网关将拒绝启动。
+> 升级部署时请在配置文件中补充该字段（或经环境变量 `NEURALGATE_STORAGE_ENCRYPT_KEY` 注入），否则网关将拒绝启动。
 >
-> **运维端点**：代理端口暴露 `/metrics`（Prometheus 文本格式，免鉴权）供采集。
+> **运维端点**（代理端口，免鉴权）：`/metrics`（Prometheus 文本格式，供采集）、
+> `/healthz`（存活探针）、`/readyz`（就绪探针：存储不可达或进程处于优雅下线窗口时返回 503，供负载均衡/滚动发布摘流）。
 
 > **模型配置不在 config.yaml 中**。模型通过管理后台页面（:8081）CRUD 管理，存储在数据库中，支持热更新——增删改模型后立即生效，无需重启。
 
@@ -269,7 +272,9 @@ curl http://127.0.0.1:8081/api/models -H 'X-Admin-Token: <token>'
 说明：
 
 - 管理后台登录凭证保存在数据库中，配置文件不存放任何密码
-- 服务重启后需重新登录；可在页面右上角「修改密码」处轮换凭证
+- 默认会话签名密钥每进程随机，服务重启后需重新登录；多副本共享会话时，为各副本配置同一 `admin.session_secret`（建议经环境变量 `NEURALGATE_ADMIN_SESSION_SECRET` 注入），会话跨副本互认且重启不失效
+- 会话有效期默认 24h，可用 `admin.session_ttl` 调整
+- 可在页面右上角「修改密码」处轮换凭证
 - CORS 默认关闭（同源部署）；跨域场景在 `admin.allowed_origins` 配置白名单
 
 ### 商业授权（设备绑定）
