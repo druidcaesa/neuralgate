@@ -37,6 +37,7 @@ const (
 	// FeatureDistributedRateLimit 分布式限流(Redis 集中计数,多实例共享配额)
 	FeatureDistributedRateLimit = "distributed_ratelimit"
 	FeatureDomesticDB           = "domestic_db" // 信创数据库存储
+	FeatureCluster              = "cluster"     // 集群协同:共享登录防爆破 + 后台任务选主
 )
 
 // CanonicalPayload 将授权信息中除签名外的全部字段做确定性序列化，作为签名载荷。

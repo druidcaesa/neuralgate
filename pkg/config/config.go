@@ -17,6 +17,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -24,21 +25,23 @@ import (
 
 // Config 系统级配置（不含模型配置，模型配置存储在数据库中）
 type Config struct {
-	Server     ServerConfig     `yaml:"server"`
-	Storage    StorageConfig    `yaml:"storage"`
-	Audit      AuditConfig      `yaml:"audit"`
-	RateLimit  RateLimitConfig  `yaml:"rate_limit"`
-	Export     ExportConfig     `yaml:"export"`
-	Privacy    PrivacyConfig    `yaml:"privacy"`
-	RBAC       RBACConfig       `yaml:"rbac"`
-	Compliance ComplianceConfig `yaml:"compliance"`
-	MCPAudit   MCPAuditConfig   `yaml:"mcp_audit"`
-	License    LicenseConfig    `yaml:"license"`
-	Admin      AdminConfig      `yaml:"admin"`
-	Log        LogConfig        `yaml:"log"`
-	IPFilter   IPFilterConfig   `yaml:"ip_filter"`
-	Security   SecurityConfig   `yaml:"security"`
-	TLS        TLSConfig        `yaml:"tls"`
+	Server         ServerConfig         `yaml:"server"`
+	Storage        StorageConfig        `yaml:"storage"`
+	Audit          AuditConfig          `yaml:"audit"`
+	RateLimit      RateLimitConfig      `yaml:"rate_limit"`
+	Export         ExportConfig         `yaml:"export"`
+	Privacy        PrivacyConfig        `yaml:"privacy"`
+	RBAC           RBACConfig           `yaml:"rbac"`
+	Compliance     ComplianceConfig     `yaml:"compliance"`
+	MCPAudit       MCPAuditConfig       `yaml:"mcp_audit"`
+	License        LicenseConfig        `yaml:"license"`
+	Admin          AdminConfig          `yaml:"admin"`
+	Log            LogConfig            `yaml:"log"`
+	IPFilter       IPFilterConfig       `yaml:"ip_filter"`
+	Security       SecurityConfig       `yaml:"security"`
+	TLS            TLSConfig            `yaml:"tls"`
+	Cluster        ClusterConfig        `yaml:"cluster"`         // Enterprise:cluster 授权
+	CircuitBreaker CircuitBreakerConfig `yaml:"circuit_breaker"` // OSS 上游熔断
 }
 
 // PrivacyConfig 隐私合规配置（Enterprise：需 privacy 授权）
@@ -117,6 +120,34 @@ type DistributedRateLimitConfig struct {
 	RedisAddr     string `yaml:"redis_addr"`
 	RedisPassword string `yaml:"redis_password"`
 	RedisDB       int    `yaml:"redis_db"`
+}
+
+// ClusterConfig 集群协同(Enterprise:cluster 授权)。多副本共享登录防爆破计数
+// 与后台任务选主;缺授权或 Redis 不可达时回退单机行为。bool 不参与 applyDefaults
+type ClusterConfig struct {
+	Enabled       bool          `yaml:"enabled"`
+	RedisAddr     string        `yaml:"redis_addr"`
+	RedisPassword string        `yaml:"redis_password"`
+	RedisDB       int           `yaml:"redis_db"`
+	LeaseTTL      time.Duration `yaml:"lease_ttl"` // leader 租约有效期;<=0 取默认 20s
+}
+
+// CircuitBreakerConfig 上游熔断(OSS):失败感知剔除死上游,全部熔断时快速 503。
+// 状态由真实流量驱动;可选主动健康探针(默认关)。bool 字段不参与 applyDefaults
+type CircuitBreakerConfig struct {
+	Enabled          bool              `yaml:"enabled"`
+	FailureThreshold int               `yaml:"failure_threshold"` // 采样窗内失败数→open
+	OpenFor          time.Duration     `yaml:"open_for"`          // open 时长后→half-open
+	SuccessThreshold int               `yaml:"success_threshold"` // half-open 连续成功数→closed
+	SampleWindow     time.Duration     `yaml:"sample_window"`     // 失败计数窗口
+	HealthProbe      HealthProbeConfig `yaml:"health_probe"`
+}
+
+// HealthProbeConfig 主动探活(默认关):仅测连通性,任何 HTTP 响应视为可达
+type HealthProbeConfig struct {
+	Enabled  bool          `yaml:"enabled"`
+	Interval time.Duration `yaml:"interval"`
+	Path     string        `yaml:"path"`
 }
 
 type ExportConfig struct {
@@ -208,6 +239,12 @@ func Default() *Config {
 		},
 		IPFilter: IPFilterConfig{Mode: "disabled"},
 		TLS:      TLSConfig{MinVersion: "1.2"},
+		Cluster:  ClusterConfig{LeaseTTL: 20 * time.Second},
+		CircuitBreaker: CircuitBreakerConfig{
+			FailureThreshold: 5, OpenFor: 30 * time.Second, SuccessThreshold: 2,
+			SampleWindow: time.Minute,
+			HealthProbe:  HealthProbeConfig{Interval: 15 * time.Second, Path: "/healthz"},
+		},
 	}
 }
 
@@ -257,6 +294,17 @@ func (c *Config) applyEnvOverrides() {
 	if v, ok := envStr("REDIS_PASSWORD"); ok {
 		c.RateLimit.Distributed.RedisPassword = v
 	}
+	if v, ok := envStr("CLUSTER_REDIS_ADDR"); ok {
+		c.Cluster.RedisAddr = v
+	}
+	if v, ok := envStr("CLUSTER_REDIS_PASSWORD"); ok {
+		c.Cluster.RedisPassword = v
+	}
+	if v, ok := envStr("CLUSTER_REDIS_DB"); ok {
+		if n, err := strconv.Atoi(v); err == nil {
+			c.Cluster.RedisDB = n
+		}
+	}
 }
 
 // Validate 安全校验：encrypt_key 必须显式提供——内置默认密钥等于公开密钥，
@@ -291,6 +339,8 @@ func (c *Config) applyDefaults() {
 	if c.TLS.MinVersion == "" {
 		c.TLS.MinVersion = d.TLS.MinVersion
 	}
+	c.Cluster.apply(d.Cluster)
+	c.CircuitBreaker.apply(d.CircuitBreaker)
 }
 
 // apply 零值字段回填默认值（bool 字段不处理）
@@ -406,5 +456,39 @@ func (s *LogConfig) apply(d LogConfig) {
 	}
 	if s.Output == "" {
 		s.Output = d.Output
+	}
+}
+
+// apply 零值字段回填默认值(bool 字段不处理)
+func (s *ClusterConfig) apply(d ClusterConfig) {
+	if s.RedisAddr == "" {
+		s.RedisAddr = d.RedisAddr
+	}
+	if s.RedisDB == 0 {
+		s.RedisDB = d.RedisDB
+	}
+	if s.LeaseTTL <= 0 {
+		s.LeaseTTL = d.LeaseTTL
+	}
+}
+
+func (s *CircuitBreakerConfig) apply(d CircuitBreakerConfig) {
+	if s.FailureThreshold == 0 {
+		s.FailureThreshold = d.FailureThreshold
+	}
+	if s.OpenFor <= 0 {
+		s.OpenFor = d.OpenFor
+	}
+	if s.SuccessThreshold == 0 {
+		s.SuccessThreshold = d.SuccessThreshold
+	}
+	if s.SampleWindow <= 0 {
+		s.SampleWindow = d.SampleWindow
+	}
+	if s.HealthProbe.Interval <= 0 {
+		s.HealthProbe.Interval = d.HealthProbe.Interval
+	}
+	if s.HealthProbe.Path == "" {
+		s.HealthProbe.Path = d.HealthProbe.Path
 	}
 }

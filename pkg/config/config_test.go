@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLoadCompleteFile(t *testing.T) {
@@ -285,5 +286,62 @@ func TestValidateShortSessionSecret(t *testing.T) {
 	cfg.Admin.SessionSecret = "" // 留空(进程随机)应通过
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("空 session_secret 应通过, got %v", err)
+	}
+}
+
+// TestClusterAndBreakerConfig 解析 cluster/circuit_breaker 块并验证零值兜底
+func TestClusterAndBreakerConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cb.yaml")
+	os.WriteFile(path, []byte(`
+cluster:
+  enabled: true
+  redis_addr: "127.0.0.1:6399"
+  redis_db: 2
+  lease_ttl: 15s
+circuit_breaker:
+  enabled: true
+  failure_threshold: 3
+  open_for: 12s
+  health_probe:
+    enabled: true
+    interval: 9s
+    path: /live
+`), 0o644)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Cluster.Enabled || cfg.Cluster.RedisAddr != "127.0.0.1:6399" || cfg.Cluster.RedisDB != 2 ||
+		cfg.Cluster.LeaseTTL != 15*time.Second {
+		t.Errorf("cluster 解析不符: %+v", cfg.Cluster)
+	}
+	if !cfg.CircuitBreaker.Enabled || cfg.CircuitBreaker.FailureThreshold != 3 ||
+		cfg.CircuitBreaker.OpenFor != 12*time.Second ||
+		!cfg.CircuitBreaker.HealthProbe.Enabled || cfg.CircuitBreaker.HealthProbe.Interval != 9*time.Second ||
+		cfg.CircuitBreaker.HealthProbe.Path != "/live" {
+		t.Errorf("circuit_breaker 解析不符: %+v", cfg.CircuitBreaker)
+	}
+	// 未设置字段(Enabled=false 之外的数值)应用默认
+	cfg2 := Default()
+	if cfg2.CircuitBreaker.FailureThreshold != 5 || cfg2.CircuitBreaker.OpenFor != 30*time.Second ||
+		cfg2.CircuitBreaker.SuccessThreshold != 2 || cfg2.CircuitBreaker.SampleWindow != time.Minute ||
+		cfg2.CircuitBreaker.HealthProbe.Interval != 15*time.Second ||
+		cfg2.CircuitBreaker.HealthProbe.Path != "/healthz" {
+		t.Errorf("breaker 默认不符: %+v", cfg2.CircuitBreaker)
+	}
+	if cfg2.Cluster.LeaseTTL != 20*time.Second {
+		t.Errorf("cluster 默认 lease_ttl 不符: %v", cfg2.Cluster.LeaseTTL)
+	}
+}
+
+// TestClusterEnvOverrides cluster Redis env 白名单
+func TestClusterEnvOverrides(t *testing.T) {
+	cfg := Default()
+	t.Setenv("NEURALGATE_CLUSTER_REDIS_ADDR", "10.0.0.8:6379")
+	t.Setenv("NEURALGATE_CLUSTER_REDIS_PASSWORD", "p")
+	t.Setenv("NEURALGATE_CLUSTER_REDIS_DB", "7")
+	cfg.applyEnvOverrides()
+	if cfg.Cluster.RedisAddr != "10.0.0.8:6379" || cfg.Cluster.RedisPassword != "p" || cfg.Cluster.RedisDB != 7 {
+		t.Errorf("cluster env 覆盖未生效: %+v", cfg.Cluster)
 	}
 }
