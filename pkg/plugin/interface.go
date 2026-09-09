@@ -30,6 +30,7 @@ type ModelConfig struct {
 	MaxRetries    int               // 最大重试次数
 	RetryInterval time.Duration     // 重试间隔
 	Weight        int               // 负载均衡权重
+	MaxTokens     int               // 默认 max_tokens(0=客户端不带则不注入;客户端显式值优先)
 	Enabled       bool              // 是否启用
 	Tags          map[string]string // 扩展标签
 	CreatedAt     time.Time         // 创建时间
@@ -288,6 +289,8 @@ type AdminOperationLog struct {
 	Username   string    `json:"username"`
 	Method     string    `json:"method"`
 	Path       string    `json:"path"`
+	Module     string    `json:"module"`    // 功能模块文案，写时由 ClassifyOperation 打标
+	Action     string    `json:"action"`    // 操作类型文案，写时由 ClassifyOperation 打标
 	TargetID   string    `json:"target_id"` // 路由 :id 参数，无则空
 	StatusCode int       `json:"status_code"`
 	ClientIP   string    `json:"client_ip"`
@@ -297,6 +300,8 @@ type AdminOperationLog struct {
 // AdminOpLogFilter 操作日志查询过滤
 type AdminOpLogFilter struct {
 	UserID string
+	Module string // 功能模块等值过滤，空=不过滤
+	Action string // 操作类型等值过滤，空=不过滤
 }
 
 // 报表周期类型取值（compliance_reports.period_type）
