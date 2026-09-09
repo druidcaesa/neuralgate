@@ -134,3 +134,24 @@ func TestServeMetricsExposition(t *testing.T) {
 		}
 	}
 }
+
+// TestBreakerGauge 快照写入 ng_upstream_state gauge:0 closed/1 open/2 half-open;消亡上游标签清理
+func TestBreakerGauge(t *testing.T) {
+	m := NewMetrics()
+	m.SetBreakerGauge(map[string]int{"u1": 0, "u2": 1, "u3": 2})
+	got := gatherAll(t, m)
+	for k, v := range map[string]float64{
+		"ng_upstream_state{upstream=u1}": 0,
+		"ng_upstream_state{upstream=u2}": 1,
+		"ng_upstream_state{upstream=u3}": 2,
+	} {
+		if got[k] != v {
+			t.Errorf("指标 %s 应为 %v,实际 %v", k, v, got[k])
+		}
+	}
+	// 快照不再含 u3(上游过期清扫后)→ 对应系列应被删除,防陈旧标签
+	m.SetBreakerGauge(map[string]int{"u1": 0, "u2": 1})
+	if _, ok := gatherAll(t, m)["ng_upstream_state{upstream=u3}"]; ok {
+		t.Error("消亡上游 u3 的 gauge 应被清理")
+	}
+}

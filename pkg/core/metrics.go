@@ -48,6 +48,9 @@ type Metrics struct {
 	modelDur    *prometheus.HistogramVec // ng_model_request_duration_seconds{model,provider}
 	modelTokens *prometheus.CounterVec   // ng_model_tokens_total{model}
 	tokensTotal prometheus.Counter       // ng_tokens_total
+
+	upstreamState *prometheus.GaugeVec // ng_upstream_state{upstream}:0 closed/1 open/2 half-open
+	upstreamIDs   map[string]struct{}  // 已登记上游集合(供清理消亡标签);唯一写入方是 SetBreakerGauge
 }
 
 // NewMetrics 创建指标集(每个实例独立 registry,互不冲突)
@@ -83,9 +86,34 @@ func NewMetrics() *Metrics {
 		Name: "ng_tokens_total",
 		Help: "转发消耗 Token 总数",
 	})
-	m.reg.MustRegister(m.reqs, m.inflight, m.durAll, m.modelReqs, m.modelDur, m.modelTokens, m.tokensTotal)
+	m.upstreamState = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "ng_upstream_state",
+		Help: "上游熔断状态:0 closed/1 open/2 half-open(标签随请求惰性建立)",
+	}, []string{"upstream"})
+	m.upstreamIDs = make(map[string]struct{})
+	m.reg.MustRegister(m.reqs, m.inflight, m.durAll, m.modelReqs, m.modelDur,
+		m.modelTokens, m.tokensTotal, m.upstreamState) // 原列表基础上追加 m.upstreamState
 	m.handler = promhttp.HandlerFor(m.reg, promhttp.HandlerOpts{})
 	return m
+}
+
+// SetBreakerGauge 按注册表快照刷新各上游熔断状态 gauge;对不再出现于新快照的上游
+// (注册表空闲清扫后)删除标签防陈旧。仅由 /metrics 采集处理调用(单写入方),不触碰
+// WrapOuter/Observability 的写路径,故无需加锁。
+func (m *Metrics) SetBreakerGauge(snap map[string]int) {
+	if m.upstreamState == nil {
+		return
+	}
+	for id := range m.upstreamIDs {
+		if _, ok := snap[id]; !ok {
+			m.upstreamState.DeleteLabelValues(id)
+			delete(m.upstreamIDs, id)
+		}
+	}
+	for id, v := range snap {
+		m.upstreamState.WithLabelValues(id).Set(float64(v))
+		m.upstreamIDs[id] = struct{}{}
+	}
 }
 
 // statusClass 将状态码归族:2xx/4xx/5xx/other

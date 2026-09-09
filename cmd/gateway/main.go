@@ -237,12 +237,27 @@ func main() {
 	metrics := core.NewMetrics()
 	pipeline.Use(core.ObservabilityMiddleware(metrics, logger))
 
+	// 上游熔断(OSS):注册表惰性登记、由请求流量驱动;启用后注入代理内核(剔除 open、全熔断 503)
+	var breakerReg *core.BreakerRegistry
+	if cfg.CircuitBreaker.Enabled {
+		breakerReg = core.NewRegistry(core.NewBreakerConfig(
+			cfg.CircuitBreaker.FailureThreshold, cfg.CircuitBreaker.SampleWindow,
+			cfg.CircuitBreaker.OpenFor, cfg.CircuitBreaker.SuccessThreshold, 1, time.Now))
+		proxyCore.WithBreaker(breakerReg)
+		logger.Info("上游熔断已启用",
+			zap.Int("failure_threshold", cfg.CircuitBreaker.FailureThreshold),
+			zap.Duration("open_for", cfg.CircuitBreaker.OpenFor))
+	}
+
 	acceptor := core.NewAcceptor(proxyCore.Handler(), ipf)
 	// 外层指标包裹:覆盖一切到达代理的请求(含鉴权/限流拒绝),见 pkg/core/metrics.go
 	proxyHandler := metrics.WrapOuter(acceptor.Handler())
 	// /metrics 在管道外层伺服: 免鉴权且不被路由中间件 404(运维采集端点)
 	rootHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/metrics" {
+			if breakerReg != nil { // 采集瞬间刷入当前快照,无需周期 goroutine/stop 接线
+				metrics.SetBreakerGauge(breakerReg.Snapshot())
+			}
 			core.ServeMetrics(metrics, w, r)
 			return
 		}
