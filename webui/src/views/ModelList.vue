@@ -58,22 +58,27 @@
             <el-option label="deepseek" value="deepseek" />
             <el-option label="qwen（通义千问）" value="qwen" />
             <el-option label="zhipu" value="zhipu" />
+            <el-option label="anthropic" value="anthropic" />
             <el-option :label="CUSTOM_PROVIDER_LABEL" :value="CUSTOM_PROVIDER" />
           </el-select>
         </el-form-item>
         <el-form-item label="上游模型" required><el-input v-model="modelForm.provider_model" /></el-form-item>
         <el-form-item label="上游地址" required>
           <el-input v-model="modelForm.base_url"
-            :placeholder="isBuiltinProvider(modelForm.provider) ? BUILTIN_BASE_URLS[modelForm.provider] : 'http://你的推理服务:8000 (OpenAI 兼容服务根地址)'"
+            :placeholder="isBuiltinProvider(modelForm.provider) ? BUILTIN_BASE_URLS[modelForm.provider] : 'http://你的推理服务:8000 (服务根地址,不含 /v1)'"
             :disabled="isBuiltinProvider(modelForm.provider)" />
           <el-text v-if="isBuiltinProvider(modelForm.provider)" type="info" size="small">云服务商地址已锁定</el-text>
-          <el-text v-else type="info" size="small">填写服务根地址(不含 /v1),网关自动拼接 /v1/chat/completions</el-text>
+          <el-text v-else type="info" size="small">填写服务根地址(不含 /v1),网关按所选协议拼接 {{ isAnthropic ? '/v1/messages' : '/v1/chat/completions' }}</el-text>
         </el-form-item>
         <el-form-item v-if="!(modelForm.provider in BUILTIN_BASE_URLS)" label="接入协议">
-          <el-select v-model="modelForm.tags!.adapter" style="width:100%">
+          <el-select v-model="modelForm.tags!.adapter" style="width:100%" @change="onProtocolChange">
             <el-option v-for="o in PROTOCOL_OPTIONS" :key="o.value" :label="o.label" :value="o.value" :disabled="o.disabled" />
           </el-select>
-          <el-text type="info" size="small">需暴露 OpenAI 兼容接口（/v1/chat/completions）；Anthropic/Ollama 原生即将支持</el-text>
+          <el-text type="info" size="small">OpenAI 兼容走 /v1/chat/completions;Anthropic Messages 走 /v1/messages</el-text>
+        </el-form-item>
+        <el-form-item v-if="isAnthropic" label="默认 max_tokens">
+          <el-input-number v-model="modelForm.max_tokens" :min="0" :max="1000000" :step="1024" />
+          <el-text type="info" size="small" style="margin-left:8px">Anthropic 必填。0=不注入(客户端需自带);留空新建时默认 4096</el-text>
         </el-form-item>
         <el-form-item label="API Key" required><el-input v-model="modelForm.api_key" show-password /></el-form-item>
         <el-form-item label="超时(秒)"><el-input-number v-model="modelForm.timeout" :min="1" :max="300" /></el-form-item>
@@ -104,7 +109,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { ModelItem, ModelCreateRequest, UpstreamItem, UpstreamRequest } from '../types'
 import { listModels, createModel, updateModel, deleteModel, testModel, listUpstreams, createUpstream, updateUpstream, deleteUpstream } from '../api/model'
@@ -123,24 +128,25 @@ const currentModelForUpstream = ref<ModelItem | null>(null)
 
 const modelForm = reactive<ModelCreateRequest>({
   name: '', provider: 'openai', provider_model: '', base_url: '', api_key: '',
-  timeout: 60, max_retries: 2, retry_interval: 0, weight: 1, enabled: true, tags: {}
+  timeout: 60, max_retries: 2, retry_interval: 0, weight: 1, max_tokens: 0, enabled: true, tags: {}
 })
 
-// 内置云服务商预设上游地址(适配 base_url + /v1/chat/completions 拼接)
+// 内置云服务商预设上游地址(适配 base_url + /v1/chat/completions 拼接;anthropic 拼 /v1/messages)
 const BUILTIN_BASE_URLS: Record<string, string> = {
   openai: 'https://api.openai.com',
   deepseek: 'https://api.deepseek.com',
   qwen: 'https://dashscope.aliyuncs.com/compatible-mode',
-  zhipu: 'https://open.bigmodel.cn/api/paas/v4'
+  zhipu: 'https://open.bigmodel.cn/api/paas/v4',
+  anthropic: 'https://api.anthropic.com'
 }
 
-// 自定义供应商:下拉显式选项的值与展示名(手输任意非内置值同样视为自定义,走 OpenAI 兼容);
+// 自定义供应商:下拉显式选项的值与展示名(手输任意非内置值同样视为自定义,协议由 tags.adapter 决定);
 // 长标签仅供下拉 option 展示,列表「供应商」列用短标签 CUSTOM_PROVIDER_SHORT_LABEL
 const CUSTOM_PROVIDER = 'custom'
-const CUSTOM_PROVIDER_LABEL = '自定义(OpenAI 兼容)'
+const CUSTOM_PROVIDER_LABEL = '自定义(协议可选)'
 const CUSTOM_PROVIDER_SHORT_LABEL = '自定义'
 
-// 列表「供应商」列短标签:custom → 自定义;历史手输值原样显示
+// 列表「供应商」列短标签:custom → 自定义;内置供应商 → 短标签(如 anthropic);历史手输值原样显示
 function providerLabel(p: string): string {
   return p === CUSTOM_PROVIDER ? CUSTOM_PROVIDER_SHORT_LABEL : p
 }
@@ -150,14 +156,31 @@ function isBuiltinProvider(p: string): boolean {
   return p in BUILTIN_BASE_URLS
 }
 
-// 接入协议(仅自定义供应商展示):本期仅 openai 可用,Anthropic/Ollama 置灰待下期适配器落地
+// 接入协议(仅自定义供应商展示):openai(默认)与 anthropic 可选;Ollama 复用 openai 兼容端点,无独立协议
 const PROTOCOL_OPTIONS = [
   { value: 'openai', label: 'OpenAI 兼容 (vLLM / Ollama-openai 端点 / one-api 等)', disabled: false },
-  { value: 'anthropic', label: 'Anthropic 格式', disabled: true },
-  { value: 'ollama', label: 'Ollama 原生', disabled: true },
+  { value: 'anthropic', label: 'Anthropic Messages', disabled: false },
 ]
 
-// 供应商变更:内置 → 自动填预设地址;自定义 → 清空地址让用户输入
+// 当前表单是否 Anthropic 语义:内置 anthropic 供应商,或自定义且协议 tag=anthropic。
+// 决定是否展示默认 max_tokens(Anthropic 必填)与地址拼接提示
+const isAnthropic = computed(() => {
+  if (modelForm.provider === 'anthropic') return true
+  if (modelForm.provider in BUILTIN_BASE_URLS) return false
+  return modelForm.tags!.adapter === 'anthropic'
+})
+
+// 对齐默认 max_tokens 语义(仅用户切换供应商/协议时触发;openEdit 回填现存值不走此路径):
+// Anthropic 且当前 0/空 → 预填 4096;切回 OpenAI 语义 → 清 0(该默认只对 Anthropic 注入)
+function syncDefaultMaxTokens() {
+  if (isAnthropic.value) {
+    if (!modelForm.max_tokens) modelForm.max_tokens = 4096
+  } else {
+    modelForm.max_tokens = 0
+  }
+}
+
+// 供应商变更:内置 → 自动填预设地址并同步默认 max_tokens;自定义 → 清空地址让用户输入
 function onProviderChange(p: string) {
   if (p in BUILTIN_BASE_URLS) {
     modelForm.base_url = BUILTIN_BASE_URLS[p]
@@ -166,6 +189,12 @@ function onProviderChange(p: string) {
     modelForm.base_url = ''
     modelForm.tags!.adapter = modelForm.tags!.adapter || 'openai'
   }
+  syncDefaultMaxTokens()
+}
+
+// 接入协议变更(自定义供应商):anthropic ↔ openai 时同步默认 max_tokens
+function onProtocolChange() {
+  syncDefaultMaxTokens()
 }
 const upstreamForm = reactive<UpstreamRequest>({ base_url: '', api_key: '', weight: 1, enabled: true })
 
@@ -182,7 +211,7 @@ async function load() {
 
 function openCreate() {
   editing.value = null
-  Object.assign(modelForm, { name: '', provider: 'openai', provider_model: '', base_url: BUILTIN_BASE_URLS.openai, api_key: '', timeout: 60, max_retries: 2, retry_interval: 0, weight: 1, enabled: true, tags: {} })
+  Object.assign(modelForm, { name: '', provider: 'openai', provider_model: '', base_url: BUILTIN_BASE_URLS.openai, api_key: '', timeout: 60, max_retries: 2, retry_interval: 0, weight: 1, max_tokens: 0, enabled: true, tags: {} })
   modelDialog.value = true
 }
 
@@ -192,7 +221,7 @@ function openEdit(row: ModelItem) {
   if (!(row.provider in BUILTIN_BASE_URLS) && !tags.adapter) {
     tags.adapter = 'openai' // 历史自定义行(无 tag)默认 OpenAI 兼容,保证编辑后回显
   }
-  Object.assign(modelForm, { name: row.name, provider: row.provider, provider_model: row.provider_model, base_url: row.base_url, api_key: '', timeout: row.timeout, max_retries: row.max_retries, retry_interval: row.retry_interval, weight: row.weight, enabled: row.enabled, tags })
+  Object.assign(modelForm, { name: row.name, provider: row.provider, provider_model: row.provider_model, base_url: row.base_url, api_key: '', timeout: row.timeout, max_retries: row.max_retries, retry_interval: row.retry_interval, weight: row.weight, max_tokens: row.max_tokens ?? 0, enabled: row.enabled, tags })
   modelDialog.value = true
 }
 

@@ -16,6 +16,7 @@ export interface ModelItem {
   max_retries: number
   retry_interval: number
   weight: number
+  max_tokens?: number
   enabled: boolean
   tags: Record<string, string>
   created_at: string
@@ -32,6 +33,7 @@ export interface ModelCreateRequest {
   max_retries?: number
   retry_interval?: number
   weight?: number
+  max_tokens?: number
   enabled?: boolean
   tags?: Record<string, string>
 }
@@ -309,6 +311,8 @@ export interface OperationLogItem {
   username: string
   method: string
   path: string
+  module: string
+  action: string
   target_id: string
   status_code: number
   client_ip: string

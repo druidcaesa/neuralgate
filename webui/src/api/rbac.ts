@@ -77,6 +77,8 @@ export async function listOperationLogs(params: {
   page: number
   size: number
   user_id?: string
+  module?: string
+  action?: string
 }): Promise<Paged<OperationLogItem>> {
   const resp = await client.get<ApiResponse<Paged<OperationLogItem>>>('/operation-logs', { params })
   return resp.data.data
