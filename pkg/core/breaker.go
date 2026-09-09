@@ -61,7 +61,7 @@ type upstreamBreaker struct {
 	lastSeen  time.Time
 }
 
-// Allow 当前是否放行;调用方在放行(或试探)后须调 begin/Record 配对
+// Allow 当前是否放行;调用方在放行(或试探)后须调 Record(ok) 配对
 func (b *upstreamBreaker) Allow() bool {
 	now := b.cfg.now()
 	switch b.state {
