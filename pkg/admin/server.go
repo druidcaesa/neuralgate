@@ -32,7 +32,7 @@ type AdminServer struct {
 	startedAt       time.Time
 	license         *LicenseOverview // 授权概要快照（nil 按 OSS 未授权处理）
 	sessions        *SessionManager  // 认证默认开启（fail-closed）；DisableAuth 仅限测试
-	loginGuard      *loginGuard
+	loginGuard      LoginGuard
 	allowedOrigins  []string                                                                   // CORS 白名单（空=不发送跨域头）
 	rbacEnabled     bool                                                                       // 权限体系开关（EnableRBAC 注入，未启用恒放行）
 	reportGenerator func(periodType string, start time.Time) (*plugin.ComplianceReport, error) // 合规补生成器（enterprise 装配注入，nil 时手动生成返回 503）

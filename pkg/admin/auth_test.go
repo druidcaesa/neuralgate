@@ -255,6 +255,41 @@ func TestLoginDisabledAccountForbidden(t *testing.T) {
 	}
 }
 
+// fakeGuard 可编程守卫:断言 handleLogin 经由接口调用(Allow/Fail/Reset)
+type fakeGuard struct {
+	allow bool
+	fails int
+	reset int
+}
+
+func (f *fakeGuard) Allow(string) bool { return f.allow }
+func (f *fakeGuard) Fail(string)       { f.fails++ }
+func (f *fakeGuard) Reset(string)      { f.reset++ }
+
+// TestSetLoginGuardInjection 注入守卫后,登录失败/锁定/成功分别走新实现的 Fail/Allow/Reset
+func TestSetLoginGuardInjection(t *testing.T) {
+	s, _, _ := newAuthTestServer(t)
+	fg := &fakeGuard{allow: true}
+	s.SetLoginGuard(fg)
+	// 失败路径:记录 1 次 Fail 并返回 401
+	rec := postJSON(s, "/api/auth/login", `{"username":"admin","password":"wrong"}`)
+	if rec.Code != http.StatusUnauthorized || fg.fails != 1 {
+		t.Fatalf("失败登录应记 1 次 Fail: code=%d fails=%d", rec.Code, fg.fails)
+	}
+	// 锁定路径:Allow=false 时即使口令正确也返回 429
+	fg.allow = false
+	rec = postJSON(s, "/api/auth/login", `{"username":"admin","password":"correct-pass"}`)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("锁定时应 429, got %d", rec.Code)
+	}
+	// 成功路径:Reset 清计数
+	fg.allow = true
+	rec = postJSON(s, "/api/auth/login", `{"username":"admin","password":"correct-pass"}`)
+	if rec.Code != http.StatusOK || fg.reset != 1 {
+		t.Fatalf("成功后应 Reset: code=%d reset=%d", rec.Code, fg.reset)
+	}
+}
+
 // ===== 改密 =====
 
 func postChangePassword(s *AdminServer, token, oldPass, newPass string) *httptest.ResponseRecorder {

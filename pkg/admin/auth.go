@@ -150,8 +150,16 @@ func randomSecret(n int) []byte {
 
 // ===== 登录防爆破 =====
 
-// loginGuard 按 ip|用户名 维度的失败计数：窗口内连败达上限则锁定一个窗口周期
-type loginGuard struct {
+// LoginGuard 登录失败防护:按 key(ip|用户名)统计。Allow 放行、Fail 记失败、
+// Reset 清计数(成功登录)。默认 memory 实现进程内;Enterprise 集群可注入共享实现
+type LoginGuard interface {
+	Allow(key string) bool
+	Fail(key string)
+	Reset(key string)
+}
+
+// memoryLoginGuard 进程内按 ip|用户名 维度的失败计数：窗口内连败达上限则锁定一个窗口周期
+type memoryLoginGuard struct {
 	mu       sync.Mutex
 	fails    map[string]*failureRecord
 	window   time.Duration
@@ -165,8 +173,8 @@ type failureRecord struct {
 	locked bool
 }
 
-func newLoginGuard() *loginGuard {
-	return &loginGuard{
+func newLoginGuard() *memoryLoginGuard {
+	return &memoryLoginGuard{
 		fails:    make(map[string]*failureRecord),
 		window:   loginFailureWindow,
 		maxFails: loginMaxFailures,
@@ -175,7 +183,7 @@ func newLoginGuard() *loginGuard {
 }
 
 // Allow 返回是否放行本次尝试
-func (g *loginGuard) Allow(key string) bool {
+func (g *memoryLoginGuard) Allow(key string) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	r, ok := g.fails[key]
@@ -189,7 +197,7 @@ func (g *loginGuard) Allow(key string) bool {
 	return !r.locked
 }
 
-func (g *loginGuard) Fail(key string) {
+func (g *memoryLoginGuard) Fail(key string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	r, ok := g.fails[key]
@@ -206,10 +214,17 @@ func (g *loginGuard) Fail(key string) {
 	}
 }
 
-func (g *loginGuard) Reset(key string) {
+func (g *memoryLoginGuard) Reset(key string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	delete(g.fails, key)
+}
+
+// SetLoginGuard 替换登录守卫实现(集群共享等);须在服务开始监听前调用
+func (s *AdminServer) SetLoginGuard(g LoginGuard) {
+	if g != nil {
+		s.loginGuard = g
+	}
 }
 
 // ===== 中间件与路由处理 =====
