@@ -241,6 +241,12 @@ func main() {
 			core.ServeMetrics(metrics, w, r)
 			return
 		}
+		// /readyz 就绪探针(依赖感知):storage 存活 + 非排空 → 200,否则 503。
+		// 与 /healthz(链内纯存活)语义区分;同 /metrics 置于外层免鉴权供 LB 探测
+		if r.URL.Path == "/readyz" {
+			core.HandleReady(w, r, storage)
+			return
+		}
 		// /docs 公开接口说明页:免鉴权、不落路由中间件,与 /metrics 同层(页面纯静态,无配置回显)
 		if docsui.Serve(w, r) {
 			return
@@ -306,7 +312,11 @@ func main() {
 		logger.Fatal("服务异常退出", zap.Error(err))
 	}
 
-	// 10. Shutdown
+	// 10. 排空标记:置位后 /readyz 转 503,先让 LB 摘除本副本,再断存量连接
+	core.SetDraining(true)
+	logger.Info("进入排空状态,就绪探针将返回 503")
+
+	// 11. Shutdown
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := proxyServer.Shutdown(shutdownCtx); err != nil {

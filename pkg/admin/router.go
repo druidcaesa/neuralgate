@@ -17,6 +17,7 @@ package admin
 import (
 	"net/http"
 
+	"github.com/druidcaesa/neuralgate/pkg/core"
 	"github.com/druidcaesa/neuralgate/pkg/license"
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
 	"github.com/gin-gonic/gin"
@@ -26,6 +27,10 @@ import (
 func (s *AdminServer) registerRoutes(r *gin.Engine) {
 	r.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
+	// /readyz 就绪探针(依赖感知,免鉴权供 LB 探测):storage 存活 + 非排空 → 200,否则 503
+	r.GET("/readyz", func(c *gin.Context) {
+		core.HandleReady(c.Writer, c.Request, s.storage)
 	})
 	api := r.Group("/api")
 	{
