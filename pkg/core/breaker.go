@@ -151,6 +151,37 @@ func (b *upstreamBreaker) Record(ok bool) {
 	}
 }
 
+// recordProbe 上报一次主动探活结果(仅连通性)。与流量 Record 的关键区别:探针未经 Allow,
+// 未占用试探槽,因此任何分支都不增减 inFlight,绝不虚增/打负槽位。状态语义:
+//   - Closed:  与 Record 一致(成功清失败窗;失败累积——连通性失败即最强失败信号,达阈值 → open)
+//   - Open:    成功且已过 OpenFor → HalfOpen(清零 successes/inFlight,加速恢复);未到期忽略
+//   - HalfOpen:忽略探针结果——恢复期的试探槽与连续成功由流量 Allow/Record 配对精确记账,
+//     探针不插队,以免打乱槽位计数或弱化连续成功保证
+func (b *upstreamBreaker) recordProbe(ok bool) {
+	now := b.cfg.now()
+	b.lastSeen = now
+	switch b.state {
+	case HalfOpen:
+		// 忽略:见方法注释
+	case Open:
+		if ok && now.Sub(b.openedAt) >= b.cfg.OpenFor {
+			b.state = HalfOpen
+			b.successes, b.inFlight = 0, 0
+		}
+	case Closed:
+		if ok {
+			b.failures, b.winStart = 0, now
+			return
+		}
+		b.failures++
+		b.winStart = now
+		if b.failures >= b.cfg.FailureThreshold {
+			b.state = Open
+			b.openedAt = now
+		}
+	}
+}
+
 // reset 转 closed 并清零
 func (b *upstreamBreaker) reset(now time.Time) {
 	b.state = Closed
@@ -220,6 +251,13 @@ func (r *BreakerRegistry) Record(id string, ok bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.breakerFor(id).Record(ok)
+}
+
+// recordProbe 记录某上游一次主动探活结果;不占/不改 half-open 试探槽(供 StartHealthProbe 使用)
+func (r *BreakerRegistry) recordProbe(id string, ok bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.breakerFor(id).recordProbe(ok)
 }
 
 // Release 释放某上游未成行的试探槽(仅递减 inFlight,不改状态);与 Record 二选一配对 Allow

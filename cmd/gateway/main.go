@@ -260,6 +260,7 @@ func main() {
 
 	// 上游熔断(OSS):注册表惰性登记、由请求流量驱动;启用后注入代理内核(剔除 open、全熔断 503)
 	var breakerReg *core.BreakerRegistry
+	var stopProbe func()
 	if cfg.CircuitBreaker.Enabled {
 		breakerReg = core.NewRegistry(core.NewBreakerConfig(
 			cfg.CircuitBreaker.FailureThreshold, cfg.CircuitBreaker.SampleWindow,
@@ -268,6 +269,17 @@ func main() {
 		logger.Info("上游熔断已启用",
 			zap.Int("failure_threshold", cfg.CircuitBreaker.FailureThreshold),
 			zap.Duration("open_for", cfg.CircuitBreaker.OpenFor))
+		// 可选主动健康探针(默认关):周期性对 enabled 上游做连通性探活,结果喂入熔断注册表
+		// (open 成功过冷却 → half-open 加速恢复);baseURLs 每 tick 重取以支持上游 CRUD 热更
+		if cfg.CircuitBreaker.HealthProbe.Enabled {
+			stopProbe = core.StartHealthProbe(breakerReg,
+				func() map[string]string { return enabledUpstreamBaseURLs(storage) },
+				cfg.CircuitBreaker.HealthProbe.Interval,
+				cfg.CircuitBreaker.HealthProbe.Path, 5*time.Second)
+			logger.Info("主动健康探针已启用",
+				zap.Duration("interval", cfg.CircuitBreaker.HealthProbe.Interval),
+				zap.String("path", cfg.CircuitBreaker.HealthProbe.Path))
+		}
 	}
 
 	acceptor := core.NewAcceptor(proxyCore.Handler(), ipf)
@@ -380,6 +392,9 @@ func main() {
 	}
 	if exportStarted {
 		exporter.Close() // 最终一轮拉取兜住 auditor.Shutdown 落库的尾部日志
+	}
+	if stopProbe != nil {
+		stopProbe() // 主动健康探针先停(读存储取上游列表),再关存储
 	}
 	if stopRetention != nil {
 		stopRetention() // 留存 worker 先停,再关存储
@@ -595,4 +610,35 @@ func proxyPort(proxyAddr string) int {
 		return 0
 	}
 	return p
+}
+
+// enabledUpstreamBaseURLs 汇总当前启用的上游 id→base_url(主动健康探针的探活源)。
+// 存储无全量上游列举 API,故分页遍历模型(ListModelConfigs)后逐模型 ListUpstreams 收集;
+// 键为上游 ID——与代理选路用作熔断状态的键一致。BaseURL 尾部/Path 首部的斜杠由探针拼装时规避
+// 双斜杠。枚举出错返回已收集部分(首屏出错即近空),不让单次列举失败中断探活循环(下一 tick 重取)
+func enabledUpstreamBaseURLs(storage plugin.StoragePlugin) map[string]string {
+	out := make(map[string]string)
+	for page := 1; ; page++ {
+		models, total, err := storage.ListModelConfigs(page, 100)
+		if err != nil {
+			return out
+		}
+		for _, m := range models {
+			if !m.Enabled {
+				continue // 禁用模型的流量不进选路,其上游不做熔断状态,无需探活
+			}
+			ups, err := storage.ListUpstreams(m.ID)
+			if err != nil {
+				continue
+			}
+			for _, u := range ups {
+				if u.Enabled {
+					out[u.ID] = u.BaseURL
+				}
+			}
+		}
+		if page*100 >= int(total) {
+			return out
+		}
+	}
 }
