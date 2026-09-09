@@ -468,11 +468,21 @@ func (s *AdminServer) deleteAdminUser(c *gin.Context) {
 func (s *AdminServer) listOperationLogs(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	size, _ := strconv.Atoi(c.DefaultQuery("size", "20"))
-	filter := plugin.AdminOpLogFilter{UserID: c.Query("user_id")}
+	filter := plugin.AdminOpLogFilter{
+		UserID: c.Query("user_id"),
+		Module: c.Query("module"),
+		Action: c.Query("action"),
+	}
 	logs, total, err := s.storage.ListAdminOperationLogs(filter, page, size)
 	if err != nil {
 		Error(c, http.StatusInternalServerError, 500, "failed to list operation logs")
 		return
+	}
+	// 兜底:存储层漏打标(如内存态早期写入)的行按已存 method/path 现算补全
+	for _, l := range logs {
+		if l.Module == "" || l.Action == "" {
+			l.Module, l.Action = plugin.ClassifyOperation(l.Method, l.Path)
+		}
 	}
 	OK(c, gin.H{"items": logs, "total": total, "page": page, "size": size})
 }

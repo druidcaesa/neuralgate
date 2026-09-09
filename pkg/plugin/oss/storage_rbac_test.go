@@ -143,6 +143,55 @@ func TestMemAdminOperationLogs(t *testing.T) {
 	}
 }
 
+// TestSQLAdminOperationLogModuleAction 分类列写入/过滤 + 升级前空值历史行回填打标
+func TestSQLAdminOperationLogModuleAction(t *testing.T) {
+	dsn := filepath.Join(t.TempDir(), "oplog.db")
+	cfg := map[string]interface{}{"driver": "sqlite", "dsn": dsn}
+	s := NewSQLStorage()
+	if err := s.Init(cfg); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	save := func(method, path, module, action string) {
+		t.Helper()
+		if err := s.SaveAdminOperationLog(&plugin.AdminOperationLog{
+			Method: method, Path: path, Module: module, Action: action,
+			UserID: "u1", Username: "admin", StatusCode: 200,
+		}); err != nil {
+			t.Fatalf("SaveAdminOperationLog: %v", err)
+		}
+	}
+	save("POST", "/api/models", "模型配置", "创建")
+	save("DELETE", "/api/models/model-1", "模型配置", "删除")
+
+	if _, total, err := s.ListAdminOperationLogs(plugin.AdminOpLogFilter{}, 1, 10); err != nil || total != 2 {
+		t.Fatalf("total=%d err=%v", total, err)
+	}
+	if _, total, _ := s.ListAdminOperationLogs(plugin.AdminOpLogFilter{Module: "模型配置"}, 1, 10); total != 2 {
+		t.Errorf("模块过滤 total=%d, want 2", total)
+	}
+	if items, total, _ := s.ListAdminOperationLogs(plugin.AdminOpLogFilter{Module: "模型配置", Action: "删除"}, 1, 10); total != 1 || len(items) != 1 || items[0].Action != "删除" {
+		t.Errorf("模块+操作过滤不符: total=%d items=%+v", total, items)
+	}
+
+	// 模拟升级前写入的历史行(module/action 为空)：二次 Init 触发回填打标
+	if _, err := s.db.Exec(
+		"INSERT INTO admin_operation_logs (id, user_id, username, method, path, target_id, status_code, client_ip, created_at) VALUES ('legacy', 'u1', 'admin', 'POST', '/api/api-keys', '', 200, '127.0.0.1', ?)",
+		timeToMS(time.Now()),
+	); err != nil {
+		t.Fatalf("insert legacy row: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if err := s.Init(cfg); err != nil {
+		t.Fatalf("re-Init: %v", err)
+	}
+	items, total, err := s.ListAdminOperationLogs(plugin.AdminOpLogFilter{Module: "API Key"}, 1, 10)
+	if err != nil || total != 1 || items[0].ID != "legacy" || items[0].Action != "创建" {
+		t.Errorf("回填后按模块查询不符: total=%d err=%v", total, err)
+	}
+}
+
 func TestMemCounters(t *testing.T) {
 	s := NewMemStorage()
 	_ = s.SaveAPIKey(&plugin.APIKey{ID: "k1", KeyHash: "h1", TenantID: "t1"})

@@ -17,6 +17,7 @@ package oss
 import (
 	"database/sql"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -168,7 +169,7 @@ func TestSQLStorageModelConfigCRUD(t *testing.T) {
 	cfg := &plugin.ModelConfig{
 		ID: "m1", ModelName: "gpt-4", Provider: "openai", ProviderModel: "gpt-4o",
 		BaseURL: "https://api.openai.com", APIKey: "sk-upstream-secret",
-		Timeout: 60, MaxRetries: 2, RetryInterval: 3, Weight: 1, Enabled: true,
+		Timeout: 60, MaxRetries: 2, RetryInterval: 3, Weight: 1, MaxTokens: 4096, Enabled: true,
 		Tags: map[string]string{"env": "prod"}, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := s.SaveModelConfig(cfg); err != nil {
@@ -182,6 +183,9 @@ func TestSQLStorageModelConfigCRUD(t *testing.T) {
 	}
 	if got.Tags["env"] != "prod" {
 		t.Fatalf("Tags mismatch: %v", got.Tags)
+	}
+	if got.MaxTokens != 4096 {
+		t.Fatalf("MaxTokens roundtrip = %d; want 4096", got.MaxTokens)
 	}
 	// 按 ID 查
 	byID, err := s.GetModelConfigByID("m1")
@@ -311,6 +315,51 @@ func TestSQLStorageModelConfigDecryptFail(t *testing.T) {
 	other := &SQLStorage{db: s.db, encryptKey: "other-key"}
 	if _, err := other.GetModelConfig("gpt-4"); err == nil {
 		t.Fatal("decrypt with wrong key must return error")
+	}
+}
+
+// TestSQLiteModelConfigMaxTokensMigration 存量库(无 max_tokens 列)二次 Init 应自动补列,
+// 补列后 MaxTokens 可保存往返
+func TestSQLiteModelConfigMaxTokensMigration(t *testing.T) {
+	dsn := filepath.Join(t.TempDir(), "legacy.db")
+	// 先造无 max_tokens 列的存量 model_configs
+	legacy, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := legacy.Exec(`CREATE TABLE model_configs (
+		id TEXT PRIMARY KEY, model_name TEXT NOT NULL UNIQUE, provider TEXT NOT NULL,
+		provider_model TEXT NOT NULL, base_url TEXT NOT NULL, api_key TEXT NOT NULL,
+		encrypted INTEGER NOT NULL DEFAULT 1, timeout INTEGER NOT NULL DEFAULT 60,
+		max_retries INTEGER NOT NULL DEFAULT 2, retry_interval INTEGER NOT NULL DEFAULT 3,
+		weight INTEGER NOT NULL DEFAULT 1, enabled INTEGER NOT NULL DEFAULT 1,
+		tags TEXT NOT NULL DEFAULT '{}', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`); err != nil {
+		legacy.Close()
+		t.Fatalf("create legacy table: %v", err)
+	}
+	legacy.Close()
+
+	s := NewSQLStorage()
+	cfg := map[string]interface{}{"driver": "sqlite", "dsn": dsn}
+	if err := s.Init(cfg); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	defer s.Close()
+	// 迁移后列存在:保存含 MaxTokens 的配置再读回
+	now := time.Now()
+	if err := s.SaveModelConfig(&plugin.ModelConfig{
+		ID: "m1", ModelName: "claude-x", Provider: "anthropic", ProviderModel: "claude-x",
+		BaseURL: "https://api.anthropic.com", APIKey: "sk-ant-x",
+		MaxTokens: 4096, Enabled: true, CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("SaveModelConfig: %v", err)
+	}
+	got, err := s.GetModelConfig("claude-x")
+	if err != nil {
+		t.Fatalf("GetModelConfig after migration: %v", err)
+	}
+	if got.MaxTokens != 4096 {
+		t.Fatalf("GetModelConfig after migration MaxTokens = %d; want 4096", got.MaxTokens)
 	}
 }
 

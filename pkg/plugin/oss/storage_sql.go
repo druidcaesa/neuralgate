@@ -116,6 +116,36 @@ func (s *SQLStorage) Init(config map[string]interface{}) error {
 		s.db = nil
 		return fmt.Errorf("migrate privacy rules: %w", err)
 	}
+	if driver == "mysql" {
+		err = migrateMySQLOperationLogColumns(db)
+	} else if driver == "sqlite" {
+		err = migrateSQLiteOperationLogColumns(db)
+	}
+	if err != nil {
+		_ = db.Close()
+		s.driver = ""
+		s.db = nil
+		return fmt.Errorf("migrate operation logs: %w", err)
+	}
+	if driver == "mysql" {
+		err = migrateMySQLModelConfigColumns(db)
+	} else if driver == "sqlite" {
+		err = migrateSQLiteModelConfigColumns(db)
+	}
+	if err != nil {
+		_ = db.Close()
+		s.driver = ""
+		s.db = nil
+		return fmt.Errorf("migrate model config columns: %w", err)
+	}
+	if driver == "mysql" || driver == "sqlite" {
+		if err := backfillOperationLogColumns(db, s.ph); err != nil {
+			_ = db.Close()
+			s.driver = ""
+			s.db = nil
+			return fmt.Errorf("backfill operation logs: %w", err)
+		}
+	}
 	if err := seedPrivacyRules(db, s.ph); err != nil {
 		_ = db.Close()
 		s.driver = ""
@@ -358,7 +388,7 @@ func (s *SQLStorage) DeleteAdminUser(id string) error {
 
 // ===== 模型配置管理 =====
 
-const modelConfigCols = "id, model_name, provider, provider_model, base_url, api_key, encrypted, timeout, max_retries, retry_interval, weight, enabled, tags, created_at, updated_at"
+const modelConfigCols = "id, model_name, provider, provider_model, base_url, api_key, encrypted, timeout, max_retries, retry_interval, weight, max_tokens, enabled, tags, created_at, updated_at"
 
 // scanModelConfig 扫描一行模型配置,encrypted=1 时用 s.encryptKey 解密 api_key
 func (s *SQLStorage) scanModelConfig(row interface{ Scan(...interface{}) error }) (*plugin.ModelConfig, error) {
@@ -367,7 +397,7 @@ func (s *SQLStorage) scanModelConfig(row interface{ Scan(...interface{}) error }
 	var encrypted, enabled int
 	if err := row.Scan(&c.ID, &c.ModelName, &c.Provider, &c.ProviderModel, &c.BaseURL,
 		&apiKey, &encrypted, &c.Timeout, &c.MaxRetries, &c.RetryInterval, &c.Weight,
-		&enabled, &tags, &createdAt, &updatedAt); err != nil {
+		&c.MaxTokens, &enabled, &tags, &createdAt, &updatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -409,14 +439,14 @@ func (s *SQLStorage) SaveModelConfig(config *plugin.ModelConfig) error {
 	created := timeToMS(config.CreatedAt)
 	updated := timeToMS(config.UpdatedAt)
 	// UPSERT 更新列与 INSERT 列(除 id/created_at)对应
-	return s.saveUpsert(`INSERT INTO model_configs (id, model_name, provider, provider_model, base_url, api_key, encrypted, timeout, max_retries, retry_interval, weight, enabled, tags, created_at, updated_at)
-		 VALUES (?,?,?,?,?,?,1,?,?,?,?,?,?,?,?)`, []interface{}{
+	return s.saveUpsert(`INSERT INTO model_configs (id, model_name, provider, provider_model, base_url, api_key, encrypted, timeout, max_retries, retry_interval, weight, max_tokens, enabled, tags, created_at, updated_at)
+		 VALUES (?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?)`, []interface{}{
 		config.ID, config.ModelName, config.Provider, config.ProviderModel, config.BaseURL,
 		encrypted, config.Timeout, config.MaxRetries, config.RetryInterval, config.Weight,
-		config.Enabled, marshalJSON(config.Tags), created, updated},
+		config.MaxTokens, config.Enabled, marshalJSON(config.Tags), created, updated},
 		[]string{"id"}, []string{"model_name", "provider", "provider_model", "base_url",
 			"api_key", "encrypted", "timeout", "max_retries", "retry_interval",
-			"weight", "enabled", "tags", "updated_at"})
+			"weight", "max_tokens", "enabled", "tags", "updated_at"})
 }
 
 func (s *SQLStorage) ListModelConfigs(page, size int) ([]*plugin.ModelConfig, int64, error) {
@@ -1200,7 +1230,7 @@ func (s *SQLStorage) CountAdminUsersByRoleID(roleID string) (int64, error) {
 	return total, err
 }
 
-const adminOpLogCols = "id, user_id, username, method, path, target_id, status_code, client_ip, created_at"
+const adminOpLogCols = "id, user_id, username, method, path, module, action, target_id, status_code, client_ip, created_at"
 
 func (s *SQLStorage) SaveAdminOperationLog(log *plugin.AdminOperationLog) error {
 	if log.ID == "" {
@@ -1210,8 +1240,8 @@ func (s *SQLStorage) SaveAdminOperationLog(log *plugin.AdminOperationLog) error 
 		log.CreatedAt = time.Now()
 	}
 	if _, err := s.exec(
-		"INSERT INTO admin_operation_logs ("+adminOpLogCols+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		log.ID, log.UserID, log.Username, log.Method, log.Path, log.TargetID,
+		"INSERT INTO admin_operation_logs ("+adminOpLogCols+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		log.ID, log.UserID, log.Username, log.Method, log.Path, log.Module, log.Action, log.TargetID,
 		log.StatusCode, log.ClientIP, timeToMS(log.CreatedAt),
 	); err != nil {
 		return fmt.Errorf("save admin operation log: %w", err)
@@ -1226,6 +1256,14 @@ func (s *SQLStorage) ListAdminOperationLogs(filter plugin.AdminOpLogFilter, page
 	if filter.UserID != "" {
 		where += " AND user_id = ?"
 		args = append(args, filter.UserID)
+	}
+	if filter.Module != "" {
+		where += " AND module = ?"
+		args = append(args, filter.Module)
+	}
+	if filter.Action != "" {
+		where += " AND action = ?"
+		args = append(args, filter.Action)
 	}
 	var total int64
 	if err := s.queryRow("SELECT COUNT(*) FROM admin_operation_logs WHERE "+where, args...).Scan(&total); err != nil {
@@ -1243,13 +1281,40 @@ func (s *SQLStorage) ListAdminOperationLogs(filter plugin.AdminOpLogFilter, page
 	for rows.Next() {
 		l := &plugin.AdminOperationLog{}
 		var createdMS int64
-		if err := rows.Scan(&l.ID, &l.UserID, &l.Username, &l.Method, &l.Path, &l.TargetID, &l.StatusCode, &l.ClientIP, &createdMS); err != nil {
+		if err := rows.Scan(&l.ID, &l.UserID, &l.Username, &l.Method, &l.Path, &l.Module, &l.Action, &l.TargetID, &l.StatusCode, &l.ClientIP, &createdMS); err != nil {
 			return nil, 0, err
 		}
 		l.CreatedAt = msToTime(createdMS)
 		logs = append(logs, l)
 	}
 	return logs, total, rows.Err()
+}
+
+// backfillOperationLogColumns 启动时给升级前写入的 module/action 空值历史日志补打标：
+// 行数少且仅执行一次，按已存 (method,path) 用 ClassifyOperation 归一后回填。
+func backfillOperationLogColumns(db *sql.DB, ph func(string) string) error {
+	rows, err := db.Query(ph("SELECT method, path FROM admin_operation_logs WHERE module = ''"))
+	if err != nil {
+		return fmt.Errorf("scan operation logs to backfill: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var method, path string
+		if err := rows.Scan(&method, &path); err != nil {
+			return err
+		}
+		module, action := plugin.ClassifyOperation(method, path)
+		if module == "" || action == "" {
+			continue
+		}
+		if _, err := db.Exec(ph(
+			"UPDATE admin_operation_logs SET module = ?, action = ? WHERE method = ? AND path = ? AND module = ''"),
+			module, action, method, path,
+		); err != nil {
+			return fmt.Errorf("backfill operation log %s %s: %w", method, path, err)
+		}
+	}
+	return rows.Err()
 }
 
 // seedRBAC roles 空表时写入超管角色，并把无角色的存量账号挂载到超管；已有数据则跳过

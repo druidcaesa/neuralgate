@@ -782,6 +782,12 @@ func (s *MemStorage) ListAdminOperationLogs(filter plugin.AdminOpLogFilter, page
 		if filter.UserID != "" && l.UserID != filter.UserID {
 			continue
 		}
+		if filter.Module != "" && l.Module != filter.Module {
+			continue
+		}
+		if filter.Action != "" && l.Action != filter.Action {
+			continue
+		}
 		matched = append(matched, l)
 	}
 	page, size = normalizePage(page, size)

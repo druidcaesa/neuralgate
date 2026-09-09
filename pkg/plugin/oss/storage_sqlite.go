@@ -55,6 +55,7 @@ func sqliteTableStmts() []string {
 			max_retries INTEGER NOT NULL DEFAULT 2,
 			retry_interval INTEGER NOT NULL DEFAULT 3,
 			weight INTEGER NOT NULL DEFAULT 1,
+			max_tokens INTEGER NOT NULL DEFAULT 0,
 			enabled INTEGER NOT NULL DEFAULT 1,
 			tags TEXT NOT NULL DEFAULT '{}',
 			created_at INTEGER NOT NULL,
@@ -155,6 +156,8 @@ func sqliteTableStmts() []string {
 			username TEXT NOT NULL DEFAULT '',
 			method TEXT NOT NULL,
 			path TEXT NOT NULL DEFAULT '',
+			module TEXT NOT NULL DEFAULT '',
+			action TEXT NOT NULL DEFAULT '',
 			target_id TEXT NOT NULL DEFAULT '',
 			status_code INTEGER NOT NULL DEFAULT 0,
 			client_ip TEXT NOT NULL DEFAULT '',
@@ -272,6 +275,37 @@ func migrateSQLiteAdminUserColumns(db *sql.DB) error {
 	return nil
 }
 
+// migrateSQLiteModelConfigColumns 存量库 model_configs 补 max_tokens 列（已存在则跳过）
+func migrateSQLiteModelConfigColumns(db *sql.DB) error {
+	rows, err := db.Query(`PRAGMA table_info(model_configs)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	hasMaxTokens := false
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dfltValue interface{}
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); err != nil {
+			return err
+		}
+		if name == "max_tokens" {
+			hasMaxTokens = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if !hasMaxTokens {
+		if _, err := db.Exec("ALTER TABLE model_configs ADD COLUMN max_tokens INTEGER NOT NULL DEFAULT 0"); err != nil {
+			return fmt.Errorf("add column max_tokens: %w", err)
+		}
+	}
+	return nil
+}
+
 // migrateSQLitePrivacyAction 存量库 privacy_rules 补 action 列（B3 输出风控；已存在则跳过）
 func migrateSQLitePrivacyAction(db *sql.DB) error {
 	rows, err := db.Query(`PRAGMA table_info(privacy_rules)`)
@@ -298,6 +332,39 @@ func migrateSQLitePrivacyAction(db *sql.DB) error {
 	if !hasAction {
 		if _, err := db.Exec("ALTER TABLE privacy_rules ADD COLUMN action TEXT NOT NULL DEFAULT ''"); err != nil {
 			return fmt.Errorf("add column action: %w", err)
+		}
+	}
+	return nil
+}
+
+// migrateSQLiteOperationLogColumns 存量库 admin_operation_logs 补 module/action 列
+// （操作日志按功能模块分类打标；已存在则跳过）
+func migrateSQLiteOperationLogColumns(db *sql.DB) error {
+	rows, err := db.Query(`PRAGMA table_info(admin_operation_logs)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	existing := map[string]bool{}
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dfltValue interface{}
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); err != nil {
+			return err
+		}
+		existing[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, col := range []string{"module", "action"} {
+		if existing[col] {
+			continue
+		}
+		if _, err := db.Exec("ALTER TABLE admin_operation_logs ADD COLUMN " + col + " TEXT NOT NULL DEFAULT ''"); err != nil {
+			return fmt.Errorf("add column %s: %w", col, err)
 		}
 	}
 	return nil

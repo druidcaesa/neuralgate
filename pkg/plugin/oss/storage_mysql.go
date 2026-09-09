@@ -53,6 +53,7 @@ func mysqlCreateTables(db *sql.DB) error {
 			max_retries INT NOT NULL DEFAULT 2,
 			retry_interval INT NOT NULL DEFAULT 3,
 			weight INT NOT NULL DEFAULT 1,
+			max_tokens INT NOT NULL DEFAULT 0,
 			enabled TINYINT NOT NULL DEFAULT 1,
 			tags TEXT NOT NULL,
 			created_at BIGINT NOT NULL,
@@ -153,6 +154,8 @@ func mysqlCreateTables(db *sql.DB) error {
 			username VARCHAR(64) NOT NULL DEFAULT '',
 			method VARCHAR(16) NOT NULL,
 			path VARCHAR(255) NOT NULL DEFAULT '',
+			module VARCHAR(32) NOT NULL DEFAULT '',
+			action VARCHAR(32) NOT NULL DEFAULT '',
 			target_id VARCHAR(64) NOT NULL DEFAULT '',
 			status_code INT NOT NULL DEFAULT 0,
 			client_ip VARCHAR(64) NOT NULL DEFAULT '',
@@ -299,6 +302,23 @@ func migrateMySQLAdminUserColumns(db *sql.DB) error {
 	return nil
 }
 
+// migrateMySQLModelConfigColumns 存量库 model_configs 补 max_tokens 列（information_schema 判列）
+func migrateMySQLModelConfigColumns(db *sql.DB) error {
+	var count int
+	err := db.QueryRow(`
+		SELECT COUNT(*) FROM information_schema.COLUMNS
+		WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'model_configs' AND COLUMN_NAME = 'max_tokens'`).Scan(&count)
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		if _, err := db.Exec("ALTER TABLE model_configs ADD COLUMN max_tokens INT NOT NULL DEFAULT 0"); err != nil {
+			return fmt.Errorf("add column max_tokens: %w", err)
+		}
+	}
+	return nil
+}
+
 // migrateMySQLPrivacyAction 存量库 privacy_rules 补 action 列（information_schema 判列）
 func migrateMySQLPrivacyAction(db *sql.DB) error {
 	var count int
@@ -311,6 +331,39 @@ func migrateMySQLPrivacyAction(db *sql.DB) error {
 	if count == 0 {
 		if _, err := db.Exec("ALTER TABLE privacy_rules ADD COLUMN action VARCHAR(16) NOT NULL DEFAULT ''"); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// migrateMySQLOperationLogColumns 存量库 admin_operation_logs 补 module/action 列
+// （操作日志按功能模块分类打标；information_schema 判列）
+func migrateMySQLOperationLogColumns(db *sql.DB) error {
+	rows, err := db.Query(`
+		SELECT COLUMN_NAME FROM information_schema.COLUMNS
+		WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'admin_operation_logs' AND COLUMN_NAME IN ('module', 'action')`)
+	if err != nil {
+		return err
+	}
+	existing := map[string]bool{}
+	for rows.Next() {
+		var c string
+		if err := rows.Scan(&c); err != nil {
+			rows.Close()
+			return err
+		}
+		existing[c] = true
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, col := range []string{"module", "action"} {
+		if existing[col] {
+			continue
+		}
+		if _, err := db.Exec("ALTER TABLE admin_operation_logs ADD COLUMN `" + col + "` VARCHAR(32) NOT NULL DEFAULT ''"); err != nil {
+			return fmt.Errorf("add column %s: %w", col, err)
 		}
 	}
 	return nil

@@ -15,6 +15,7 @@
 package admin
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -22,6 +23,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -288,19 +290,41 @@ func (s *AdminServer) scopeTenant(c *gin.Context) *string {
 	return &v
 }
 
-// OperationAudit 操作审计中间件：管理面写操作（POST/PUT/PATCH/DELETE）落库。
+// OperationAudit 操作审计中间件：管理面写操作（POST/PUT/PATCH/DELETE）落库，
+// 并按功能模块 + 操作类型打标（ClassifyOperation 统一口径）。状态切换类操作
+// （如 PATCH /api-keys/:id）的动作语义在请求体，先读出回填再交由 handler 绑定。
 // 管理面低频，同步写入换取确定性；失败仅告警不影响请求结果
 func (s *AdminServer) OperationAudit() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		c.Next()
-		switch c.Request.Method {
+		method := c.Request.Method
+		switch method {
 		case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
 		default:
+			c.Next()
 			return
 		}
+		// 提前按模板路径归类：命中状态切换类时读取 body 以细化「启用/禁用」
+		module, action := plugin.ClassifyOperation(method, c.FullPath())
+		var status string
+		if action == plugin.OpActionStatusToggle && c.Request.Body != nil {
+			if body, err := io.ReadAll(c.Request.Body); err == nil {
+				c.Request.Body = io.NopCloser(bytes.NewReader(body))
+				var payload struct {
+					Status string `json:"status"`
+				}
+				_ = json.Unmarshal(body, &payload)
+				status = payload.Status
+			}
+		}
+		c.Next()
+		if status != "" && action == plugin.OpActionStatusToggle {
+			action = plugin.ToggleActionForStatus(status)
+		}
 		entry := &plugin.AdminOperationLog{
-			Method:     c.Request.Method,
+			Method:     method,
 			Path:       c.Request.URL.Path,
+			Module:     module,
+			Action:     action,
 			TargetID:   c.Param("id"),
 			StatusCode: c.Writer.Status(),
 			ClientIP:   c.ClientIP(),
