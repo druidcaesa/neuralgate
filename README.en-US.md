@@ -169,6 +169,12 @@ go build -tags oss -o neuralgate ./cmd/gateway/
 go build -tags enterprise -o neuralgate-enterprise ./cmd/gateway/
 ```
 
+> Artifact: the build produces a **single self-contained binary** — the admin
+> WebUI is embedded, so no separate frontend needs to be deployed; one process
+> runs two isolated services (the OpenAI proxy port and the admin backend port).
+> Copy the binary to the target machine and run it; `./neuralgate -version`
+> prints the version and build info (edition / commit / build time).
+
 ### Configuration
 
 Copy and edit the config file:
@@ -183,8 +189,8 @@ server:
   admin_addr: ":8081"
 
 storage:
-  # Options: mysql(default) / sqlite / dm(Enterprise) / kingbase(Enterprise)
-  driver: mysql
+  # Options: sqlite(default) / mysql / dm(Enterprise) / kingbase(Enterprise)
+  driver: sqlite
 
   # REQUIRED! Encryption key for upstream API keys; startup fails when missing.
   # Recommended: inject via the NEURALGATE_STORAGE_ENCRYPT_KEY env var to avoid
@@ -196,12 +202,14 @@ storage:
   # NEURALGATE_LOG_LEVEL / NEURALGATE_ADMIN_BOOTSTRAP_PASSWORD /
   # NEURALGATE_STORAGE_ENCRYPT_KEY / NEURALGATE_REDIS_PASSWORD / NEURALGATE_ADMIN_SESSION_SECRET
 
-  # ----- MySQL (default, OSS+Enterprise) -----
-  dsn: "user:pass@tcp(host:3306)/neuralgate?charset=utf8mb4"
+  # ----- SQLite (default, no external dependency; OSS+Enterprise) -----
+  # A relative dsn creates the DB file in the process's working directory —
+  # start the service in a dedicated data directory or use an absolute path
+  dsn: "neuralgate.db"
 
-  # ----- SQLite (lightweight, OSS+Enterprise) -----
-  # driver: sqlite
-  # dsn: "/var/lib/neuralgate/neuralgate.db"
+  # ----- MySQL (OSS+Enterprise) -----
+  # driver: mysql
+  # dsn: "user:pass@tcp(host:3306)/neuralgate?charset=utf8mb4"
 
   # ----- DM Dameng (Enterprise only) -----
   # driver: dm
@@ -283,6 +291,16 @@ On startup:
 - Admin backend listens on `:8081`, providing model config, API Key management, and more
 - On first launch with an empty database, an admin account is created automatically: it uses `admin.bootstrap_password` from the config if set (for automation), otherwise a random password is printed to the startup log (shown only once — log in and change it immediately)
 - After signing in, rotate the initial password via "Change Password" in the top-right menu
+
+When using SQLite (the default), the database file is created in the **current working directory of the process** (`neuralgate.db`) — run the binary from a dedicated data directory, or set `storage.dsn` to an absolute path (use MySQL when multiple instances must share storage).
+
+Once the service is up, verify it with these commands (the proxy-port ops endpoints need no authentication):
+
+```bash
+curl -i http://127.0.0.1:8080/healthz   # liveness probe → 200
+curl -i http://127.0.0.1:8080/readyz    # readiness probe (503 while storage is down / draining)
+curl    http://127.0.0.1:8080/metrics   # Prometheus metrics (ng_*)
+```
 
 #### Admin Backend Authentication
 

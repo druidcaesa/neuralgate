@@ -169,6 +169,8 @@ go build -tags oss -o neuralgate ./cmd/gateway/
 go build -tags enterprise -o neuralgate-enterprise ./cmd/gateway/
 ```
 
+> 产物说明：编译得到的是**单个自包含二进制**——管理后台 WebUI 已内嵌其中，无需单独部署前端；一个进程同时提供两个隔离服务：OpenAI 代理端口与管理后台端口。产物可直接拷贝到目标机器运行；`./neuralgate -version` 可查看版本与编译信息（edition / commit / 构建时间）。
+
 ### 配置
 
 复制配置文件并修改：
@@ -183,8 +185,8 @@ server:
   admin_addr: ":8081"
 
 storage:
-  # 可选值: mysql(默认) / sqlite / dm(Enterprise) / kingbase(Enterprise)
-  driver: mysql
+  # 可选值: sqlite(默认) / mysql / dm(Enterprise) / kingbase(Enterprise)
+  driver: sqlite
 
   # 必填！上游 API Key 的加密密钥，缺失时启动失败；推荐经环境变量注入以免明文落配置
   # NEURALGATE_STORAGE_ENCRYPT_KEY（本地生成: openssl rand -hex 32）
@@ -195,12 +197,13 @@ storage:
   # NEURALGATE_LOG_LEVEL / NEURALGATE_ADMIN_BOOTSTRAP_PASSWORD /
   # NEURALGATE_STORAGE_ENCRYPT_KEY / NEURALGATE_REDIS_PASSWORD / NEURALGATE_ADMIN_SESSION_SECRET
 
-  # ----- MySQL (默认，OSS+Enterprise 均可用) -----
-  dsn: "user:pass@tcp(host:3306)/neuralgate?charset=utf8mb4"
+  # ----- SQLite (默认，零外部依赖；OSS+Enterprise 均可用) -----
+  # 相对路径的库文件落在「启动时的当前目录」，建议在专用数据目录启动或写成绝对路径
+  dsn: "neuralgate.db"
 
-  # ----- SQLite (轻量部署，OSS+Enterprise 均可用) -----
-  # driver: sqlite
-  # dsn: "/var/lib/neuralgate/neuralgate.db"
+  # ----- MySQL (OSS+Enterprise 均可用) -----
+  # driver: mysql
+  # dsn: "user:pass@tcp(host:3306)/neuralgate?charset=utf8mb4"
 
   # ----- 达梦数据库 (仅 Enterprise 编译生效) -----
   # driver: dm
@@ -279,6 +282,16 @@ circuit_breaker:           # OSS：上游熔断，状态由真实流量驱动
 - 管理后台监听 `:8081`，提供模型配置、API Key 管理等管理功能
 - 首次启动数据库为空时自动创建管理员账号 `admin`：若配置了 `admin.bootstrap_password` 则使用该密码（自动化场景），否则生成随机密码打印到启动日志（仅显示一次，请立即登录修改）
 - 登录后请通过页面右上角「修改密码」轮换初始密码
+
+若使用 SQLite（默认），数据库文件默认生成在**启动进程时的当前目录**（`neuralgate.db`）——建议在专用数据目录中启动服务，或将 `storage.dsn` 配为绝对路径（多实例共享存储场景建议改用 MySQL）。
+
+服务就绪后可用以下命令自检（代理端口运维端点免鉴权）：
+
+```bash
+curl -i http://127.0.0.1:8080/healthz   # 存活探针 → 200
+curl -i http://127.0.0.1:8080/readyz    # 就绪探针（存储不可达 / 进程排空时 → 503）
+curl    http://127.0.0.1:8080/metrics   # Prometheus 指标（ng_*）
+```
 
 #### 管理后台认证
 
