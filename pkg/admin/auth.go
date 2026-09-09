@@ -214,6 +214,18 @@ func (g *loginGuard) Reset(key string) {
 
 // ===== 中间件与路由处理 =====
 
+// ConfigureSessions 按配置重建会话管理器：多副本共享会话时注入同一 secret
+// （经 sha256 归一为 32B HMAC key，各副本配同一值即互认）；secret 为空则维持
+// 进程级随机密钥（重启后全部会话失效）。ttl<=0 用默认 24h。须在服务开始监听前调用
+func (s *AdminServer) ConfigureSessions(secret string, ttl time.Duration) {
+	key := randomSecret(32) // 默认：进程级随机
+	if secret != "" {
+		sum := sha256.Sum256([]byte(secret))
+		key = sum[:]
+	}
+	s.sessions = NewSessionManager(key, ttl)
+}
+
 // EnableAuth 注入会话管理器与 CORS 白名单（生产装配入口；sm 为 nil 时仅更新白名单）
 func (s *AdminServer) EnableAuth(sm *SessionManager, allowedOrigins []string) {
 	if sm != nil {

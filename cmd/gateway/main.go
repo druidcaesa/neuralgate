@@ -173,6 +173,8 @@ func main() {
 	adminServer.SetGatewayMeta(proxyScheme(cfg.TLS.Enabled), proxyPort(cfg.Server.ProxyAddr))
 	// 授权上传管理（enterprise 注入独立校验器；OSS 为空操作，上传接口恒 501）
 	setupLicenseManager(*cfg, adminServer, logger)
+	// 管理会话装配：共享密钥/TTL(多副本配同一 admin.session_secret 即会话互认，重启不失效)
+	adminServer.ConfigureSessions(cfg.Admin.SessionSecret, cfg.Admin.SessionTTL)
 	// CORS 白名单（空=同源部署不发送跨域头）；首个管理员账号缺位时引导创建
 	if len(cfg.Admin.AllowedOrigins) > 0 {
 		adminServer.EnableAuth(nil, cfg.Admin.AllowedOrigins)

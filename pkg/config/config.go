@@ -67,6 +67,11 @@ type MCPAuditConfig struct {
 type AdminConfig struct {
 	BootstrapPassword string   `yaml:"bootstrap_password"` // 为空则首次启动随机生成并打印日志
 	AllowedOrigins    []string `yaml:"allowed_origins"`
+	// SessionSecret 会话签名密钥(经 sha256 归一为 HMAC key)：多副本共享会话必须所有副本配同一值；
+	// 为空则每进程随机，重启后全部会话失效(需重新登录)。建议 ≥16 字符的高熵随机串。
+	SessionSecret string `yaml:"session_secret"`
+	// SessionTTL 登录会话有效期；<=0 用默认 24h
+	SessionTTL time.Duration `yaml:"session_ttl"`
 }
 
 type ServerConfig struct {
@@ -243,15 +248,28 @@ func (c *Config) applyEnvOverrides() {
 	if v, ok := envStr("ADMIN_BOOTSTRAP_PASSWORD"); ok {
 		c.Admin.BootstrapPassword = v
 	}
+	if v, ok := envStr("ADMIN_SESSION_SECRET"); ok {
+		c.Admin.SessionSecret = v
+	}
+	if v, ok := envStr("STORAGE_ENCRYPT_KEY"); ok {
+		c.Storage.EncryptKey = v
+	}
+	if v, ok := envStr("REDIS_PASSWORD"); ok {
+		c.RateLimit.Distributed.RedisPassword = v
+	}
 }
 
 // Validate 安全校验：encrypt_key 必须显式提供——内置默认密钥等于公开密钥，
-// 会令上游 API Key 的加密形同虚设。返回的提示包含生成方式
+// 会令上游 API Key 的加密形同虚设。返回的提示包含生成方式。
+// 密钥可从环境变量注入：NEURALGATE_STORAGE_ENCRYPT_KEY / NEURALGATE_ADMIN_SESSION_SECRET
 func (c *Config) Validate() error {
 	if c.Storage.EncryptKey == "" {
 		return fmt.Errorf(
 			"storage.encrypt_key 未配置：出于安全考虑已移除内置默认值，" +
-				"请显式设置(可用 `openssl rand -hex 32` 生成)")
+				"请显式设置(可用 `openssl rand -hex 32` 生成，或经环境变量 NEURALGATE_STORAGE_ENCRYPT_KEY 注入)")
+	}
+	if s := c.Admin.SessionSecret; s != "" && len(s) < 16 {
+		return fmt.Errorf("admin.session_secret 过短(%d 字符)：多副本共享会话密钥建议 ≥16 字符的高熵随机串", len(s))
 	}
 	return nil
 }

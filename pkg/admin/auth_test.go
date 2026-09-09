@@ -117,6 +117,36 @@ func TestSessionTokenRoundTrip(t *testing.T) {
 	}
 }
 
+// TestConfigureSessionsSharedSecretInterop 同 session_secret 的多副本会话互认，
+// 不同密钥拒绝；TTL<=0 落默认 24h
+func TestConfigureSessionsSharedSecretInterop(t *testing.T) {
+	const shared = "shared-session-secret-123456"
+	u := &plugin.AdminUser{ID: "u1", Username: "root", PasswordHash: "h", Status: plugin.AdminUserStatusActive}
+	lookup := func(string) (*plugin.AdminUser, error) { return u, nil }
+
+	s1 := NewAdminServer(oss.NewMemStorage(), nil, "oss", nil, nil)
+	s1.ConfigureSessions(shared, 0)
+	s2 := NewAdminServer(oss.NewMemStorage(), nil, "oss", nil, nil)
+	s2.ConfigureSessions(shared, 0)
+
+	tok, exp, err := s1.sessions.Mint(u, nil, false, testNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := exp.Sub(testNow); d != 24*time.Hour {
+		t.Errorf("TTL<=0 应落默认 24h, got %v", d)
+	}
+	if _, err := s2.sessions.Verify(tok, lookup, testNow.Add(time.Minute)); err != nil {
+		t.Errorf("同 secret 副本应互认会话, got %v", err)
+	}
+
+	s3 := NewAdminServer(oss.NewMemStorage(), nil, "oss", nil, nil)
+	s3.ConfigureSessions("different-session-secret", 0)
+	if _, err := s3.sessions.Verify(tok, lookup, testNow.Add(time.Minute)); err == nil {
+		t.Error("不同 secret 副本不应互认会话")
+	}
+}
+
 func TestSessionTokenExpired(t *testing.T) {
 	m := NewSessionManager(testSecret, time.Hour)
 	u := &plugin.AdminUser{ID: "u1", Username: "root", PasswordHash: "h"}

@@ -248,6 +248,9 @@ func TestEnvOverrides(t *testing.T) {
 	t.Setenv("NEURALGATE_STORAGE_DSN", "/data/ng.db")
 	t.Setenv("NEURALGATE_ADMIN_BOOTSTRAP_PASSWORD", "env-pass")
 	t.Setenv("NEURALGATE_LOG_LEVEL", "") // 空值不覆盖
+	t.Setenv("NEURALGATE_STORAGE_ENCRYPT_KEY", "env-enc-key")
+	t.Setenv("NEURALGATE_REDIS_PASSWORD", "env-redis-pass")
+	t.Setenv("NEURALGATE_ADMIN_SESSION_SECRET", "env-session-secret-abc")
 	cfg.applyEnvOverrides()
 	if cfg.Server.ProxyAddr != ":9999" || cfg.Storage.DSN != "/data/ng.db" ||
 		cfg.Admin.BootstrapPassword != "env-pass" {
@@ -255,5 +258,32 @@ func TestEnvOverrides(t *testing.T) {
 	}
 	if cfg.Log.Level != Default().Log.Level {
 		t.Error("空环境变量不应覆盖")
+	}
+	if cfg.Storage.EncryptKey != "env-enc-key" {
+		t.Errorf("STORAGE_ENCRYPT_KEY 未注入: %q", cfg.Storage.EncryptKey)
+	}
+	if cfg.RateLimit.Distributed.RedisPassword != "env-redis-pass" {
+		t.Errorf("REDIS_PASSWORD 未注入: %q", cfg.RateLimit.Distributed.RedisPassword)
+	}
+	if cfg.Admin.SessionSecret != "env-session-secret-abc" {
+		t.Errorf("ADMIN_SESSION_SECRET 未注入: %q", cfg.Admin.SessionSecret)
+	}
+}
+
+// TestValidateShortSessionSecret 配置了过短的 session_secret 应被拒绝(fail-fast)
+func TestValidateShortSessionSecret(t *testing.T) {
+	cfg := Default()
+	cfg.Storage.EncryptKey = "explicit-key"
+	cfg.Admin.SessionSecret = "short"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "session_secret") {
+		t.Errorf("过短 session_secret 应报错并提示字段, got %v", err)
+	}
+	cfg.Admin.SessionSecret = "0123456789abcdef" // 16 字符边界通过
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("16 字符 session_secret 应通过, got %v", err)
+	}
+	cfg.Admin.SessionSecret = "" // 留空(进程随机)应通过
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("空 session_secret 应通过, got %v", err)
 	}
 }
