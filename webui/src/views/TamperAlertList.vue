@@ -55,6 +55,7 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { formatTime } from '../utils/time'
 import type { TamperAlertItem } from '../types'
 import { listTamperAlerts, resolveTamperAlert } from '../api/tamper'
 
@@ -64,10 +65,6 @@ const page = ref(1)
 const size = ref(20)
 const loading = ref(false)
 const resolvedFilter = ref('false')
-
-function formatTime(s: string): string {
-  return s ? new Date(s).toLocaleString() : '-'
-}
 
 async function load() {
   loading.value = true

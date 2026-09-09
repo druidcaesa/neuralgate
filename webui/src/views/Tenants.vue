@@ -51,9 +51,6 @@
             <el-option label="禁用" value="disabled" />
           </el-select>
         </el-form-item>
-        <el-form-item label="配置 JSON">
-          <el-input v-model="configText" type="textarea" :rows="3" placeholder='{"key":"value"}' />
-        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
@@ -66,6 +63,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
+import { formatTime } from '../utils/time'
 import type { TenantItem } from '../types'
 import { createTenant, deleteTenant, listTenants, updateTenant } from '../api/rbac'
 
@@ -77,13 +75,9 @@ const loading = ref(false)
 const saving = ref(false)
 const dialogVisible = ref(false)
 const editingId = ref('')
-const configText = ref('{}')
+const editingConfig = ref<Record<string, string> | null>(null) // 编辑时原样带回,避免误清预留字段
 
 const form = reactive<TenantItem>({ name: '', code: '', status: 'active' })
-
-function formatTime(s?: string): string {
-  return s ? new Date(s).toLocaleString() : '-'
-}
 
 async function load() {
   loading.value = true
@@ -98,30 +92,25 @@ async function load() {
 
 function openCreate() {
   editingId.value = ''
+  editingConfig.value = null
   Object.assign(form, { name: '', code: '', status: 'active' })
-  configText.value = '{}'
   dialogVisible.value = true
 }
 
 function openEdit(row: TenantItem) {
   editingId.value = row.id ?? ''
   Object.assign(form, row)
-  configText.value = JSON.stringify(row.config ?? {})
+  editingConfig.value = row.config ?? {}
   dialogVisible.value = true
 }
 
 async function submit() {
-  let config: Record<string, string> = {}
-  try {
-    config = JSON.parse(configText.value || '{}')
-  } catch {
-    ElMessage.warning('配置不是合法 JSON')
-    return
-  }
   saving.value = true
   try {
-    const payload = { ...form, config }
+    // 仅提交表单可控字段；config 为预留字段：创建不携带，编辑原样带回(避免误清历史数据)
+    const payload: TenantItem = { name: form.name, code: form.code, status: form.status }
     if (editingId.value) {
+      payload.config = editingConfig.value ?? {}
       await updateTenant(editingId.value, payload)
     } else {
       await createTenant(payload)

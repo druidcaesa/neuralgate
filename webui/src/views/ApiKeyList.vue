@@ -22,8 +22,12 @@
       <el-table-column label="允许模型" min-width="140">
         <template #default="{ row }">{{ row.allowed_models?.length ? row.allowed_models.join(', ') : '全部' }}</template>
       </el-table-column>
-      <el-table-column prop="expires_at" label="过期时间" width="170" />
-      <el-table-column prop="created_at" label="创建时间" width="170" />
+      <el-table-column label="过期时间" width="170">
+        <template #default="{ row }">{{ formatTime(row.expires_at) }}</template>
+      </el-table-column>
+      <el-table-column label="创建时间" width="170">
+        <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
+      </el-table-column>
       <el-table-column label="操作" width="160">
         <template #default="{ row }">
           <el-button size="small" @click="toggleStatus(row)">{{ row.status === 'active' ? '禁用' : '启用' }}</el-button>
@@ -57,6 +61,7 @@
         <el-form-item label="限流(rps)"><el-input-number v-model="form.rate_limit" :min="1" :max="10000" /></el-form-item>
         <el-form-item label="允许模型">
           <el-select v-model="form.allowed_models" multiple filterable allow-create default-first-option placeholder="留空=全部">
+            <el-option v-for="m in modelOptions" :key="m.name" :label="m.name" :value="m.name" :disabled="!m.enabled" />
           </el-select>
         </el-form-item>
         <el-form-item label="过期时间"><el-date-picker v-model="form.expires_at" type="datetime" placeholder="留空=永不过期" /></el-form-item>
@@ -85,7 +90,9 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import type { ApiKeyItem, ApiKeyCreateRequest } from '../types'
+import { formatTime } from '../utils/time'
+import type { ApiKeyItem, ApiKeyCreateRequest, ModelItem } from '../types'
+import { listModels } from '../api/model'
 import {
   listApiKeys, createApiKey, updateApiKeyStatus, deleteApiKey,
   batchCreateAPIKeys, batchDeleteAPIKeys,
@@ -104,6 +111,18 @@ let plainConfirmed = false
 
 const form = reactive<ApiKeyCreateRequest>({ name: '', quota: -1, rate_limit: 10, allowed_models: [], expires_at: null })
 
+// 允许模型下拉：选项来自「模型管理」配置(留空=全部)；每次打开创建弹窗时刷新
+const modelOptions = ref<ModelItem[]>([])
+
+async function refreshModelOptions() {
+  try {
+    const data = await listModels(1, 1000)
+    modelOptions.value = data.items ?? []
+  } catch {
+    modelOptions.value = []
+  }
+}
+
 async function load() {
   loading.value = true
   try {
@@ -115,8 +134,9 @@ async function load() {
   }
 }
 
-function openCreate() {
+async function openCreate() {
   Object.assign(form, { name: '', quota: -1, rate_limit: 10, allowed_models: [], expires_at: null })
+  await refreshModelOptions()
   createDialog.value = true
 }
 

@@ -75,6 +75,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
+import { formatDate, formatTime } from '../utils/time'
 import type { ReportItem } from '../types'
 import { downloadComplianceReport, generateComplianceReport, listComplianceReports } from '../api/compliance'
 
@@ -109,13 +110,6 @@ function periodTagType(t: string): 'success' | 'warning' | '' {
   if (t === 'week') return 'warning'
   return ''
 }
-function formatDate(s: string): string {
-  return s ? new Date(s).toLocaleDateString() : '-'
-}
-function formatTime(s: string): string {
-  return s ? new Date(s).toLocaleString() : '-'
-}
-
 async function load() {
   loading.value = true
   try {

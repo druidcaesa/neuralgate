@@ -86,6 +86,7 @@
 
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
+import { formatTime } from '../utils/time'
 import { getMCPAuditLog, listMCPAuditLogs } from '../api/mcp'
 import type { MCPAuditLogItem } from '../types'
 
@@ -97,10 +98,6 @@ const range = ref<[string, string] | null>(null)
 
 const detailVisible = ref(false)
 const detail = ref<MCPAuditLogItem | null>(null)
-
-function formatTime(v: string): string {
-  return v ? new Date(v).toLocaleString() : '-'
-}
 
 // JSON 美化；非合法 JSON 原样展示
 function pretty(text: string): string {

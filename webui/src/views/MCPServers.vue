@@ -59,6 +59,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
+import { formatTime } from '../utils/time'
 import {
   createMCPServer,
   deleteMCPServer,
@@ -79,10 +80,6 @@ const saving = ref(false)
 const editingId = ref('')
 const form = reactive<MCPServerPayload>({ name: '', endpoint: '', enabled: true })
 const headersText = ref('{}')
-
-function formatTime(v: string): string {
-  return v ? new Date(v).toLocaleString() : '-'
-}
 
 async function load(): Promise<void> {
   loading.value = true

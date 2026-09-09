@@ -24,7 +24,9 @@
       </el-form-item>
     </el-form>
     <el-table :data="logs" v-loading="loading" @row-click="openDetail">
-      <el-table-column prop="CreatedAt" label="时间" width="180" />
+      <el-table-column label="时间" width="180">
+        <template #default="{ row }">{{ formatTime(row.CreatedAt) }}</template>
+      </el-table-column>
       <el-table-column prop="ModelName" label="模型" min-width="110" />
       <el-table-column label="状态" width="90">
         <template #default="{ row }">
@@ -54,7 +56,7 @@
           <el-descriptions-item label="耗时(ms)">{{ detail.duration_ms }}</el-descriptions-item>
           <el-descriptions-item label="流式">{{ detail.is_stream ? '是' : '否' }}</el-descriptions-item>
           <el-descriptions-item label="断连">{{ detail.disconnected ? detail.disconnect_reason : '否' }}</el-descriptions-item>
-          <el-descriptions-item label="时间">{{ detail.created_at }}</el-descriptions-item>
+          <el-descriptions-item label="时间">{{ formatTime(detail.created_at) }}</el-descriptions-item>
         </el-descriptions>
         <h4>请求体</h4>
         <pre class="json-block">{{ pretty(detail.request_body) }}</pre>
@@ -76,6 +78,7 @@
 
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
+import { formatTime } from '../utils/time'
 import type { AuditDetail, AuditLogItem, AuditQueryParams } from '../types'
 import { listAuditLogs, getAuditDetail, auditExportURL } from '../api/audit'
 

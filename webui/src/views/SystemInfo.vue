@@ -16,7 +16,7 @@
     <el-descriptions v-if="info" :column="2" border>
       <el-descriptions-item label="版本">{{ info.version }}</el-descriptions-item>
       <el-descriptions-item label="版本类型">{{ info.edition }}</el-descriptions-item>
-      <el-descriptions-item label="编译时间">{{ info.build_time }}</el-descriptions-item>
+      <el-descriptions-item label="编译时间">{{ formatTime(info.build_time) }}</el-descriptions-item>
       <el-descriptions-item label="Git Commit">{{ info.git_commit }}</el-descriptions-item>
       <el-descriptions-item label="运行时长">{{ info.uptime }}</el-descriptions-item>
       <el-descriptions-item label="数据库状态">
@@ -46,7 +46,7 @@
       <el-descriptions-item label="客户名称">{{ license.customer_name ?? '-' }}</el-descriptions-item>
       <el-descriptions-item label="产品名称">{{ license.product_name ?? '-' }}</el-descriptions-item>
       <el-descriptions-item label="授权码">{{ license.license_key ?? '-' }}</el-descriptions-item>
-      <el-descriptions-item label="到期时间">{{ license.expires_at ?? '-' }}</el-descriptions-item>
+      <el-descriptions-item label="到期时间">{{ formatTime(license.expires_at) }}</el-descriptions-item>
       <el-descriptions-item label="剩余天数">{{ license.days_remaining ?? '-' }}</el-descriptions-item>
       <el-descriptions-item label="节点/租户上限">{{ license.max_nodes ?? '-' }} / {{ license.max_tenants ?? '-' }}</el-descriptions-item>
       <el-descriptions-item label="授权功能" :span="2">
@@ -79,6 +79,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
+import { formatTime } from '../utils/time'
 import type { LicenseDetail, SystemInfo } from '../types'
 import { getLicense, getSystemInfo, uploadLicense } from '../api/system'
 
