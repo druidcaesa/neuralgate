@@ -233,6 +233,25 @@ log:
   level: info
   format: json
   output: stdout            # 也可为文件路径(自动按 200MB×7 轮转)
+
+cluster:                   # Enterprise：需授权含 cluster。多副本共享登录防爆破 + 后台任务选主
+  enabled: false           # 默认关闭；缺授权/Redis 不可达同样自动回退单机(各副本独立运行)
+  # 环境变量覆盖: NEURALGATE_CLUSTER_REDIS_ADDR / NEURALGATE_CLUSTER_REDIS_PASSWORD / NEURALGATE_CLUSTER_REDIS_DB
+  redis_addr: "127.0.0.1:6379"
+  redis_password: ""
+  redis_db: 0
+  lease_ttl: 20s           # leader 租约有效期；<=0 取默认 20s
+
+circuit_breaker:           # OSS：上游熔断，状态由真实流量驱动
+  enabled: false           # 开启后按失败剔除死上游；全部熔断时快速返回 503
+  failure_threshold: 5     # 采样窗内失败次数达到后熔断(open)
+  open_for: 30s            # 熔断保持时长，到期进入半开(half-open)
+  success_threshold: 2     # 半开下连续成功次数达到后恢复(closed)
+  sample_window: 1m        # 失败计数窗口
+  health_probe:            # 主动探活(默认关)：仅测连通性，任何 HTTP 响应视为可达
+    enabled: false
+    interval: 15s
+    path: "/healthz"
 ```
 
 > **安全提示**：`encrypt_key` 自本版本起必须显式配置（已移除内置默认值），
@@ -242,6 +261,12 @@ log:
 > `/healthz`（存活探针）、`/readyz`（就绪探针：存储不可达或进程处于优雅下线窗口时返回 503，供负载均衡/滚动发布摘流）。
 
 > **模型配置不在 config.yaml 中**。模型通过管理后台页面（:8081）CRUD 管理，存储在数据库中，支持热更新——增删改模型后立即生效，无需重启。
+>
+> **集群协同（`cluster`，Enterprise）**：多副本部署且授权含 `cluster` 时启用——登录防爆破在副本间共享计数；合规报表/防篡改校验/审计外推等后台任务仅由 leader 副本执行（leader 由 Redis 租约竞选），leader 切换后审计外推从上次进度续拉、不重复导出。授权不含 `cluster` 或 Redis 不可达时自动回退单机：各副本独立运行、各自执行后台任务。
+>
+> **上游熔断（`circuit_breaker`，OSS）**：按真实流量失败情况自动剔除异常上游，全部上游熔断时快速返回 503；可选主动健康探针默认关闭，开启后仅探测连通性。
+>
+> **升级注意**：若以多副本部署并开启审计外推，而现有授权不含 `cluster` 特性，各副本仍会各自独立外推，产生重复导出。请补签包含 `cluster` 特性的授权后重启生效。
 
 ### 启动
 

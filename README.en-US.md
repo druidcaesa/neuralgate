@@ -234,6 +234,25 @@ log:
   level: info
   format: json
   output: stdout            # or a file path (auto-rotated at 200MB, keep 7)
+
+cluster:                   # Enterprise: requires a license with the cluster feature. Shared login anti-brute-force + leader-gated background jobs
+  enabled: false           # Off by default; missing license / Redis unreachable also auto-fall back to single-node (each replica runs independently)
+  # Env overrides: NEURALGATE_CLUSTER_REDIS_ADDR / NEURALGATE_CLUSTER_REDIS_PASSWORD / NEURALGATE_CLUSTER_REDIS_DB
+  redis_addr: "127.0.0.1:6379"
+  redis_password: ""
+  redis_db: 0
+  lease_ttl: 20s           # leader lease TTL; <=0 uses the default 20s
+
+circuit_breaker:           # OSS: upstream circuit breaker, state driven by real traffic
+  enabled: false           # When enabled, ejects dead upstreams on failures; fast 503 when all are tripped
+  failure_threshold: 5     # failures in the sample window before tripping (open)
+  open_for: 30s            # how long the breaker stays open before half-open
+  success_threshold: 2     # consecutive successes in half-open before recovering (closed)
+  sample_window: 1m        # failure-counting window
+  health_probe:            # Active health probe (off by default): connectivity check only; any HTTP response counts as reachable
+    enabled: false
+    interval: 15s
+    path: "/healthz"
 ```
 
 > **Security notice**: `encrypt_key` is mandatory as of this release (built-in
@@ -246,6 +265,12 @@ log:
 > balancers / rolling deploys).
 
 > **Model configs are NOT in config.yaml.** Models are managed via the admin backend (:8081) CRUD, stored in the database, and support hot updates — add/edit/remove takes effect immediately without restart.
+>
+> **Cluster coordination (`cluster`, Enterprise)**: In a multi-replica deployment, once enabled with a license containing `cluster` — login brute-force counters are shared across replicas, and background jobs (compliance reports / tamper verification / audit export) run on the leader replica only (the leader is elected via a Redis lease). After a leader change, audit export resumes from its last exported position, so nothing is duplicated. If the license lacks `cluster` or Redis is unreachable, the gateway automatically falls back to single-node behavior: each replica runs independently and executes background jobs by itself.
+>
+> **Upstream circuit breaker (`circuit_breaker`, OSS)**: dead upstreams are ejected based on real traffic failures; when all upstreams are tripped it returns a fast 503. The optional active health probe is off by default and, when enabled, only checks connectivity.
+>
+> **Upgrade note**: In a multi-replica deployment with audit export enabled, if the existing license does not include the `cluster` feature, every replica keeps exporting independently, causing duplicate exports. Re-issue a license that includes `cluster`, then restart.
 
 ### Run
 
