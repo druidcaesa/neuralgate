@@ -90,6 +90,36 @@ func (b *upstreamBreaker) allowProbe() bool {
 	return false
 }
 
+// Selectable 判定当前是否可参与选路:只推进到期状态(open 到期 → half-open),不占试探槽;
+// 槽位由真正选中后的 Allow 占用。与 Allow 的时间推进一致,HalfOpen 容量仅在实际占槽时判定
+func (b *upstreamBreaker) Selectable() bool {
+	now := b.cfg.now()
+	switch b.state {
+	case Closed:
+		if now.Sub(b.winStart) > b.cfg.SampleWindow {
+			b.failures, b.winStart = 0, now
+		}
+		return true
+	case Open:
+		if now.Sub(b.openedAt) >= b.cfg.OpenFor {
+			b.state = HalfOpen
+			b.successes, b.inFlight = 0, 0
+			return true
+		}
+		return false
+	default: // HalfOpen
+		return true
+	}
+}
+
+// Release 释放未成行的试探槽:仅当 half-open 且槽位被 Allow 占用时递减 inFlight,不改状态。
+// 供选路后、转发前中止的路径调用,与 Record 二选一配对 Allow,防止槽位被占至空闲清扫
+func (b *upstreamBreaker) Release() {
+	if b.state == HalfOpen && b.inFlight > 0 {
+		b.inFlight--
+	}
+}
+
 // Record 上报一次结果;调用方在 Allow()==true 的尝试结束后调用(ok=连通且状态<500)
 func (b *upstreamBreaker) Record(ok bool) {
 	now := b.cfg.now()
@@ -178,11 +208,25 @@ func (r *BreakerRegistry) Allow(id string) bool {
 	return r.breakerFor(id).Allow()
 }
 
+// Selectable 判定某上游当前是否可参与选路(只推进到期状态,不占试探槽;槽位由选中后的 Allow 占用)
+func (r *BreakerRegistry) Selectable(id string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.breakerFor(id).Selectable()
+}
+
 // Record 记录某上游一次尝试结果
 func (r *BreakerRegistry) Record(id string, ok bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.breakerFor(id).Record(ok)
+}
+
+// Release 释放某上游未成行的试探槽(仅递减 inFlight,不改状态);与 Record 二选一配对 Allow
+func (r *BreakerRegistry) Release(id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.breakerFor(id).Release()
 }
 
 // sweep 显式清扫(测试用)

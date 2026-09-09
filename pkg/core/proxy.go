@@ -286,6 +286,7 @@ func (p *ProxyCore) handleProxy(w http.ResponseWriter, r *http.Request, rc *Requ
 		outbound, err = p.buildConvertedRequest(r, upstreamURL, cfg, adpt)
 	}
 	if err != nil {
+		p.releaseBreaker(sel) // 请求构造失败:释放已占试探槽,与 recordBreaker 二选一配对
 		rc.ResponseStatus = http.StatusBadRequest
 		rc.EndTime = time.Now()
 		p.finalizeAudit(rc, 0, 0, 0)
@@ -937,6 +938,7 @@ func (p *ProxyCore) handlePassThrough(w http.ResponseWriter, r *http.Request, rc
 	}
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
+		p.releaseBreaker(sel) // 读体失败中止:释放已占试探槽,与 recordBreaker 二选一配对
 		rc.ResponseStatus = http.StatusBadRequest
 		rc.EndTime = time.Now()
 		p.finalizeAudit(rc, 0, 0, 0)
@@ -965,6 +967,7 @@ func (p *ProxyCore) handlePassThrough(w http.ResponseWriter, r *http.Request, rc
 	upstreamURL := strings.TrimRight(cfg.BaseURL, "/") + r.URL.Path
 	outbound, err := http.NewRequestWithContext(r.Context(), r.Method, upstreamURL, bytes.NewReader(body))
 	if err != nil {
+		p.releaseBreaker(sel) // 构造上游请求失败中止:释放已占试探槽,与 recordBreaker 二选一配对
 		rc.ResponseStatus = http.StatusInternalServerError
 		rc.EndTime = time.Now()
 		p.finalizeAudit(rc, 0, 0, 0)
@@ -1119,9 +1122,9 @@ func selectUpstream(ups []plugin.Upstream) *plugin.Upstream {
 	return &enabled[len(enabled)-1] // 兜底(浮点/边界)
 }
 
-// pickHealthy 熔断感知选路:剔除 open 上游后在剩余(含 half-open 试探槽)里按原逻辑
-// 加权随机。reg 为 nil(特性关闭)时语义=原 selectUpstream。全部候选不可用(存在 enabled
-// 上游但全被熔断/试探槽占满)→ (nil, true) 供调用方快速 503
+// pickHealthy 熔断感知选路:用只读的 Selectable(不占试探槽)剔除 open 上游,再对加权随机的
+// 选中者执行 Allow 占用槽位。reg 为 nil(特性关闭)时语义=原 selectUpstream。存在 enabled
+// 上游但全被熔断/选中者的试探槽被并发占满 → (nil, true) 供调用方快速 503
 func pickHealthy(ups []plugin.Upstream, reg *BreakerRegistry) (*plugin.Upstream, bool) {
 	// 先统计是否存在可参与选路的候选(任一 enabled)
 	hasEnabled := false
@@ -1139,14 +1142,27 @@ func pickHealthy(ups []plugin.Upstream, reg *BreakerRegistry) (*plugin.Upstream,
 	}
 	available := make([]plugin.Upstream, 0, len(ups))
 	for _, u := range ups {
-		if u.Enabled && reg.Allow(u.ID) {
+		if u.Enabled && reg.Selectable(u.ID) {
 			available = append(available, u)
 		}
 	}
-	if len(available) == 0 {
-		return nil, true
+	// select-then-Allow:先加权随机选中,再占用槽位;选中者刚被 open 或 half-open
+	// 试探槽被并发占满时将其移出候选重选,循环至多 len(available) 轮
+	for len(available) > 0 {
+		sel := selectUpstream(available)
+		if reg.Allow(sel.ID) {
+			return sel, false
+		}
+		id := sel.ID
+		next := make([]plugin.Upstream, 0, len(available)-1)
+		for _, u := range available {
+			if u.ID != id {
+				next = append(next, u)
+			}
+		}
+		available = next
 	}
-	return selectUpstream(available), false
+	return nil, true
 }
 
 // respStatus 取响应状态码;错误时为 0(供熔断失败判定)
@@ -1165,6 +1181,15 @@ func (p *ProxyCore) recordBreaker(sel *plugin.Upstream, err error, status int) {
 	}
 	ok := err == nil && status > 0 && status < 500
 	p.breaker.Record(sel.ID, ok)
+}
+
+// releaseBreaker 释放已选上游未成行的试探槽:选路(Allow 占槽)后、转发(recordBreaker)前
+// 中止的路径调用,与 recordBreaker 二选一配对,防止 half-open 槽位被泄漏。breaker/sel 为空即空操作
+func (p *ProxyCore) releaseBreaker(sel *plugin.Upstream) {
+	if p.breaker == nil || sel == nil {
+		return
+	}
+	p.breaker.Release(sel.ID)
 }
 
 // passthroughEndpoints 透传端点 → 允许的 HTTP 方法集合(PRD 8.5)

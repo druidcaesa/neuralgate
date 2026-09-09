@@ -140,6 +140,71 @@ func TestPickHealthyFiltersOpenAndFlagsAllBlocked(t *testing.T) {
 	}
 }
 
+// Selectable 只读 peek:推进到期状态但不占试探槽;槽位由选中后的 Allow 占用
+func TestSelectableDoesNotConsumeProbeSlot(t *testing.T) {
+	now := time.Unix(1000, 0)
+	reg := NewRegistry(NewBreakerConfig(1, time.Minute, 3*time.Second, 1, 1, func() time.Time { return now }))
+	reg.Record("u", false) // u → open
+	if reg.Selectable("u") {
+		t.Fatal("open 未到期应不可选")
+	}
+	now = now.Add(4 * time.Second)
+	if !reg.Selectable("u") {
+		t.Fatal("到期 open 应可选(推进 half-open,不占槽)")
+	}
+	if !reg.Selectable("u") {
+		t.Fatal("half-open 未占槽仍应可选(peek 不占槽)")
+	}
+	// 槽位未被 Selectable 消耗:首个 Allow 占槽放行,占满后第二个拒绝
+	if !reg.Allow("u") {
+		t.Fatal("槽位空, Allow 应放行")
+	}
+	if reg.Allow("u") {
+		t.Fatal("ProbeConcurrency=1 下第二 Allow 应拒绝")
+	}
+	// Release 归还未成行试探槽,状态保持 half-open 且可再次被 Allow 占用
+	reg.Release("u")
+	if !reg.Allow("u") {
+		t.Fatal("Release 归还槽位后 Allow 应放行")
+	}
+	reg.Release("u") // 配对:归还最后一次 Allow 的槽位
+	if st := reg.states["u"].State(); st != HalfOpen {
+		t.Fatalf("Release 不应改状态, got %v", st)
+	}
+}
+
+// 回归:恢复中的 half-open 与 closed peer 并存时,选路不得烧掉其试探槽。
+// a 权重 0 使 peer b 必然胜出(确定性);旧实现对每个候选调 Allow,会消耗 a 的槽位
+func TestPickHealthyHalfOpenSlotNotBurnedWhenPeerWins(t *testing.T) {
+	now := time.Unix(1000, 0)
+	reg := NewRegistry(NewBreakerConfig(1, time.Minute, 3*time.Second, 1, 1, func() time.Time { return now }))
+	ups := []plugin.Upstream{
+		{ID: "a", Enabled: true, Weight: 0},
+		{ID: "b", Enabled: true, Weight: 1},
+	}
+	reg.Record("a", false) // a → open
+	now = now.Add(4 * time.Second)
+	if !reg.Selectable("a") {
+		t.Fatal("a 到期应转 half-open(可参与选路)")
+	}
+	sel, blocked := pickHealthy(ups, reg)
+	if blocked || sel == nil || sel.ID != "b" {
+		t.Fatalf("b 应作为唯一权重胜出, got %+v blocked=%v", sel, blocked)
+	}
+	// 核心断言:peer 胜出后 a 的试探槽未被烧掉(仍可被 Allow 占用)
+	if !reg.Allow("a") {
+		t.Fatal("peer 胜出后 a 的试探槽应仍可占用(槽未被 pickHealthy 泄漏)")
+	}
+	reg.Release("a")
+	// 仅剩 a 一个候选时仍可被选中(不再被占满槽位挡住)
+	only := []plugin.Upstream{{ID: "a", Enabled: true, Weight: 1}}
+	sel, blocked = pickHealthy(only, reg)
+	if blocked || sel == nil || sel.ID != "a" {
+		t.Fatalf("a 唯一候选时应被选中, got %+v blocked=%v", sel, blocked)
+	}
+	reg.Release("a") // 配对归还
+}
+
 // 注册表为 nil 时(特性关闭)行为逐字节不变:回退原 selectUpstream
 func TestPickHealthyNilRegistryFallsBack(t *testing.T) {
 	ups := []plugin.Upstream{{ID: "a", Enabled: true, Weight: 1}}
