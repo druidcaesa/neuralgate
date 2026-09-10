@@ -22,7 +22,12 @@
           <el-button size="small" type="primary" plain style="margin-top:8px" @click="openUpstreamCreate(row)">+ 添加上游</el-button>
         </template>
       </el-table-column>
-      <el-table-column prop="name" label="模型名称" min-width="120" />
+      <el-table-column label="模型名称" min-width="200">
+        <template #default="{ row }">
+          <span>{{ row.name }}</span>
+          <el-tag v-if="row.key_unreadable" type="danger" size="small" style="margin-left:6px">密钥失效,请重填</el-tag>
+        </template>
+      </el-table-column>
       <el-table-column label="供应商" min-width="130">
         <template #default="{ row }">{{ providerLabel(row.provider) }}</template>
       </el-table-column>

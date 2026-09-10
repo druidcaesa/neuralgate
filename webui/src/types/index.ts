@@ -18,6 +18,7 @@ export interface ModelItem {
   weight: number
   max_tokens?: number
   enabled: boolean
+  key_unreadable?: boolean
   tags: Record<string, string>
   created_at: string
   _upstreams?: UpstreamItem[]
