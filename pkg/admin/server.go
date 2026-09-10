@@ -52,7 +52,8 @@ func NewAdminServer(storage plugin.StoragePlugin, logger *zap.Logger, edition st
 		loginGuard: newLoginGuard(),
 	}
 	s.engine = gin.New()
-	s.engine.Use(gin.Recovery(), s.CORS())
+	// AccessLog 置于最外层:内层 Recovery 把 panic 转为 500 后,c.Next() 才带着终态状态码返回
+	s.engine.Use(s.AccessLog(), gin.Recovery(), s.CORS())
 	s.registerRoutes(s.engine)
 	return s
 }
