@@ -191,3 +191,102 @@ func TestListSecurityEvents(t *testing.T) {
 		t.Errorf("分页不符: total=%v items=%d", total, len(items))
 	}
 }
+
+// TestUpdatePrivacyRuleTogglesEnabled 启用/禁用必须真正落库:
+// 前端开关发 PUT {...,enabled:false},请求体缺 enabled 字段时会被 ShouldBindJSON 静默丢弃,
+// 表现为「点了开关但页面状态不变」
+func TestUpdatePrivacyRuleTogglesEnabled(t *testing.T) {
+	s := newPrivacyServer()
+	rec := doJSON(t, s, http.MethodPost, "/api/privacy-rules",
+		`{"rule_type":"pii","name":"可禁用","pattern":"p","replacement":"r","scope":"both"}`)
+	id, _ := decodeData(t, rec)["id"].(string)
+
+	// 禁用
+	rec = doJSON(t, s, http.MethodPut, "/api/privacy-rules/"+id,
+		`{"rule_type":"pii","name":"可禁用","pattern":"p","replacement":"r","scope":"both","enabled":false}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("禁用请求 status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	rules, _ := s.storage.ListPrivacyRules(nil)
+	if len(rules) != 1 || rules[0].Enabled {
+		t.Fatalf("禁用未落库: %+v", rules)
+	}
+
+	// 列表接口(前端数据来源)也必须反映为 false
+	rec = doJSON(t, s, http.MethodGet, "/api/privacy-rules", "")
+	items, _ := decodeData(t, rec)["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("列表返回 %d 条, want 1", len(items))
+	}
+	if enabled, _ := items[0].(map[string]any)["enabled"].(bool); enabled {
+		t.Error("列表接口的 enabled 仍为 true,前端将显示未变化")
+	}
+
+	// 重新启用
+	rec = doJSON(t, s, http.MethodPut, "/api/privacy-rules/"+id,
+		`{"rule_type":"pii","name":"可禁用","pattern":"p","replacement":"r","scope":"both","enabled":true}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("启用请求 status = %d", rec.Code)
+	}
+	rules, _ = s.storage.ListPrivacyRules(nil)
+	if len(rules) != 1 || !rules[0].Enabled {
+		t.Fatalf("启用未落库: %+v", rules)
+	}
+}
+
+// TestUpdatePrivacyRulePreservesEnabledWhenOmitted 请求体不带 enabled 时必须保留原值,
+// 否则「只改名字」的编辑会顺手把规则禁用掉
+func TestUpdatePrivacyRulePreservesEnabledWhenOmitted(t *testing.T) {
+	s := newPrivacyServer()
+	rec := doJSON(t, s, http.MethodPost, "/api/privacy-rules",
+		`{"rule_type":"pii","name":"旧名","pattern":"p","replacement":"r","scope":"both"}`)
+	id, _ := decodeData(t, rec)["id"].(string)
+
+	// 先禁用
+	doJSON(t, s, http.MethodPut, "/api/privacy-rules/"+id,
+		`{"rule_type":"pii","name":"旧名","pattern":"p","replacement":"r","scope":"both","enabled":false}`)
+
+	// 再发一个不带 enabled 的改名请求
+	rec = doJSON(t, s, http.MethodPut, "/api/privacy-rules/"+id,
+		`{"rule_type":"pii","name":"新名","pattern":"p","replacement":"r","scope":"both"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	rules, _ := s.storage.ListPrivacyRules(nil)
+	if len(rules) != 1 || rules[0].Name != "新名" {
+		t.Fatalf("改名未生效: %+v", rules)
+	}
+	if rules[0].Enabled {
+		t.Error("未携带 enabled 的请求不得改变原值(原为 false)")
+	}
+}
+
+// TestCreatePrivacyWhitelistEntryHonorsEnabled 白名单创建请求里的 enabled 不得被忽略
+func TestCreatePrivacyWhitelistEntryHonorsEnabled(t *testing.T) {
+	s := newPrivacyServer()
+
+	rec := doJSON(t, s, http.MethodPost, "/api/privacy-whitelist",
+		`{"pattern":"a","note":"n","enabled":false}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	entries, _ := s.storage.ListPrivacyWhitelistEntries()
+	if len(entries) != 1 {
+		t.Fatalf("白名单返回 %d 条, want 1", len(entries))
+	}
+	if entries[0].Enabled {
+		t.Error("enabled:false 被忽略,创建出的条目仍为启用")
+	}
+
+	// 不带 enabled 时默认启用(保持既有语义)
+	rec = doJSON(t, s, http.MethodPost, "/api/privacy-whitelist", `{"pattern":"b","note":"n"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	entries, _ = s.storage.ListPrivacyWhitelistEntries()
+	for _, e := range entries {
+		if e.Pattern == "b" && !e.Enabled {
+			t.Error("未携带 enabled 时应默认启用")
+		}
+	}
+}

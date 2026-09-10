@@ -33,6 +33,8 @@ type privacyRuleRequest struct {
 	Pattern     string `json:"pattern" binding:"required,max=512"`
 	Replacement string `json:"replacement" binding:"max=128"`
 	Scope       string `json:"scope" binding:"required,oneof=request response both"`
+	// Enabled 用指针以区分「未携带」(保留原值)与「显式 false」(禁用)
+	Enabled *bool `json:"enabled"`
 }
 
 // validPattern 正则可编译校验：入库前即时反馈，避免规则加载时被引擎静默跳过
@@ -144,6 +146,9 @@ func (s *AdminServer) updatePrivacyRule(c *gin.Context) {
 	rule.Replacement = req.Replacement
 	rule.Scope = req.Scope
 	rule.Action = req.Action
+	if req.Enabled != nil {
+		rule.Enabled = *req.Enabled
+	}
 	rule.UpdatedAt = time.Now()
 	if err := s.storage.SavePrivacyRule(rule); err != nil {
 		ErrorCause(c, http.StatusInternalServerError, 500, "failed to update privacy rule", err)
@@ -180,9 +185,13 @@ func (s *AdminServer) createPrivacyWhitelistEntry(c *gin.Context) {
 		Error(c, http.StatusBadRequest, 400, "pattern 不是合法正则")
 		return
 	}
+	enabled := true
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
 	entry := &plugin.PrivacyWhitelistEntry{
 		ID: uuid.NewString(), Pattern: req.Pattern, Note: req.Note,
-		Enabled: true, CreatedAt: time.Now(),
+		Enabled: enabled, CreatedAt: time.Now(),
 	}
 	if err := s.storage.SavePrivacyWhitelistEntry(entry); err != nil {
 		ErrorCause(c, http.StatusInternalServerError, 500, "failed to save whitelist entry", err)
