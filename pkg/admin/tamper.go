@@ -46,7 +46,7 @@ func (s *AdminServer) listTamperAlerts(c *gin.Context) {
 	size, _ := strconv.Atoi(c.DefaultQuery("size", "20"))
 	alerts, total, err := s.storage.ListTamperAlerts(resolvedPtr, page, size)
 	if err != nil {
-		Error(c, http.StatusInternalServerError, 500, err.Error())
+		ErrorCause(c, http.StatusInternalServerError, 500, "failed to list tamper alerts", err)
 		return
 	}
 	OK(c, gin.H{"items": alerts, "total": total, "page": page, "size": size})

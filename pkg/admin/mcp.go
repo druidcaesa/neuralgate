@@ -51,7 +51,7 @@ func (s *AdminServer) listMCPServers(c *gin.Context) {
 	size, _ := strconv.Atoi(c.DefaultQuery("size", "20"))
 	items, total, err := s.storage.ListMCPServers(page, size)
 	if err != nil {
-		Error(c, http.StatusInternalServerError, 500, err.Error())
+		ErrorCause(c, http.StatusInternalServerError, 500, "failed to list mcp servers", err)
 		return
 	}
 	OK(c, gin.H{"items": items, "total": total, "page": page, "size": size})
@@ -83,7 +83,7 @@ func (s *AdminServer) createMCPServer(c *gin.Context) {
 		Enabled: req.Enabled == nil || *req.Enabled,
 	}
 	if err := s.storage.SaveMCPServer(srv); err != nil {
-		Error(c, http.StatusInternalServerError, 500, err.Error())
+		ErrorCause(c, http.StatusInternalServerError, 500, "failed to save mcp server", err)
 		return
 	}
 	OK(c, gin.H{"id": srv.ID})
@@ -123,7 +123,7 @@ func (s *AdminServer) updateMCPServer(c *gin.Context) {
 		srv.Enabled = *req.Enabled
 	}
 	if err := s.storage.SaveMCPServer(srv); err != nil {
-		Error(c, http.StatusInternalServerError, 500, err.Error())
+		ErrorCause(c, http.StatusInternalServerError, 500, "failed to save mcp server", err)
 		return
 	}
 	OK(c, gin.H{"id": id})
@@ -171,7 +171,7 @@ func (s *AdminServer) listMCPAuditLogs(c *gin.Context) {
 	}
 	items, total, err := s.storage.ListMCPAuditLogs(filter, page, size)
 	if err != nil {
-		Error(c, http.StatusInternalServerError, 500, err.Error())
+		ErrorCause(c, http.StatusInternalServerError, 500, "failed to list mcp audit logs", err)
 		return
 	}
 	OK(c, gin.H{"items": items, "total": total, "page": page, "size": size})

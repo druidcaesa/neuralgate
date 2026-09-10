@@ -15,12 +15,14 @@
 package admin
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/druidcaesa/neuralgate/pkg/license"
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
@@ -266,5 +268,113 @@ func TestAccessLog5xxOnPanic(t *testing.T) {
 	}
 	if got := entry.ContextMap()["status"]; got != int64(http.StatusInternalServerError) {
 		t.Errorf("status 应 500(AccessLog 必须在 Recovery 之外), got %v", got)
+	}
+}
+
+// failingListStorage 按方法粒度注入失败,其余方法委托内存存储。
+// 用于验证存储层报错时不再把底层细节下发给浏览器
+type failingListStorage struct {
+	*oss.MemStorage
+	mcpErr        error
+	complianceErr error
+	tamperErr     error
+}
+
+func (f *failingListStorage) ListMCPServers(page, size int) ([]*plugin.MCPServer, int64, error) {
+	return nil, 0, f.mcpErr
+}
+
+func (f *failingListStorage) ListComplianceReports(page, size int) ([]*plugin.ComplianceReport, int64, error) {
+	return nil, 0, f.complianceErr
+}
+
+func (f *failingListStorage) ListTamperAlerts(resolved *bool, page, size int) ([]*plugin.TamperAlert, int64, error) {
+	return nil, 0, f.tamperErr
+}
+
+// TestAccessLogHidesInternalError 存储层报错时:响应体为通用文案(不含底层细节),
+// 底层原因只出现在日志的 err 字段
+func TestAccessLogHidesInternalError(t *testing.T) {
+	internal := errors.New("sql: database is locked")
+	storage := &failingListStorage{
+		MemStorage:    oss.NewMemStorage(),
+		mcpErr:        internal,
+		complianceErr: internal,
+		tamperErr:     internal,
+	}
+	s, logs := newObservedServer(t, storage, enterpriseLicenseAll())
+	s.DisableAuth()
+
+	cases := []struct {
+		name    string
+		path    string
+		message string
+	}{
+		{"mcp 列表", "/api/mcp-servers", "failed to list mcp servers"},
+		{"合规报表列表", "/api/compliance-reports", "failed to list compliance reports"},
+		{"篡改告警列表", "/api/tamper-alerts", "failed to list tamper alerts"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			before := logs.Len()
+			rec := doGet(s, tc.path, "")
+			if rec.Code != http.StatusInternalServerError {
+				t.Fatalf("应 500, got %d %s", rec.Code, rec.Body.String())
+			}
+			if strings.Contains(rec.Body.String(), "database is locked") {
+				t.Errorf("底层细节不得下发: %s", rec.Body.String())
+			}
+			var resp Response
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatal(err)
+			}
+			if resp.Message != tc.message {
+				t.Errorf("响应文案应 %q, got %q", tc.message, resp.Message)
+			}
+
+			entries := logs.All()[before:]
+			if len(entries) != 1 {
+				t.Fatalf("应恰好 1 条日志, got %d", len(entries))
+			}
+			if got := entries[0].ContextMap()["err"]; got != "sql: database is locked" {
+				t.Errorf("日志 err 应为底层原因, got %v", got)
+			}
+		})
+	}
+}
+
+// TestAccessLogHidesGeneratorError 合规补生成器报错同样只进日志,不下发浏览器
+func TestAccessLogHidesGeneratorError(t *testing.T) {
+	s, logs := newObservedServer(t, nil, enterpriseLicenseAll())
+	s.DisableAuth()
+	s.SetReportGenerator(func(periodType string, start time.Time) (*plugin.ComplianceReport, error) {
+		return nil, errors.New("internal generator failure")
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/compliance-reports/generate",
+		strings.NewReader(`{"period_type":"day"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	s.Router().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("应 500, got %d %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "internal generator failure") {
+		t.Errorf("底层细节不得下发: %s", rec.Body.String())
+	}
+	var resp Response
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Message != "failed to generate compliance report" {
+		t.Errorf("响应文案不符: %q", resp.Message)
+	}
+	if logs.Len() != 1 {
+		t.Fatalf("应恰好 1 条日志, got %d", logs.Len())
+	}
+	if got := logs.All()[0].ContextMap()["err"]; got != "internal generator failure" {
+		t.Errorf("日志 err 应为底层原因, got %v", got)
 	}
 }

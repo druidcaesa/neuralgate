@@ -41,7 +41,7 @@ func (s *AdminServer) listComplianceReports(c *gin.Context) {
 	size, _ := strconv.Atoi(c.DefaultQuery("size", "20"))
 	reports, total, err := s.storage.ListComplianceReports(page, size)
 	if err != nil {
-		Error(c, http.StatusInternalServerError, 500, err.Error())
+		ErrorCause(c, http.StatusInternalServerError, 500, "failed to list compliance reports", err)
 		return
 	}
 	OK(c, gin.H{"items": reports, "total": total, "page": page, "size": size})
@@ -109,7 +109,7 @@ func (s *AdminServer) generateComplianceReport(c *gin.Context) {
 	}
 	report, err := s.reportGenerator(periodType, start)
 	if err != nil {
-		Error(c, http.StatusInternalServerError, 500, err.Error())
+		ErrorCause(c, http.StatusInternalServerError, 500, "failed to generate compliance report", err)
 		return
 	}
 	OK(c, report)
