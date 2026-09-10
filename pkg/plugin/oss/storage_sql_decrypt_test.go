@@ -69,6 +69,10 @@ func TestGetByIDDegradesOnDecryptFailure(t *testing.T) {
 	if !got.APIKeyUnreadable || got.ModelName != "gpt-4" {
 		t.Fatalf("got %+v, want APIKeyUnreadable=true ModelName=gpt-4", got)
 	}
+	// 管理面是唯一会把 APIKey 交给 UI/出网的路径,降级时不得把密文原样带回
+	if got.APIKey != "" {
+		t.Error("APIKey must be empty when undecryptable, got non-empty")
+	}
 }
 
 // TestGetModelConfigFailsClosedOnDecryptFailure 数据面按名读取必须拒绝,不得返回空密钥
