@@ -23,6 +23,8 @@ import (
 	"testing"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/druidcaesa/neuralgate/pkg/adapter"
 )
 
@@ -36,7 +38,7 @@ func TestModelConfigHotReload(t *testing.T) {
 	registry.Register(adapter.NewOpenAIAdapter())
 
 	// 中间件链构建一次,两次请求复用同一实例(等价于进程不重启)
-	handler := RouteMatchMiddleware(storage, registry)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := RouteMatchMiddleware(storage, registry, zap.NewNop())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rc, _ := RequestContextFrom(r.Context())
 		w.Header().Set("X-Model", rc.ModelConfig.ModelName)
 		w.WriteHeader(http.StatusOK)

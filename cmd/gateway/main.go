@@ -128,7 +128,7 @@ func main() {
 
 	// 6. 初始化代理内核
 	// acceptor 的创建在步骤10 setupPrivacy 之后：pipeline.Build 快照中间件链，Use 晚于 Build 不生效
-	pipeline := core.NewPipeline(storage, rateLimiter, auditor, registry)
+	pipeline := core.NewPipeline(storage, rateLimiter, auditor, registry).WithLogger(logger)
 	proxyCore := core.NewProxyCore(pipeline, registry).WithLogger(logger)
 	ipf := core.NewIPFilter(cfg.IPFilter.Mode, cfg.IPFilter.Whitelist, cfg.IPFilter.Blacklist)
 

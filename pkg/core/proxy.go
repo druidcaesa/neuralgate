@@ -187,6 +187,10 @@ func (p *ProxyCore) handleModelDetail(w http.ResponseWriter, r *http.Request, rc
 	name := strings.TrimPrefix(r.URL.Path, "/v1/models/")
 	config, err := p.pipeline.storage.GetModelConfig(name)
 	if err != nil || !config.Enabled {
+		// 密钥不可解密与模型不存在同回 404,但对前者补一条 warn 留痕(仅记模型名与 err,不含密钥值)
+		if errors.Is(err, plugin.ErrAPIKeyUnreadable) {
+			p.logger.Warn("模型密钥不可解密,模型详情拒绝", zap.String("model", name), zap.Error(err))
+		}
 		writeOpenAIError(w, http.StatusNotFound, "invalid_request_error", "model_not_found", "model not found: "+name)
 		return
 	}

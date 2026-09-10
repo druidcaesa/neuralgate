@@ -17,16 +17,22 @@ package core
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"slices"
+
+	"go.uber.org/zap"
 
 	"github.com/druidcaesa/neuralgate/pkg/adapter"
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
 )
 
 // RouteMatchMiddleware 路由匹配中间件:解析 model 字段 → 查模型配置 → 校验权限 → 写 RequestContext
-func RouteMatchMiddleware(storage plugin.StoragePlugin, registry *adapter.AdapterRegistry) Middleware {
+func RouteMatchMiddleware(storage plugin.StoragePlugin, registry *adapter.AdapterRegistry, logger *zap.Logger) Middleware {
+	if logger == nil {
+		logger = zap.NewNop()
+	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			rc, ok := RequestContextFrom(r.Context())
@@ -80,6 +86,10 @@ func RouteMatchMiddleware(storage plugin.StoragePlugin, registry *adapter.Adapte
 			// 查模型配置
 			config, err := storage.GetModelConfig(reqBody.Model)
 			if err != nil || config == nil || !config.Enabled {
+				// 密钥不可解密与模型不存在同回 404,但对前者补一条 warn 留痕(仅记模型名与 err,不含密钥值)
+				if errors.Is(err, plugin.ErrAPIKeyUnreadable) {
+					logger.Warn("模型密钥不可解密,路由拒绝", zap.String("model", reqBody.Model), zap.Error(err))
+				}
 				writeEntryError(w, r, http.StatusNotFound, "invalid_request_error", "model_not_found", "model not found: "+reqBody.Model)
 				return
 			}

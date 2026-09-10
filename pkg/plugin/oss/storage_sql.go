@@ -436,8 +436,8 @@ func (s *SQLStorage) scanModelConfig(row interface{ Scan(...interface{}) error }
 }
 
 // ErrAPIKeyUnreadable 该行 api_key 无法用当前 encrypt_key 解密(通常因密钥轮换),
-// 需在模型管理中重新填写该模型的密钥
-var ErrAPIKeyUnreadable = errors.New("api key 无法解密(encrypt_key 可能已轮换),请在模型管理中重新填写该模型的密钥")
+// 需在模型管理中重新填写该模型的密钥。指向接口包哨兵,两处 errors.Is 语义相同
+var ErrAPIKeyUnreadable = plugin.ErrAPIKeyUnreadable
 
 func (s *SQLStorage) GetModelConfig(modelName string) (*plugin.ModelConfig, error) {
 	row := s.queryRow("SELECT "+modelConfigCols+" FROM model_configs WHERE model_name = ?", modelName)

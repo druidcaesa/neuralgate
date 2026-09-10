@@ -25,6 +25,8 @@ import (
 	"testing"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/druidcaesa/neuralgate/pkg/adapter"
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
 	"github.com/druidcaesa/neuralgate/pkg/plugin/oss"
@@ -66,7 +68,7 @@ func routeTestStorage() *oss.MemStorage {
 func doRouteRequest(storage plugin.StoragePlugin, registry *adapter.AdapterRegistry, keyID string, body string) *httptest.ResponseRecorder {
 	rc := &RequestContext{APIKeyID: keyID, TenantID: "t1"}
 	ctx := WithRequestContext(context.Background(), rc)
-	mw := RouteMatchMiddleware(storage, registry)
+	mw := RouteMatchMiddleware(storage, registry, zap.NewNop())
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rc, _ := RequestContextFrom(r.Context())
 		// 恢复的 body 可再次读取
@@ -162,7 +164,7 @@ func TestRouteCustomProviderFallsBackToOpenAI(t *testing.T) {
 
 	rc := &RequestContext{APIKeyID: "k2", TenantID: "t1"}
 	ctx := WithRequestContext(context.Background(), rc)
-	mw := RouteMatchMiddleware(s, registry)
+	mw := RouteMatchMiddleware(s, registry, zap.NewNop())
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rc, _ := RequestContextFrom(r.Context())
 		w.Header().Set("X-Provider", rc.Adapter.Name())
@@ -216,7 +218,7 @@ func TestRouteCustomProviderAdapterTagDrivesSelection(t *testing.T) {
 
 	rc := &RequestContext{APIKeyID: "k2", TenantID: "t1"}
 	ctx := WithRequestContext(context.Background(), rc)
-	mw := RouteMatchMiddleware(s, registry)
+	mw := RouteMatchMiddleware(s, registry, zap.NewNop())
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rc, _ := RequestContextFrom(r.Context())
 		w.Header().Set("X-Provider", rc.Adapter.Name())
@@ -251,7 +253,7 @@ func TestRouteCustomProviderOpenaiTag(t *testing.T) {
 
 	rc := &RequestContext{APIKeyID: "k2", TenantID: "t1"}
 	ctx := WithRequestContext(context.Background(), rc)
-	mw := RouteMatchMiddleware(s, registry)
+	mw := RouteMatchMiddleware(s, registry, zap.NewNop())
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rc, _ := RequestContextFrom(r.Context())
 		w.Header().Set("X-Provider", rc.Adapter.Name())

@@ -18,6 +18,8 @@ import (
 	"net/http"
 	"strings"
 
+	"go.uber.org/zap"
+
 	"github.com/druidcaesa/neuralgate/pkg/adapter"
 	"github.com/druidcaesa/neuralgate/pkg/mcp"
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
@@ -32,6 +34,7 @@ type Pipeline struct {
 	rateLimiter plugin.RateLimitPlugin
 	auditor     plugin.AuditPipeline
 	registry    *adapter.AdapterRegistry
+	logger      *zap.Logger // 固定链静默路径的记录器(默认 Nop)
 	middlewares []Middleware
 	mcpRelay    http.Handler // MCP 中继(nil=未启用,/v1/mcp 路径走原链零变化)
 }
@@ -43,7 +46,16 @@ func NewPipeline(storage plugin.StoragePlugin, rateLimiter plugin.RateLimitPlugi
 		rateLimiter: rateLimiter,
 		auditor:     auditor,
 		registry:    registry,
+		logger:      zap.NewNop(),
 	}
+}
+
+// WithLogger 注入日志器(生产装配调用;nil 忽略)
+func (p *Pipeline) WithLogger(l *zap.Logger) *Pipeline {
+	if l != nil {
+		p.logger = l
+	}
+	return p
 }
 
 // Use 追加自定义中间件（在固定链之后执行）
@@ -76,7 +88,7 @@ func (p *Pipeline) fixedChain() []Middleware {
 	return []Middleware{
 		AuthMiddleware(p.storage),
 		p.mcpBranch(),
-		RouteMatchMiddleware(p.storage, p.registry),
+		RouteMatchMiddleware(p.storage, p.registry, p.logger),
 		RateLimitMiddleware(p.rateLimiter),
 	}
 }

@@ -772,14 +772,38 @@ func TestProxyLoadBalanceMultiUpstream(t *testing.T) {
 }
 
 func TestProxyFallbackToModelConfigWhenNoUpstream(t *testing.T) {
-	// 无 upstreams → 回退 ModelConfig.base_url
-	upstream := newMockUpstream(t)
+	// 无可用 upstream(仅一行密钥不可解密的坏上游)→ 回退 ModelConfig.base_url,
+	// 且真正到达上游的 Authorization 必须是模型配置里的密钥,而非空 Bearer
+	var gotAuth string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		body, _ := io.ReadAll(r.Body)
+		var reqBody struct {
+			Model string `json:"model"`
+		}
+		_ = json.Unmarshal(body, &reqBody)
+		if reqBody.Model != "gpt-4o" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"message":"model must be replaced to gpt-4o","type":"invalid_request_error","code":"bad_request"}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-1","object":"chat.completion","created":1700000000,"model":"gpt-4o",
+		  "choices":[{"index":0,"message":{"role":"assistant","content":"hello from upstream"},"finish_reason":"stop"}],
+		  "usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}`))
+	}))
 	defer upstream.Close()
 	storage := oss.NewMemStorage()
 	now := time.Now()
 	_ = storage.SaveModelConfig(&plugin.ModelConfig{
 		ID: "m1", ModelName: "gpt-4", Provider: "openai", ProviderModel: "gpt-4o",
-		BaseURL: upstream.URL, APIKey: "sk", Enabled: true, CreatedAt: now, UpdatedAt: now,
+		BaseURL: upstream.URL, APIKey: "sk-model-config", Enabled: true, CreatedAt: now, UpdatedAt: now,
+	})
+	// 该模型仅有一行上游,但其密钥不可解密 → 不可选路,回退模型配置默认上游;坏上游 base_url
+	// 与假上游同一地址,一旦选路过滤失效就会以空密钥打到这里,断言随即转红
+	_ = storage.SaveUpstream(&plugin.Upstream{
+		ID: "u-bad", ModelConfigID: "m1", BaseURL: upstream.URL,
+		APIKey: "", APIKeyUnreadable: true, Weight: 1, Enabled: true, CreatedAt: now, UpdatedAt: now,
 	})
 	_ = storage.SaveAPIKey(&plugin.APIKey{ID: "k1", KeyHash: hashKey("ng-test"), KeyPrefix: "ng-test", Name: "t", Status: plugin.APIKeyStatusActive, Quota: -1, CreatedAt: now, UpdatedAt: now})
 	registry := adapter.NewAdapterRegistry()
@@ -795,6 +819,9 @@ func TestProxyFallbackToModelConfigWhenNoUpstream(t *testing.T) {
 	pc.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("no-upstream fallback status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if gotAuth != "Bearer sk-model-config" {
+		t.Fatalf("upstream Authorization = %q; want %q (模型配置密钥,而非空 Bearer)", gotAuth, "Bearer sk-model-config")
 	}
 }
 
