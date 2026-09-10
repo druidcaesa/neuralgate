@@ -72,7 +72,7 @@ func (s *AdminServer) createPrivacyRule(c *gin.Context) {
 		Enabled: true, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := s.storage.SavePrivacyRule(rule); err != nil {
-		Error(c, http.StatusInternalServerError, 500, "failed to save privacy rule")
+		ErrorCause(c, http.StatusInternalServerError, 500, "failed to save privacy rule", err)
 		return
 	}
 	OK(c, gin.H{"id": rule.ID})
@@ -94,7 +94,7 @@ func (s *AdminServer) listPrivacyRules(c *gin.Context) {
 	}
 	rules, err := s.storage.ListPrivacyRules(ruleType)
 	if err != nil {
-		Error(c, http.StatusInternalServerError, 500, "failed to list privacy rules")
+		ErrorCause(c, http.StatusInternalServerError, 500, "failed to list privacy rules", err)
 		return
 	}
 	OK(c, gin.H{"items": rules})
@@ -124,7 +124,7 @@ func (s *AdminServer) updatePrivacyRule(c *gin.Context) {
 	}
 	existing, err := s.storage.ListPrivacyRules(nil)
 	if err != nil {
-		Error(c, http.StatusInternalServerError, 500, "failed to load privacy rules")
+		ErrorCause(c, http.StatusInternalServerError, 500, "failed to load privacy rules", err)
 		return
 	}
 	var rule *plugin.PrivacyRule
@@ -146,7 +146,7 @@ func (s *AdminServer) updatePrivacyRule(c *gin.Context) {
 	rule.Action = req.Action
 	rule.UpdatedAt = time.Now()
 	if err := s.storage.SavePrivacyRule(rule); err != nil {
-		Error(c, http.StatusInternalServerError, 500, "failed to update privacy rule")
+		ErrorCause(c, http.StatusInternalServerError, 500, "failed to update privacy rule", err)
 		return
 	}
 	OK(c, gin.H{"id": id})
@@ -185,7 +185,7 @@ func (s *AdminServer) createPrivacyWhitelistEntry(c *gin.Context) {
 		Enabled: true, CreatedAt: time.Now(),
 	}
 	if err := s.storage.SavePrivacyWhitelistEntry(entry); err != nil {
-		Error(c, http.StatusInternalServerError, 500, "failed to save whitelist entry")
+		ErrorCause(c, http.StatusInternalServerError, 500, "failed to save whitelist entry", err)
 		return
 	}
 	OK(c, gin.H{"id": entry.ID})
@@ -195,7 +195,7 @@ func (s *AdminServer) createPrivacyWhitelistEntry(c *gin.Context) {
 func (s *AdminServer) listPrivacyWhitelistEntries(c *gin.Context) {
 	entries, err := s.storage.ListPrivacyWhitelistEntries()
 	if err != nil {
-		Error(c, http.StatusInternalServerError, 500, "failed to list whitelist entries")
+		ErrorCause(c, http.StatusInternalServerError, 500, "failed to list whitelist entries", err)
 		return
 	}
 	OK(c, gin.H{"items": entries})
@@ -217,7 +217,7 @@ func (s *AdminServer) listSecurityEvents(c *gin.Context) {
 	size, _ := strconv.Atoi(c.DefaultQuery("size", "20"))
 	events, total, err := s.storage.ListSecurityEvents(page, size)
 	if err != nil {
-		Error(c, http.StatusInternalServerError, 500, "failed to list security events")
+		ErrorCause(c, http.StatusInternalServerError, 500, "failed to list security events", err)
 		return
 	}
 	OK(c, gin.H{"items": events, "total": total, "page": page, "size": size})

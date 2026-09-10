@@ -70,7 +70,7 @@ func (s *AdminServer) createAPIKey(c *gin.Context) {
 	// 生成随机 Key:ng- + 32 hex
 	buf := make([]byte, 16)
 	if _, err := rand.Read(buf); err != nil {
-		Error(c, http.StatusInternalServerError, 500, "failed to generate key")
+		ErrorCause(c, http.StatusInternalServerError, 500, "failed to generate key", err)
 		return
 	}
 	rawKey := "ng-" + hex.EncodeToString(buf)
@@ -98,7 +98,7 @@ func (s *AdminServer) createAPIKey(c *gin.Context) {
 		UpdatedAt:     now,
 	}
 	if err := s.storage.SaveAPIKey(key); err != nil {
-		Error(c, http.StatusInternalServerError, 500, "failed to save api key")
+		ErrorCause(c, http.StatusInternalServerError, 500, "failed to save api key", err)
 		return
 	}
 	OK(c, gin.H{
@@ -119,7 +119,7 @@ func (s *AdminServer) listAPIKeys(c *gin.Context) {
 	}
 	keys, total, err := s.storage.ListAPIKeys(tenantID, page, size)
 	if err != nil {
-		Error(c, http.StatusInternalServerError, 500, "failed to list api keys")
+		ErrorCause(c, http.StatusInternalServerError, 500, "failed to list api keys", err)
 		return
 	}
 	type item struct {
@@ -164,7 +164,7 @@ func (s *AdminServer) updateAPIKey(c *gin.Context) {
 	key.Status = plugin.APIKeyStatus(req.Status)
 	key.UpdatedAt = time.Now()
 	if err := s.storage.SaveAPIKey(key); err != nil {
-		Error(c, http.StatusInternalServerError, 500, "failed to update api key")
+		ErrorCause(c, http.StatusInternalServerError, 500, "failed to update api key", err)
 		return
 	}
 	OK(c, gin.H{"id": id, "status": key.Status})
@@ -233,7 +233,7 @@ func (s *AdminServer) batchCreateAPIKeys(c *gin.Context) {
 	for i := 1; i <= req.Count; i++ {
 		buf := make([]byte, 16)
 		if _, err := rand.Read(buf); err != nil {
-			Error(c, http.StatusInternalServerError, 500, "failed to generate key")
+			ErrorCause(c, http.StatusInternalServerError, 500, "failed to generate key", err)
 			return
 		}
 		rawKey := "ng-" + hex.EncodeToString(buf)
@@ -256,7 +256,7 @@ func (s *AdminServer) batchCreateAPIKeys(c *gin.Context) {
 			key.Quota = *req.Quota
 		}
 		if err := s.storage.SaveAPIKey(key); err != nil {
-			Error(c, http.StatusInternalServerError, 500, "failed to save api key")
+			ErrorCause(c, http.StatusInternalServerError, 500, "failed to save api key", err)
 			return
 		}
 		items = append(items, gin.H{

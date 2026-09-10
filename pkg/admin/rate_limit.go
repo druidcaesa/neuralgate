@@ -60,7 +60,7 @@ func (s *AdminServer) createRateLimit(c *gin.Context) {
 		Strategy: req.Strategy, Enabled: enabled, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := s.storage.SaveRateLimitConfig(cfg); err != nil {
-		Error(c, http.StatusInternalServerError, 500, "failed to save rate limit config")
+		ErrorCause(c, http.StatusInternalServerError, 500, "failed to save rate limit config", err)
 		return
 	}
 	_ = s.rateLimiter.ReloadConfig()
@@ -73,7 +73,7 @@ func (s *AdminServer) listRateLimits(c *gin.Context) {
 	size, _ := strconv.Atoi(c.DefaultQuery("size", "10"))
 	cfgs, total, err := s.storage.ListRateLimitConfigs(s.scopeTenant(c), page, size)
 	if err != nil {
-		Error(c, http.StatusInternalServerError, 500, "failed to list rate limit configs")
+		ErrorCause(c, http.StatusInternalServerError, 500, "failed to list rate limit configs", err)
 		return
 	}
 	OK(c, gin.H{"items": cfgs, "total": total, "page": page, "size": size})
@@ -90,7 +90,7 @@ func (s *AdminServer) updateRateLimit(c *gin.Context) {
 	// 定位现有(存储无按 id 查限流的方法,用 List 找)
 	cfgs, _, err := s.storage.ListRateLimitConfigs(nil, 1, 100000)
 	if err != nil {
-		Error(c, http.StatusInternalServerError, 500, "failed to load rate limit configs")
+		ErrorCause(c, http.StatusInternalServerError, 500, "failed to load rate limit configs", err)
 		return
 	}
 	var existing *plugin.RateLimitConfig
@@ -114,7 +114,7 @@ func (s *AdminServer) updateRateLimit(c *gin.Context) {
 	}
 	existing.UpdatedAt = time.Now()
 	if err := s.storage.SaveRateLimitConfig(existing); err != nil {
-		Error(c, http.StatusInternalServerError, 500, "failed to update rate limit config")
+		ErrorCause(c, http.StatusInternalServerError, 500, "failed to update rate limit config", err)
 		return
 	}
 	_ = s.rateLimiter.ReloadConfig()

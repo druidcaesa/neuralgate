@@ -59,7 +59,7 @@ func (s *AdminServer) queryAuditLogs(c *gin.Context) {
 	}
 	logs, total, err := s.storage.QueryAuditLogs(filter, page, size)
 	if err != nil {
-		Error(c, http.StatusInternalServerError, 500, "failed to query audit logs")
+		ErrorCause(c, http.StatusInternalServerError, 500, "failed to query audit logs", err)
 		return
 	}
 	OK(c, gin.H{"items": logs, "total": total, "page": page, "size": size})
@@ -102,7 +102,7 @@ func (s *AdminServer) exportAuditLogs(c *gin.Context) {
 	for {
 		logs, total, err := s.storage.QueryAuditLogs(filter, page, pageSize)
 		if err != nil {
-			Error(c, http.StatusInternalServerError, 500, "failed to export audit logs")
+			ErrorCause(c, http.StatusInternalServerError, 500, "failed to export audit logs", err)
 			return
 		}
 		all = append(all, logs...)

@@ -97,7 +97,7 @@ func (s *AdminServer) createTenant(c *gin.Context) {
 		CreatedAt: now, UpdatedAt: now,
 	}
 	if err := s.storage.SaveTenant(tenant); err != nil {
-		Error(c, http.StatusInternalServerError, 500, "failed to save tenant")
+		ErrorCause(c, http.StatusInternalServerError, 500, "failed to save tenant", err)
 		return
 	}
 	OK(c, gin.H{"id": tenant.ID})
@@ -111,7 +111,7 @@ func (s *AdminServer) listTenants(c *gin.Context) {
 	size, _ := strconv.Atoi(c.DefaultQuery("size", "20"))
 	tenants, total, err := s.storage.ListTenants(page, size)
 	if err != nil {
-		Error(c, http.StatusInternalServerError, 500, "failed to list tenants")
+		ErrorCause(c, http.StatusInternalServerError, 500, "failed to list tenants", err)
 		return
 	}
 	OK(c, gin.H{"items": tenants, "total": total, "page": page, "size": size})
@@ -144,7 +144,7 @@ func (s *AdminServer) updateTenant(c *gin.Context) {
 	}
 	existing.Config = req.Config
 	if err := s.storage.SaveTenant(existing); err != nil {
-		Error(c, http.StatusInternalServerError, 500, "failed to update tenant")
+		ErrorCause(c, http.StatusInternalServerError, 500, "failed to update tenant", err)
 		return
 	}
 	OK(c, gin.H{"id": id})
@@ -207,7 +207,7 @@ func (s *AdminServer) createRole(c *gin.Context) {
 		Permissions: req.Permissions, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := s.storage.SaveRole(role); err != nil {
-		Error(c, http.StatusInternalServerError, 500, "failed to save role")
+		ErrorCause(c, http.StatusInternalServerError, 500, "failed to save role", err)
 		return
 	}
 	OK(c, gin.H{"id": role.ID})
@@ -216,7 +216,7 @@ func (s *AdminServer) createRole(c *gin.Context) {
 func (s *AdminServer) listRoles(c *gin.Context) {
 	roles, err := s.storage.ListRoles()
 	if err != nil {
-		Error(c, http.StatusInternalServerError, 500, "failed to list roles")
+		ErrorCause(c, http.StatusInternalServerError, 500, "failed to list roles", err)
 		return
 	}
 	if forced := s.scopeTenant(c); forced != nil {
@@ -262,7 +262,7 @@ func (s *AdminServer) updateRole(c *gin.Context) {
 	existing.Name = req.Name
 	existing.Permissions = req.Permissions
 	if err := s.storage.SaveRole(existing); err != nil {
-		Error(c, http.StatusInternalServerError, 500, "failed to update role")
+		ErrorCause(c, http.StatusInternalServerError, 500, "failed to update role", err)
 		return
 	}
 	OK(c, gin.H{"id": id})
@@ -338,7 +338,7 @@ func (s *AdminServer) createAdminUser(c *gin.Context) {
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
-		Error(c, http.StatusInternalServerError, 500, "failed to hash password")
+		ErrorCause(c, http.StatusInternalServerError, 500, "failed to hash password", err)
 		return
 	}
 	status := req.Status
@@ -352,7 +352,7 @@ func (s *AdminServer) createAdminUser(c *gin.Context) {
 		CreatedAt: now, UpdatedAt: now,
 	}
 	if err := s.storage.SaveAdminUser(user); err != nil {
-		Error(c, http.StatusInternalServerError, 500, "failed to save user")
+		ErrorCause(c, http.StatusInternalServerError, 500, "failed to save user", err)
 		return
 	}
 	OK(c, gin.H{"id": user.ID, "username": user.Username})
@@ -361,7 +361,7 @@ func (s *AdminServer) createAdminUser(c *gin.Context) {
 func (s *AdminServer) listAdminUsers(c *gin.Context) {
 	users, err := s.storage.ListAdminUsers()
 	if err != nil {
-		Error(c, http.StatusInternalServerError, 500, "failed to list users")
+		ErrorCause(c, http.StatusInternalServerError, 500, "failed to list users", err)
 		return
 	}
 	type item struct {
@@ -425,7 +425,7 @@ func (s *AdminServer) updateAdminUser(c *gin.Context) {
 	if req.Password != "" {
 		hash, herr := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 		if herr != nil {
-			Error(c, http.StatusInternalServerError, 500, "failed to hash password")
+			ErrorCause(c, http.StatusInternalServerError, 500, "failed to hash password", herr)
 			return
 		}
 		user.PasswordHash = string(hash)
@@ -435,7 +435,7 @@ func (s *AdminServer) updateAdminUser(c *gin.Context) {
 		return
 	}
 	if err := s.storage.SaveAdminUser(user); err != nil {
-		Error(c, http.StatusInternalServerError, 500, "failed to update user")
+		ErrorCause(c, http.StatusInternalServerError, 500, "failed to update user", err)
 		return
 	}
 	OK(c, gin.H{"id": id})
@@ -475,7 +475,7 @@ func (s *AdminServer) listOperationLogs(c *gin.Context) {
 	}
 	logs, total, err := s.storage.ListAdminOperationLogs(filter, page, size)
 	if err != nil {
-		Error(c, http.StatusInternalServerError, 500, "failed to list operation logs")
+		ErrorCause(c, http.StatusInternalServerError, 500, "failed to list operation logs", err)
 		return
 	}
 	// 兜底:存储层漏打标(如内存态早期写入)的行按已存 method/path 现算补全

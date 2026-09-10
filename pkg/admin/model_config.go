@@ -89,7 +89,7 @@ func (s *AdminServer) createModelConfig(c *gin.Context) {
 		CreatedAt: now, UpdatedAt: now,
 	}
 	if err := s.storage.SaveModelConfig(config); err != nil {
-		Error(c, http.StatusInternalServerError, 500, "failed to save model config")
+		ErrorCause(c, http.StatusInternalServerError, 500, "failed to save model config", err)
 		return
 	}
 	OK(c, gin.H{"id": config.ID, "name": config.ModelName})
@@ -101,7 +101,7 @@ func (s *AdminServer) listModelConfigs(c *gin.Context) {
 	size, _ := strconv.Atoi(c.DefaultQuery("size", "10"))
 	configs, total, err := s.storage.ListModelConfigs(page, size)
 	if err != nil {
-		Error(c, http.StatusInternalServerError, 500, "failed to list model configs")
+		ErrorCause(c, http.StatusInternalServerError, 500, "failed to list model configs", err)
 		return
 	}
 	type item struct {
@@ -167,7 +167,7 @@ func (s *AdminServer) updateModelConfig(c *gin.Context) {
 	existing.Tags = req.Tags
 	existing.UpdatedAt = time.Now()
 	if err := s.storage.SaveModelConfig(existing); err != nil {
-		Error(c, http.StatusInternalServerError, 500, "failed to update model config")
+		ErrorCause(c, http.StatusInternalServerError, 500, "failed to update model config", err)
 		return
 	}
 	OK(c, gin.H{"id": id})

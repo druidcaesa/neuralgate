@@ -480,7 +480,7 @@ func (s *AdminServer) handleLogin(c *gin.Context) {
 	}
 	token, exp, err := s.sessions.Mint(user, perms, isSuper, time.Now())
 	if err != nil {
-		Error(c, http.StatusInternalServerError, http.StatusInternalServerError, "failed to issue token")
+		ErrorCause(c, http.StatusInternalServerError, http.StatusInternalServerError, "failed to issue token", err)
 		return
 	}
 	// 尽力记录最近登录时间（失败不影响登录结果）
@@ -526,13 +526,13 @@ func (s *AdminServer) handleChangePassword(c *gin.Context) {
 	}
 	newHash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
 	if err != nil {
-		Error(c, http.StatusInternalServerError, http.StatusInternalServerError, "failed to hash password")
+		ErrorCause(c, http.StatusInternalServerError, http.StatusInternalServerError, "failed to hash password", err)
 		return
 	}
 	user.PasswordHash = string(newHash)
 	user.UpdatedAt = time.Now()
 	if err := s.storage.SaveAdminUser(user); err != nil {
-		Error(c, http.StatusInternalServerError, http.StatusInternalServerError, "failed to save password")
+		ErrorCause(c, http.StatusInternalServerError, http.StatusInternalServerError, "failed to save password", err)
 		return
 	}
 	OK(c, gin.H{"changed": true})

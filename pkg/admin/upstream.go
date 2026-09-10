@@ -57,7 +57,7 @@ func (s *AdminServer) createUpstream(c *gin.Context) {
 		CreatedAt: now, UpdatedAt: now,
 	}
 	if err := s.storage.SaveUpstream(up); err != nil {
-		Error(c, http.StatusInternalServerError, 500, "failed to save upstream")
+		ErrorCause(c, http.StatusInternalServerError, 500, "failed to save upstream", err)
 		return
 	}
 	OK(c, gin.H{"id": up.ID})
@@ -68,7 +68,7 @@ func (s *AdminServer) listUpstreams(c *gin.Context) {
 	modelID := c.Param("id")
 	ups, err := s.storage.ListUpstreams(modelID)
 	if err != nil {
-		Error(c, http.StatusInternalServerError, 500, "failed to list upstreams")
+		ErrorCause(c, http.StatusInternalServerError, 500, "failed to list upstreams", err)
 		return
 	}
 	type item struct {
@@ -109,7 +109,7 @@ func (s *AdminServer) updateUpstream(c *gin.Context) {
 	}
 	existing.UpdatedAt = time.Now()
 	if err := s.storage.SaveUpstream(existing); err != nil {
-		Error(c, http.StatusInternalServerError, 500, "failed to update upstream")
+		ErrorCause(c, http.StatusInternalServerError, 500, "failed to update upstream", err)
 		return
 	}
 	OK(c, gin.H{"id": uid})
