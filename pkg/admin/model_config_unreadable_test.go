@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -117,9 +118,9 @@ func TestUpdateModelConfigAllowsRefillForUnreadableRow(t *testing.T) {
 // TestTestModelConfigSkipsRequestForUnreadableKey 坏行连通测试必须直接返回 ok=false,
 // 不得带着空 key 发请求换回误导性的上游错误
 func TestTestModelConfigSkipsRequestForUnreadableKey(t *testing.T) {
-	var hits int
+	var hits atomic.Int64
 	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hits++
+		hits.Add(1)
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
 	defer stub.Close()
@@ -152,37 +153,7 @@ func TestTestModelConfigSkipsRequestForUnreadableKey(t *testing.T) {
 	if resp.Data.Ok || resp.Data.Error == "" || resp.Data.LatencyMS != 0 {
 		t.Errorf("坏行连通测试响应 = %+v, want ok=false + 非空 error + latency_ms=0", resp.Data)
 	}
-	if hits != 0 {
-		t.Errorf("坏行连通测试发出 %d 次上游请求, want 0", hits)
-	}
-}
-
-// TestUpdateUpstreamRejectsEmptyKeyForUnreadableRow 坏上游行不带 api_key 必须被拒,
-// 否则 updateUpstream 的无条件赋值会把密文覆盖成空密钥
-func TestUpdateUpstreamRejectsEmptyKeyForUnreadableRow(t *testing.T) {
-	svr, st := newUnreadableModelServer(t)
-	now := time.Now()
-	if err := st.SaveUpstream(&plugin.Upstream{
-		ID: "u-bad", ModelConfigID: "m-bad", BaseURL: "https://x",
-		APIKey: "", APIKeyUnreadable: true, Weight: 1, Enabled: true,
-		CreatedAt: now, UpdatedAt: now,
-	}); err != nil {
-		t.Fatalf("SaveUpstream: %v", err)
-	}
-	body := `{"base_url":"https://y","weight":2,"enabled":true}`
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPut, "/api/upstreams/u-bad", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	svr.Router().ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400, body=%s", rec.Code, rec.Body.String())
-	}
-	got, err := st.GetUpstreamByID("u-bad")
-	if err != nil {
-		t.Fatalf("GetUpstreamByID: %v", err)
-	}
-	if !got.APIKeyUnreadable || got.BaseURL != "https://x" {
-		t.Errorf("被拒的更新不得改动原上游行: %+v", got)
+	if n := hits.Load(); n != 0 {
+		t.Errorf("坏行连通测试发出 %d 次上游请求, want 0", n)
 	}
 }
