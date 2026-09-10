@@ -16,6 +16,7 @@ package core
 
 import (
 	"testing"
+	"time"
 
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
 )
@@ -99,5 +100,31 @@ func TestPickHealthyAllUnreadableFallsBack(t *testing.T) {
 	}
 	if sel, _ := pickHealthy(ups, nil); sel != nil {
 		t.Fatalf("全为坏行时应返回 nil 以触发回退, got %s", sel.ID)
+	}
+}
+
+// TestPickHealthyRegSkipsUnreadableKeyUpstream 熔断开启(reg != nil)时同样不得把坏行
+// 放进候选池:坏行权重远高于好行,一旦漏过过滤便几乎必然被加权随机选中。
+// 该分支没有任何透传路径能覆盖,只能直接构造可用注册表来守。
+func TestPickHealthyRegSkipsUnreadableKeyUpstream(t *testing.T) {
+	now := time.Unix(1000, 0)
+	reg := NewRegistry(NewBreakerConfig(1, time.Minute, time.Second, 1, 0, func() time.Time { return now }))
+	ups := []plugin.Upstream{
+		{ID: "bad", BaseURL: "https://bad", APIKey: "", APIKeyUnreadable: true, Enabled: true, Weight: 9},
+		{ID: "good", BaseURL: "https://good", APIKey: "sk-good", Enabled: true, Weight: 1},
+	}
+	// 两者初始均 closed,坏行确实在候选池内(未过滤时 90% 概率被选中)
+	if !reg.Selectable("bad") {
+		t.Fatal("构造有误:坏行应可参与选路,否则测不出过滤")
+	}
+	for i := 0; i < 50; i++ { // 加权随机:多轮放大漏过滤的暴露概率
+		sel, blocked := pickHealthy(ups, reg)
+		if blocked || sel == nil {
+			t.Fatalf("存在可用上游时不应 blocked/nil, got sel=%+v blocked=%v", sel, blocked)
+		}
+		if sel.ID != "good" {
+			t.Fatalf("第 %d 轮选中了 %s,坏上游不得参与选路", i, sel.ID)
+		}
+		reg.Release(sel.ID) // 配对归还 Allow 占用的试探槽(closed 下为空操作)
 	}
 }
