@@ -242,6 +242,7 @@ log:
   level: info
   format: json
   output: stdout            # or a file path (auto-rotated at 200MB, keep 7)
+  # Admin backend 4xx/5xx are logged at their severity (4xx=warn, 5xx=error); the X-Request-Id response header locates the matching log line
 
 cluster:                   # Enterprise: requires a license with the cluster feature. Shared login anti-brute-force + leader-gated background jobs
   enabled: false           # Off by default; missing license / Redis unreachable also auto-fall back to single-node (each replica runs independently)

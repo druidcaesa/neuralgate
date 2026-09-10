@@ -236,6 +236,7 @@ log:
   level: info
   format: json
   output: stdout            # 也可为文件路径(自动按 200MB×7 轮转)
+  # 管理后台的 4xx/5xx 按级别落日志(4xx=warn, 5xx=error);响应头 X-Request-Id 可用于对应终端日志行
 
 cluster:                   # Enterprise：需授权含 cluster。多副本共享登录防爆破 + 后台任务选主
   enabled: false           # 默认关闭；缺授权/Redis 不可达同样自动回退单机(各副本独立运行)
