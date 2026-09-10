@@ -15,6 +15,8 @@
 package admin
 
 import (
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -180,5 +182,89 @@ func TestAccessLogNilLoggerDoesNotPanic(t *testing.T) {
 	}
 	if rec.Header().Get(requestIDHeader) == "" {
 		t.Error("nil logger 时仍应下发 X-Request-Id")
+	}
+}
+
+// TestAccessLogErrors5xxCarriesCause 5xx 记为 error,并带出 ErrorCause 传入的底层原因,
+// 同时该原因不得出现在响应体
+func TestAccessLogErrors5xxCarriesCause(t *testing.T) {
+	s, logs := newObservedServer(t, nil, enterpriseLicenseAll())
+	s.DisableAuth()
+	s.Router().GET("/api/_test/boom", func(c *gin.Context) {
+		ErrorCause(c, http.StatusInternalServerError, 500, "failed to do thing", errors.New("disk on fire"))
+	})
+
+	rec := doGet(s, "/api/_test/boom", "")
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("应 500, got %d", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "disk on fire") {
+		t.Errorf("底层原因不得下发浏览器: %s", rec.Body.String())
+	}
+
+	if logs.Len() != 1 {
+		t.Fatalf("应恰好 1 条日志, got %d: %v", logs.Len(), logs.All())
+	}
+	entry := logs.All()[0]
+	if entry.Level != zapcore.ErrorLevel {
+		t.Errorf("5xx 应为 error 级, got %v", entry.Level)
+	}
+	ctx := entry.ContextMap()
+	if ctx["status"] != int64(http.StatusInternalServerError) {
+		t.Errorf("status 应 500, got %v", ctx["status"])
+	}
+	if ctx["err"] != "disk on fire" {
+		t.Errorf("err 应为底层原因, got %v", ctx["err"])
+	}
+}
+
+// TestAccessLog5xxWithoutCauseOmitsErrField 无私有错误来源的 5xx 不写 err 字段,
+// 但仍须记录(如 webui.go 的 API 404、Recovery 直接中止的请求)
+func TestAccessLog5xxWithoutCauseOmitsErrField(t *testing.T) {
+	s, logs := newObservedServer(t, nil, enterpriseLicenseAll())
+	s.DisableAuth()
+	s.Router().GET("/api/_test/bare", func(c *gin.Context) {
+		c.JSON(http.StatusInternalServerError, Response{Code: 500, Message: "bare"})
+	})
+
+	if rec := doGet(s, "/api/_test/bare", ""); rec.Code != http.StatusInternalServerError {
+		t.Fatalf("应 500, got %d", rec.Code)
+	}
+	if logs.Len() != 1 {
+		t.Fatalf("应恰好 1 条日志, got %d", logs.Len())
+	}
+	if _, ok := logs.All()[0].ContextMap()["err"]; ok {
+		t.Error("无私有错误时不应写 err 字段")
+	}
+}
+
+// TestAccessLog5xxOnPanic 锁住中间件顺序:handler panic 被 Recovery 转为 500 后,
+// AccessLog 仍须拿到终态 500 并记录。若 AccessLog 被移到 Recovery 内层,本用例会失败
+func TestAccessLog5xxOnPanic(t *testing.T) {
+	// Recovery 会把 panic 堆栈写往 DefaultErrorWriter,测试中静默以免污染输出。
+	// 须在构造 AdminServer 前设置:gin.Recovery() 在构造时即读取该值
+	prev := gin.DefaultErrorWriter
+	gin.DefaultErrorWriter = io.Discard
+	defer func() { gin.DefaultErrorWriter = prev }()
+
+	s, logs := newObservedServer(t, nil, enterpriseLicenseAll())
+	s.DisableAuth()
+	s.Router().GET("/api/_test/panic", func(c *gin.Context) {
+		panic("boom")
+	})
+
+	rec := doGet(s, "/api/_test/panic", "")
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("panic 应被转为 500, got %d", rec.Code)
+	}
+	if logs.Len() != 1 {
+		t.Fatalf("panic 请求也须记录日志, got %d 条", logs.Len())
+	}
+	entry := logs.All()[0]
+	if entry.Level != zapcore.ErrorLevel {
+		t.Errorf("应 error 级, got %v", entry.Level)
+	}
+	if got := entry.ContextMap()["status"]; got != int64(http.StatusInternalServerError) {
+		t.Errorf("status 应 500(AccessLog 必须在 Recovery 之外), got %v", got)
 	}
 }
