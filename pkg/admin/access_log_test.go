@@ -275,9 +275,11 @@ func TestAccessLog5xxOnPanic(t *testing.T) {
 // 用于验证存储层报错时不再把底层细节下发给浏览器
 type failingListStorage struct {
 	*oss.MemStorage
-	mcpErr        error
-	complianceErr error
-	tamperErr     error
+	mcpErr           error
+	complianceErr    error
+	tamperErr        error
+	saveMCPServerErr error
+	mcpAuditErr      error
 }
 
 func (f *failingListStorage) ListMCPServers(page, size int) ([]*plugin.MCPServer, int64, error) {
@@ -292,33 +294,63 @@ func (f *failingListStorage) ListTamperAlerts(resolved *bool, page, size int) ([
 	return nil, 0, f.tamperErr
 }
 
+func (f *failingListStorage) SaveMCPServer(server *plugin.MCPServer) error {
+	return f.saveMCPServerErr
+}
+
+func (f *failingListStorage) ListMCPAuditLogs(filter plugin.MCPAuditLogFilter, page, size int) ([]*plugin.MCPAuditLog, int64, error) {
+	return nil, 0, f.mcpAuditErr
+}
+
 // TestAccessLogHidesInternalError 存储层报错时:响应体为通用文案(不含底层细节),
 // 底层原因只出现在日志的 err 字段
 func TestAccessLogHidesInternalError(t *testing.T) {
 	internal := errors.New("sql: database is locked")
+	mem := oss.NewMemStorage()
+	// 更新侧要求目标记录已存在;SaveMCPServer 的失败注入会拦住桩上写入,
+	// 故播种直接落到底层内存存储
+	seeded := &plugin.MCPServer{Name: "seeded", Endpoint: "http://example.com"}
+	if err := mem.SaveMCPServer(seeded); err != nil {
+		t.Fatal(err)
+	}
 	storage := &failingListStorage{
-		MemStorage:    oss.NewMemStorage(),
-		mcpErr:        internal,
-		complianceErr: internal,
-		tamperErr:     internal,
+		MemStorage:       mem,
+		mcpErr:           internal,
+		complianceErr:    internal,
+		tamperErr:        internal,
+		saveMCPServerErr: internal,
+		mcpAuditErr:      internal,
 	}
 	s, logs := newObservedServer(t, storage, enterpriseLicenseAll())
 	s.DisableAuth()
 
 	cases := []struct {
 		name    string
+		method  string
 		path    string
+		body    string
 		message string
 	}{
-		{"mcp 列表", "/api/mcp-servers", "failed to list mcp servers"},
-		{"合规报表列表", "/api/compliance-reports", "failed to list compliance reports"},
-		{"篡改告警列表", "/api/tamper-alerts", "failed to list tamper alerts"},
+		{"mcp 列表", http.MethodGet, "/api/mcp-servers", "", "failed to list mcp servers"},
+		{"合规报表列表", http.MethodGet, "/api/compliance-reports", "", "failed to list compliance reports"},
+		{"篡改告警列表", http.MethodGet, "/api/tamper-alerts", "", "failed to list tamper alerts"},
+		{"mcp 创建", http.MethodPost, "/api/mcp-servers", `{"name":"srv-a","endpoint":"http://example.com"}`, "failed to save mcp server"},
+		{"mcp 更新", http.MethodPut, "/api/mcp-servers/" + seeded.ID, `{"name":"srv-a","endpoint":"http://example.com"}`, "failed to save mcp server"},
+		{"mcp 审计日志列表", http.MethodGet, "/api/mcp-audit-logs", "", "failed to list mcp audit logs"},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			before := logs.Len()
-			rec := doGet(s, tc.path, "")
+			var rec *httptest.ResponseRecorder
+			if tc.body == "" {
+				rec = doGet(s, tc.path, "")
+			} else {
+				req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
+				req.Header.Set("Content-Type", "application/json")
+				rec = httptest.NewRecorder()
+				s.Router().ServeHTTP(rec, req)
+			}
 			if rec.Code != http.StatusInternalServerError {
 				t.Fatalf("应 500, got %d %s", rec.Code, rec.Body.String())
 			}
@@ -331,6 +363,9 @@ func TestAccessLogHidesInternalError(t *testing.T) {
 			}
 			if resp.Message != tc.message {
 				t.Errorf("响应文案应 %q, got %q", tc.message, resp.Message)
+			}
+			if resp.Code != http.StatusInternalServerError {
+				t.Errorf("业务码应 500, got %d", resp.Code)
 			}
 
 			entries := logs.All()[before:]
