@@ -20,33 +20,35 @@ import "time"
 
 // ModelConfig 模型路由配置
 type ModelConfig struct {
-	ID            string            // 配置ID
-	ModelName     string            // 对外模型名称（如 "gpt-4"）
-	Provider      string            // 供应商（openai/qwen/zhipu/deepseek/自定义）
-	ProviderModel string            // 供应商实际模型名
-	BaseURL       string            // 上游API地址
-	APIKey        string            // 上游API Key
-	Timeout       time.Duration     // 请求超时
-	MaxRetries    int               // 最大重试次数
-	RetryInterval time.Duration     // 重试间隔
-	Weight        int               // 负载均衡权重
-	MaxTokens     int               // 默认 max_tokens(0=客户端不带则不注入;客户端显式值优先)
-	Enabled       bool              // 是否启用
-	Tags          map[string]string // 扩展标签
-	CreatedAt     time.Time         // 创建时间
-	UpdatedAt     time.Time         // 更新时间
+	ID               string            // 配置ID
+	ModelName        string            // 对外模型名称（如 "gpt-4"）
+	Provider         string            // 供应商（openai/qwen/zhipu/deepseek/自定义）
+	ProviderModel    string            // 供应商实际模型名
+	BaseURL          string            // 上游API地址
+	APIKey           string            // 上游API Key
+	APIKeyUnreadable bool              // api_key 解密失败(encrypt_key 已轮换等),此时 APIKey 为空,调用方按角色决定拒绝使用或提示重填
+	Timeout          time.Duration     // 请求超时
+	MaxRetries       int               // 最大重试次数
+	RetryInterval    time.Duration     // 重试间隔
+	Weight           int               // 负载均衡权重
+	MaxTokens        int               // 默认 max_tokens(0=客户端不带则不注入;客户端显式值优先)
+	Enabled          bool              // 是否启用
+	Tags             map[string]string // 扩展标签
+	CreatedAt        time.Time         // 创建时间
+	UpdatedAt        time.Time         // 更新时间
 }
 
 // Upstream 模型的上游端点（负载均衡：一个 ModelConfig 可挂多个 Upstream）
 type Upstream struct {
-	ID            string    // 上游ID
-	ModelConfigID string    // 所属模型配置ID
-	BaseURL       string    // 上游API地址
-	APIKey        string    // 上游API Key（加密存储）
-	Weight        int       // 加权轮询权重
-	Enabled       bool      // 是否启用
-	CreatedAt     time.Time // 创建时间
-	UpdatedAt     time.Time // 更新时间
+	ID               string    // 上游ID
+	ModelConfigID    string    // 所属模型配置ID
+	BaseURL          string    // 上游API地址
+	APIKey           string    // 上游API Key（加密存储）
+	APIKeyUnreadable bool      // api_key 解密失败,此时 APIKey 为空
+	Weight           int       // 加权轮询权重
+	Enabled          bool      // 是否启用
+	CreatedAt        time.Time // 创建时间
+	UpdatedAt        time.Time // 更新时间
 }
 
 // MCPServer MCP 上游服务器配置（Streamable HTTP 端点，E7 中继的转发目标）

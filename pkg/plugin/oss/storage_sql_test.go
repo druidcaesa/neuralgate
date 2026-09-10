@@ -16,6 +16,7 @@ package oss
 
 import (
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -311,10 +312,10 @@ func TestSQLStorageModelConfigDecryptFail(t *testing.T) {
 		BaseURL: "https://x", APIKey: "sk-secret", Enabled: true,
 		CreatedAt: now, UpdatedAt: now,
 	})
-	// 读取时用 key B(密钥不匹配 → 解密失败 → 返回错误)
+	// 读取时用 key B(密钥不匹配 → 解密失败 → 数据面拒绝,而非返回空密钥)
 	other := &SQLStorage{db: s.db, encryptKey: "other-key"}
-	if _, err := other.GetModelConfig("gpt-4"); err == nil {
-		t.Fatal("decrypt with wrong key must return error")
+	if _, err := other.GetModelConfig("gpt-4"); !errors.Is(err, ErrAPIKeyUnreadable) {
+		t.Fatalf("GetModelConfig with rotated key err = %v; want ErrAPIKeyUnreadable", err)
 	}
 }
 

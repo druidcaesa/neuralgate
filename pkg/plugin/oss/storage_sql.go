@@ -417,9 +417,12 @@ func (s *SQLStorage) scanModelConfig(row interface{ Scan(...interface{}) error }
 	if encrypted == 1 {
 		plain, err := Decrypt(apiKey, s.encryptKey)
 		if err != nil {
-			return nil, fmt.Errorf("decrypt api key: %w", err)
+			// 解密失败不中断读取:标记密钥不可用,由调用方按角色决定降级或拒绝
+			apiKey = ""
+			c.APIKeyUnreadable = true
+		} else {
+			apiKey = plain
 		}
-		apiKey = plain
 	}
 	c.APIKey = apiKey
 	c.Enabled = enabled == 1
@@ -432,9 +435,20 @@ func (s *SQLStorage) scanModelConfig(row interface{ Scan(...interface{}) error }
 	return &c, nil
 }
 
+// ErrAPIKeyUnreadable 该行 api_key 无法用当前 encrypt_key 解密(通常因密钥轮换),
+// 需在模型管理中重新填写该模型的密钥
+var ErrAPIKeyUnreadable = errors.New("api key 无法解密(encrypt_key 可能已轮换),请在模型管理中重新填写该模型的密钥")
+
 func (s *SQLStorage) GetModelConfig(modelName string) (*plugin.ModelConfig, error) {
 	row := s.queryRow("SELECT "+modelConfigCols+" FROM model_configs WHERE model_name = ?", modelName)
-	return s.scanModelConfig(row)
+	c, err := s.scanModelConfig(row)
+	if err != nil {
+		return nil, err
+	}
+	if c.APIKeyUnreadable {
+		return nil, ErrAPIKeyUnreadable
+	}
+	return c, nil
 }
 
 func (s *SQLStorage) GetModelConfigByID(id string) (*plugin.ModelConfig, error) {
@@ -732,9 +746,11 @@ func (s *SQLStorage) scanUpstream(row interface{ Scan(...interface{}) error }) (
 	if encrypted == 1 {
 		plain, err := Decrypt(apiKey, s.encryptKey)
 		if err != nil {
-			return nil, fmt.Errorf("decrypt upstream api key: %w", err)
+			apiKey = ""
+			u.APIKeyUnreadable = true
+		} else {
+			apiKey = plain
 		}
-		apiKey = plain
 	}
 	u.APIKey = apiKey
 	u.Enabled = enabled == 1
