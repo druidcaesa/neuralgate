@@ -101,6 +101,11 @@ func (s *AdminServer) updateUpstream(c *gin.Context) {
 	if req.Weight < 1 {
 		req.Weight = 1
 	}
+	// 原密钥不可解密时必须重填,否则下方无条件赋值会把密文覆盖成空密钥
+	if existing.APIKeyUnreadable && req.APIKey == "" {
+		Error(c, http.StatusBadRequest, 400, "该上游密钥无法解密,请重新填写 API Key")
+		return
+	}
 	existing.BaseURL = req.BaseURL
 	existing.APIKey = req.APIKey
 	existing.Weight = req.Weight

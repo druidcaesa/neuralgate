@@ -116,6 +116,7 @@ func (s *AdminServer) listModelConfigs(c *gin.Context) {
 		Weight        int               `json:"weight"`
 		MaxTokens     int               `json:"max_tokens"`
 		Enabled       bool              `json:"enabled"`
+		KeyUnreadable bool              `json:"key_unreadable"`
 		Tags          map[string]string `json:"tags"`
 		CreatedAt     time.Time         `json:"created_at"`
 	}
@@ -125,7 +126,8 @@ func (s *AdminServer) listModelConfigs(c *gin.Context) {
 			ID: cfg.ID, Name: cfg.ModelName, Provider: cfg.Provider,
 			ProviderModel: cfg.ProviderModel, BaseURL: cfg.BaseURL,
 			Timeout: int(cfg.Timeout), MaxRetries: cfg.MaxRetries, RetryInterval: int(cfg.RetryInterval),
-			Weight: cfg.Weight, MaxTokens: cfg.MaxTokens, Enabled: cfg.Enabled, Tags: cfg.Tags, CreatedAt: cfg.CreatedAt,
+			Weight: cfg.Weight, MaxTokens: cfg.MaxTokens, Enabled: cfg.Enabled,
+			KeyUnreadable: cfg.APIKeyUnreadable, Tags: cfg.Tags, CreatedAt: cfg.CreatedAt,
 		})
 	}
 	OK(c, gin.H{"items": items, "total": total, "page": page, "size": size})
@@ -145,6 +147,11 @@ func (s *AdminServer) updateModelConfig(c *gin.Context) {
 		return
 	}
 	req.normalize()
+	// 原密钥不可解密时必须重填,否则下方的「留空保留原值」会把密文覆盖成空密钥
+	if existing.APIKeyUnreadable && req.APIKey == "" {
+		Error(c, http.StatusBadRequest, 400, "该模型密钥无法解密,请重新填写 API Key")
+		return
+	}
 	// 名称唯一校验(排除自身)
 	if existingConfig, err := s.storage.GetModelConfig(req.Name); err == nil && existingConfig.ID != id {
 		Error(c, http.StatusConflict, 409, "模型名称已存在")
@@ -191,6 +198,11 @@ func (s *AdminServer) testModelConfig(c *gin.Context) {
 	config, err := s.storage.GetModelConfigByID(id)
 	if err != nil {
 		Error(c, http.StatusNotFound, 404, "model config not found")
+		return
+	}
+	// 密钥不可解密时不发请求,避免用一个空 key 换回误导性的上游 401
+	if config.APIKeyUnreadable {
+		OK(c, gin.H{"ok": false, "latency_ms": 0, "error": "该模型密钥无法解密,请重新填写 API Key"})
 		return
 	}
 	url := strings.TrimRight(config.BaseURL, "/") + "/v1/models"
