@@ -843,3 +843,50 @@ func TestProxyUnknownEndpoint404(t *testing.T) {
 		t.Fatalf("unknown endpoint status = %d; want 404", rec.Code)
 	}
 }
+
+func TestProxyPassThroughGETSkipsUnreadableKeyModel(t *testing.T) {
+	// 密钥不可解密的模型不得被选作透传上游:否则会拿空 key 打上游,
+	// 表现为难查的上游 401,而非本地可定位的 404
+	var gotAuth string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"file-1","object":"file"}`))
+	}))
+	defer upstream.Close()
+
+	storage := oss.NewMemStorage()
+	now := time.Now()
+	// MemStorage 按 ModelName 升序返回,坏行命名在前以确保它先被遍历到,
+	// 否则用例会在修复前也通过,起不到回归作用
+	_ = storage.SaveModelConfig(&plugin.ModelConfig{
+		ID: "m-bad", ModelName: "aaa-bad", Provider: "openai", ProviderModel: "x",
+		BaseURL: upstream.URL, APIKey: "", APIKeyUnreadable: true, Enabled: true,
+		CreatedAt: now, UpdatedAt: now,
+	})
+	_ = storage.SaveModelConfig(&plugin.ModelConfig{
+		ID: "m-good", ModelName: "zzz-good", Provider: "openai", ProviderModel: "gpt-4o",
+		BaseURL: upstream.URL, APIKey: "sk-good", Enabled: true,
+		CreatedAt: now, UpdatedAt: now,
+	})
+	_ = storage.SaveAPIKey(&plugin.APIKey{
+		ID: "k1", KeyHash: hashKey("ng-test"), KeyPrefix: "ng-test", Name: "t",
+		Status: plugin.APIKeyStatusActive, Quota: -1, CreatedAt: now, UpdatedAt: now,
+	})
+	registry := adapter.NewAdapterRegistry()
+	registry.Register(adapter.NewOpenAIAdapter())
+	pc := NewProxyCore(NewPipeline(storage, oss.NewRateLimiter(storage, 100, 100000, "token_bucket"), nil, registry), registry)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/files/file-1", nil)
+	req.Header.Set("Authorization", "Bearer ng-test")
+	rec := httptest.NewRecorder()
+	pc.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; want 200, body=%s", rec.Code, rec.Body.String())
+	}
+	if gotAuth != "Bearer sk-good" {
+		t.Errorf("upstream auth = %q; want Bearer sk-good(坏行不得被选中)", gotAuth)
+	}
+}

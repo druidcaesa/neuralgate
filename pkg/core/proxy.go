@@ -909,7 +909,7 @@ func (p *ProxyCore) handlePassThrough(w http.ResponseWriter, r *http.Request, rc
 		configs, _, err := p.pipeline.storage.ListModelConfigs(1, 100)
 		if err == nil {
 			for _, c := range configs {
-				if c.Enabled {
+				if c.Enabled && !c.APIKeyUnreadable {
 					cfg = c
 					break
 				}
@@ -1123,13 +1123,14 @@ func selectUpstream(ups []plugin.Upstream) *plugin.Upstream {
 }
 
 // pickHealthy 熔断感知选路:用只读的 Selectable(不占试探槽)剔除 open 上游,再对加权随机的
-// 选中者执行 Allow 占用槽位。reg 为 nil(特性关闭)时语义=原 selectUpstream。存在 enabled
-// 上游但全被熔断/选中者的试探槽被并发占满 → (nil, true) 供调用方快速 503
+// 选中者执行 Allow 占用槽位。reg 为 nil(特性关闭)时语义=原 selectUpstream。密钥不可解密
+// (APIKey 为空)的上游一律不参与选路,全部如此时返回 (nil, false) 让调用方回退模型自身密钥;
+// 存在可解密 enabled 上游但全被熔断/选中者的试探槽被并发占满 → (nil, true) 供调用方快速 503
 func pickHealthy(ups []plugin.Upstream, reg *BreakerRegistry) (*plugin.Upstream, bool) {
-	// 先统计是否存在可参与选路的候选(任一 enabled)
+	// 先统计是否存在可参与选路的候选(任一 enabled 且密钥可解密)
 	hasEnabled := false
 	for _, u := range ups {
-		if u.Enabled {
+		if u.Enabled && !u.APIKeyUnreadable {
 			hasEnabled = true
 			break
 		}
@@ -1138,11 +1139,17 @@ func pickHealthy(ups []plugin.Upstream, reg *BreakerRegistry) (*plugin.Upstream,
 		return nil, false // 无候选: 调用方回退默认上游(现行为)
 	}
 	if reg == nil {
-		return selectUpstream(ups), false
+		usable := make([]plugin.Upstream, 0, len(ups))
+		for _, u := range ups {
+			if u.Enabled && !u.APIKeyUnreadable {
+				usable = append(usable, u)
+			}
+		}
+		return selectUpstream(usable), false
 	}
 	available := make([]plugin.Upstream, 0, len(ups))
 	for _, u := range ups {
-		if u.Enabled && reg.Selectable(u.ID) {
+		if u.Enabled && !u.APIKeyUnreadable && reg.Selectable(u.ID) {
 			available = append(available, u)
 		}
 	}

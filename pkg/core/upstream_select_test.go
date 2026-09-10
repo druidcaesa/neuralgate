@@ -71,3 +71,33 @@ func TestSelectUpstreamAllDisabled(t *testing.T) {
 		t.Fatal("all-disabled upstreams should return nil")
 	}
 }
+
+// TestPickHealthySkipsUnreadableKeyUpstream 密钥不可解密的上游不得参与选路,
+// 否则空密钥会覆盖模型配置的可用密钥
+func TestPickHealthySkipsUnreadableKeyUpstream(t *testing.T) {
+	ups := []plugin.Upstream{
+		{ID: "bad", BaseURL: "https://bad", APIKey: "", APIKeyUnreadable: true, Enabled: true, Weight: 1},
+		{ID: "good", BaseURL: "https://good", APIKey: "sk-good", Enabled: true, Weight: 1},
+	}
+	for i := 0; i < 20; i++ { // 选路含加权随机,多跑几轮确保不会偶发选中坏行
+		sel, _ := pickHealthy(ups, nil)
+		if sel == nil {
+			t.Fatal("存在可用上游时不得返回 nil")
+		}
+		if sel.ID != "good" {
+			t.Fatalf("选中了 %s,坏上游不得参与选路", sel.ID)
+		}
+	}
+}
+
+// TestPickHealthyAllUnreadableFallsBack 全部上游密钥不可解密时应判定无候选,
+// 让调用方回退到模型配置自身的密钥
+func TestPickHealthyAllUnreadableFallsBack(t *testing.T) {
+	ups := []plugin.Upstream{
+		{ID: "bad1", APIKeyUnreadable: true, Enabled: true, Weight: 1},
+		{ID: "bad2", APIKeyUnreadable: true, Enabled: true, Weight: 1},
+	}
+	if sel, _ := pickHealthy(ups, nil); sel != nil {
+		t.Fatalf("全为坏行时应返回 nil 以触发回退, got %s", sel.ID)
+	}
+}
