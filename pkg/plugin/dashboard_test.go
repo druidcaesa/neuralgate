@@ -15,6 +15,7 @@
 package plugin
 
 import (
+	"fmt"
 	"testing"
 	"time"
 )
@@ -433,6 +434,126 @@ func TestComputeDashboardEmptySkeletons(t *testing.T) {
 		}
 		if d.Status[i].Count != 0 {
 			t.Errorf("档 %d 空样本计数 = %d, want 0", i, d.Status[i].Count)
+		}
+	}
+}
+
+// sampleRepeat 生成 n 条同名模型样本，便于构造排行数据
+func sampleRepeat(now time.Time, name string, n int) []*AuditSample {
+	out := make([]*AuditSample, 0, n)
+	for i := 0; i < n; i++ {
+		out = append(out, &AuditSample{CreatedAt: now, ResponseStatus: 200, ModelName: name})
+	}
+	return out
+}
+
+// TestComputeDashboardTopModels 按请求量降序；并列按模型名升序
+func TestComputeDashboardTopModels(t *testing.T) {
+	now, _ := dashboardTestNow()
+
+	samples := sampleRepeat(now, "b", 3)
+	samples = append(samples, sampleRepeat(now, "a", 3)...)
+	samples = append(samples, sampleRepeat(now, "c", 5)...)
+
+	d, err := ComputeDashboard(samples, DashboardWindow24h, now, false)
+	if err != nil {
+		t.Fatalf("ComputeDashboard: %v", err)
+	}
+	if len(d.TopModels) != 3 {
+		t.Fatalf("排行条数 = %d, want 3", len(d.TopModels))
+	}
+	// c(5) 居首；a 与 b 并列 3 请求，按名升序 a 在 b 前
+	for i, want := range []string{"c", "a", "b"} {
+		if d.TopModels[i].ModelName != want {
+			t.Errorf("第 %d 名 = %q, want %q", i, d.TopModels[i].ModelName, want)
+		}
+	}
+}
+
+// TestComputeDashboardTopModelsDeterministic 并列次序必须稳定：
+// map 迭代顺序随机，缺次级键会让同一份数据两次请求给出不同顺序
+func TestComputeDashboardTopModelsDeterministic(t *testing.T) {
+	now, _ := dashboardTestNow()
+
+	var samples []*AuditSample
+	for _, n := range []string{"m1", "m2", "m3", "m4", "m5"} {
+		samples = append(samples, sampleRepeat(now, n, 2)...)
+	}
+
+	var first []string
+	for round := 0; round < 20; round++ {
+		d, err := ComputeDashboard(samples, DashboardWindow24h, now, false)
+		if err != nil {
+			t.Fatalf("ComputeDashboard: %v", err)
+		}
+		got := make([]string, 0, len(d.TopModels))
+		for _, m := range d.TopModels {
+			got = append(got, m.ModelName)
+		}
+		if round == 0 {
+			first = got
+			continue
+		}
+		if len(got) != len(first) {
+			t.Fatalf("第 %d 轮条数 = %d, 首轮 = %d", round, len(got), len(first))
+		}
+		for i := range got {
+			if got[i] != first[i] {
+				t.Fatalf("第 %d 轮次序 = %v, 首轮 = %v（并列需按名升序保证确定性）", round, got, first)
+			}
+		}
+	}
+}
+
+// TestComputeDashboardTopModelsTruncatesToEight 超过 8 个模型时保留请求量最高的 8 个
+func TestComputeDashboardTopModelsTruncatesToEight(t *testing.T) {
+	now, _ := dashboardTestNow()
+
+	// m01 请求量最低、m10 最高，各模型请求量互不相同
+	var samples []*AuditSample
+	for i := 1; i <= 10; i++ {
+		samples = append(samples, sampleRepeat(now, fmt.Sprintf("m%02d", i), i)...)
+	}
+
+	d, err := ComputeDashboard(samples, DashboardWindow24h, now, false)
+	if err != nil {
+		t.Fatalf("ComputeDashboard: %v", err)
+	}
+	if len(d.TopModels) != 8 {
+		t.Fatalf("排行条数 = %d, want 8", len(d.TopModels))
+	}
+	if d.TopModels[0].ModelName != "m10" {
+		t.Errorf("榜首 = %q, want %q", d.TopModels[0].ModelName, "m10")
+	}
+	if d.TopModels[7].ModelName != "m03" {
+		t.Errorf("末位 = %q, want %q", d.TopModels[7].ModelName, "m03")
+	}
+}
+
+// TestComputeDashboardTopModelTotals 排行行携带各自的请求数、Token 与失败数
+func TestComputeDashboardTopModelTotals(t *testing.T) {
+	now, _ := dashboardTestNow()
+
+	samples := []*AuditSample{
+		{CreatedAt: now, ResponseStatus: 200, ModelName: "a", TotalTokens: 10},
+		{CreatedAt: now, ResponseStatus: 500, ModelName: "a", TotalTokens: 5},
+		{CreatedAt: now, ResponseStatus: 200, ModelName: "b", TotalTokens: 7},
+	}
+	d, err := ComputeDashboard(samples, DashboardWindow24h, now, false)
+	if err != nil {
+		t.Fatalf("ComputeDashboard: %v", err)
+	}
+	if len(d.TopModels) != 2 {
+		t.Fatalf("排行条数 = %d, want 2", len(d.TopModels))
+	}
+	// a: 2 请求 / 15 Token / 1 失败（500 计失败）；b: 1 请求 / 7 Token / 0 失败
+	want := []ModelStat{
+		{ModelName: "a", Requests: 2, Tokens: 15, Failed: 1},
+		{ModelName: "b", Requests: 1, Tokens: 7, Failed: 0},
+	}
+	for i, w := range want {
+		if d.TopModels[i] != w {
+			t.Errorf("第 %d 名 = %+v, want %+v", i, d.TopModels[i], w)
 		}
 	}
 }

@@ -34,6 +34,9 @@ const (
 	DashboardDefaultWindow = DashboardWindow7d
 )
 
+// dashboardTopModels 模型排行取前 N 名
+const dashboardTopModels = 8
+
 // AuditSample 仪表盘聚合用窄列采样行：只含聚合所需的最小字段，
 // 不含请求体/响应体/请求头等大字段
 type AuditSample struct {
@@ -84,6 +87,14 @@ type StatusBucket struct {
 	Count int64  `json:"count"`
 }
 
+// ModelStat 单个模型的请求汇总
+type ModelStat struct {
+	ModelName string `json:"model_name"`
+	Requests  int64  `json:"requests"`
+	Tokens    int64  `json:"tokens"`
+	Failed    int64  `json:"failed"`
+}
+
 // DashboardAlert 首页告警条目
 type DashboardAlert struct {
 	Level  string `json:"level"`
@@ -100,6 +111,7 @@ type DashboardData struct {
 	Alerts    []DashboardAlert `json:"alerts"`
 	Latency   DashboardLatency `json:"latency"`
 	Status    []StatusBucket   `json:"status"`
+	TopModels []ModelStat      `json:"top_models"`
 }
 
 // DashboardRange 返回窗口对应的查询区间 [start, end) 与分桶规格。
@@ -159,8 +171,9 @@ func ComputeDashboard(samples []*AuditSample, window string, now time.Time, trun
 		Truncated: truncated,
 		Alerts:    []DashboardAlert{},
 		// 各面板恒返回骨架（分档全零、切片非 nil），前端无需判空即可绘图
-		Latency: computeLatency(samples),
-		Status:  computeStatus(samples),
+		Latency:   computeLatency(samples),
+		Status:    computeStatus(samples),
+		TopModels: computeTopModels(samples),
 	}
 	if len(samples) == 0 {
 		return data, nil
@@ -278,6 +291,39 @@ func computeStatus(samples []*AuditSample) []StatusBucket {
 	out := make([]StatusBucket, len(statusClasses))
 	for i, c := range statusClasses {
 		out[i] = StatusBucket{Class: c, Count: counts[c]}
+	}
+	return out
+}
+
+// computeTopModels 按请求量降序取前 dashboardTopModels 名；不足则全量返回。
+// 并列按模型名升序：map 迭代顺序随机，缺次级键会让同一份数据两次请求给出不同顺序
+func computeTopModels(samples []*AuditSample) []ModelStat {
+	stats := make(map[string]*ModelStat)
+	for _, s := range samples {
+		m := stats[s.ModelName]
+		if m == nil {
+			m = &ModelStat{ModelName: s.ModelName}
+			stats[s.ModelName] = m
+		}
+		m.Requests++
+		m.Tokens += s.TotalTokens
+		if !isSuccess(s.ResponseStatus) {
+			m.Failed++
+		}
+	}
+
+	out := make([]ModelStat, 0, len(stats))
+	for _, m := range stats {
+		out = append(out, *m)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Requests != out[j].Requests {
+			return out[i].Requests > out[j].Requests
+		}
+		return out[i].ModelName < out[j].ModelName
+	})
+	if len(out) > dashboardTopModels {
+		out = out[:dashboardTopModels]
 	}
 	return out
 }
