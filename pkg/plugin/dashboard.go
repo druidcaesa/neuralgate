@@ -232,12 +232,16 @@ var latencyBucketBounds = []int64{100, 300, 1000, 3000, 10000}
 var latencyBucketLabels = []string{"<100ms", "100–300ms", "0.3–1s", "1–3s", "3–10s", "≥10s"}
 
 // latencyBucketIndex 返回耗时所属档位下标：依次与上界比较，
-// 未落入任何上界者归入末档
+// 未落入任何上界者归入末档。返回值以档位文案数为上限钳制，
+// 否则上界多于文案时这里会返回越界下标，调用方索引 Buckets 即 panic
 func latencyBucketIndex(ms int64) int {
 	for i, ub := range latencyBucketBounds {
 		if ms < ub {
 			return i
 		}
+	}
+	if last := len(latencyBucketLabels) - 1; len(latencyBucketBounds) > last {
+		return last
 	}
 	return len(latencyBucketBounds)
 }

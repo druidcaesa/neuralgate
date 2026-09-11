@@ -387,6 +387,20 @@ function renderStatus(p: ChartPalette) {
   })
 }
 
+const HTML_ESCAPES: Record<string, string> = {
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#39;'
+}
+
+// escapeHTML 模型名由管理端写入且未经字符集校验，而 echarts 的 html tooltip
+// 按 innerHTML 渲染，故插值前必须转义
+function escapeHTML(s: string): string {
+  return s.replace(/[&<>"']/g, c => HTML_ESCAPES[c] ?? c)
+}
+
 function renderModels(p: ChartPalette) {
   const models = data.value?.top_models ?? []
   draw('models', modelsEl.value, {
@@ -400,8 +414,7 @@ function renderModels(p: ChartPalette) {
         const first = Array.isArray(params) ? params[0] : params
         const m = models[first?.dataIndex ?? -1]
         if (!m) return ''
-        const name = m.model_name || '未记录'
-        return `${name}<br/>请求 ${m.requests} · Token ${m.tokens} · 失败 ${m.failed}`
+        return `${escapeHTML(m.model_name)}<br/>请求 ${m.requests} · Token ${m.tokens} · 失败 ${m.failed}`
       }
     },
     grid: { left: 100, right: 24, top: 16, bottom: 24 },
@@ -415,7 +428,7 @@ function renderModels(p: ChartPalette) {
       type: 'category',
       // 横向条形自下而上排布，inverse 让请求量最高者落在顶部
       inverse: true,
-      data: models.map(m => m.model_name || '未记录'),
+      data: models.map(m => m.model_name),
       axisLine: { lineStyle: { color: p.border } },
       axisLabel: { color: p.textSecondary, width: 88, overflow: 'truncate' }
     },

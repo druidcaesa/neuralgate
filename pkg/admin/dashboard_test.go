@@ -227,7 +227,8 @@ func TestDashboardAPIResponseFieldNames(t *testing.T) {
 			{path: "data.status"},
 			{path: "data.top_models", want: []any{}}, // 空库须为空数组而非 null
 			{path: "data.tokens"},
-			{path: "data.truncated"},
+			// 空库未触发采样上限，取值须为 false，非仅「key 存在」
+			{path: "data.truncated", want: false},
 			{path: "data.alerts", want: []any{}}, // 同上
 			// DashboardSummary 五个指标
 			{path: "data.summary.requests"},

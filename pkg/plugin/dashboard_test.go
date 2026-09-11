@@ -371,6 +371,7 @@ func TestComputeDashboardStatusBuckets(t *testing.T) {
 	samples := []*AuditSample{
 		{CreatedAt: now, ResponseStatus: 200},
 		{CreatedAt: now, ResponseStatus: 204},
+		{CreatedAt: now, ResponseStatus: 300},
 		{CreatedAt: now, ResponseStatus: 302},
 		{CreatedAt: now, ResponseStatus: 404},
 		{CreatedAt: now, ResponseStatus: 500},
@@ -392,7 +393,7 @@ func TestComputeDashboardStatusBuckets(t *testing.T) {
 		count int64
 	}{
 		{"2xx", 2},   // 200 204
-		{"3xx", 1},   // 302
+		{"3xx", 2},   // 300 302
 		{"4xx", 1},   // 404
 		{"5xx", 2},   // 500 503
 		{"other", 3}, // 0 100 999
@@ -408,7 +409,7 @@ func TestComputeDashboardStatusBuckets(t *testing.T) {
 	if sum != d.Summary.Requests {
 		t.Errorf("分桶之和 = %d, want requests = %d", sum, d.Summary.Requests)
 	}
-	// 成功判定为 status ∈ [200,400)：200 204 302 共 3 个成功，其余 6 个失败
+	// 成功判定为 status ∈ [200,400)：200 204 300 302 共 4 个成功，其余 6 个失败
 	if d.Summary.Failed != 6 {
 		t.Errorf("failed = %d, want 6", d.Summary.Failed)
 	}
