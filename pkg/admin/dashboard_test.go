@@ -16,6 +16,7 @@ package admin
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -25,6 +26,7 @@ import (
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
 	"github.com/druidcaesa/neuralgate/pkg/plugin/oss"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 // newDashboardServer 构造已关鉴权的管理服务；license 为 nil 时按 OSS 处理
@@ -172,6 +174,57 @@ func TestDashboardAPIAlertsNoLicenseInfoLeak(t *testing.T) {
 			t.Errorf("首页响应泄漏授权业务字段 %q: %s", banned, body)
 		}
 	}
+}
+
+// assertDashboardFailLoud 断言首页存储失败路径:500 + 通用文案,底层原因只进日志不下发浏览器
+func assertDashboardFailLoud(t *testing.T, rec *httptest.ResponseRecorder, logs *observer.ObservedLogs, message string, internal error) {
+	t.Helper()
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("应 500, got %d %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), internal.Error()) {
+		t.Errorf("底层细节不得下发浏览器: %s", rec.Body.String())
+	}
+	var resp Response
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Code != http.StatusInternalServerError {
+		t.Errorf("业务码应 500, got %d", resp.Code)
+	}
+	if resp.Message != message {
+		t.Errorf("响应文案应 %q, got %q", message, resp.Message)
+	}
+	if logs.Len() != 1 {
+		t.Fatalf("应恰好 1 条日志, got %d: %v", logs.Len(), logs.All())
+	}
+	if got := logs.All()[0].ContextMap()["err"]; got != internal.Error() {
+		t.Errorf("日志 err 应为底层原因, got %v", got)
+	}
+}
+
+// TestDashboardAPIHidesAuditSamplesError 采样查询失败必须整页报错:
+// 宁可无数据,不可有错数据;底层细节只进日志
+func TestDashboardAPIHidesAuditSamplesError(t *testing.T) {
+	internal := errors.New("sql: database is locked")
+	storage := &failingListStorage{MemStorage: oss.NewMemStorage(), auditSamplesErr: internal}
+	s, logs := newObservedServer(t, storage, nil)
+	s.DisableAuth()
+
+	assertDashboardFailLoud(t, getDashboard(t, s, "?window=24h"), logs,
+		"failed to load dashboard samples", internal)
+}
+
+// TestDashboardAPIHidesTamperAlertsError 篡改告警计数失败必须整页报错:
+// 存储里躺着未处置告警时首页不得显示「一切正常」,且失败须留日志
+func TestDashboardAPIHidesTamperAlertsError(t *testing.T) {
+	internal := errors.New("sql: database is locked")
+	storage := &failingListStorage{MemStorage: oss.NewMemStorage(), tamperErr: internal}
+	s, logs := newObservedServer(t, storage, nil)
+	s.DisableAuth()
+
+	assertDashboardFailLoud(t, getDashboard(t, s, "?window=24h"), logs,
+		"failed to load tamper alerts", internal)
 }
 
 func TestDashboardAPIAlertsTamper(t *testing.T) {

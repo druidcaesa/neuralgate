@@ -44,14 +44,20 @@ func (s *AdminServer) dashboard(c *gin.Context) {
 		ErrorCause(c, http.StatusInternalServerError, 500, "failed to compute dashboard", err)
 		return
 	}
-	data.Alerts = s.dashboardAlerts()
+	no := false
+	_, tamperCount, err := s.storage.ListTamperAlerts(&no, 1, 1)
+	if err != nil {
+		ErrorCause(c, http.StatusInternalServerError, 500, "failed to load tamper alerts", err)
+		return
+	}
+	data.Alerts = s.dashboardAlerts(tamperCount)
 	OK(c, data)
 }
 
 // dashboardAlerts 首页告警：授权降级与未处置篡改告警。
 // 只取授权 Status/Message，不含 LicenseInfo 的授权码/客户名等业务字段。
 // 未知授权状态按 warning 兜底——将来新增状态时首页默认可见，不悄悄隐瞒一次降级
-func (s *AdminServer) dashboardAlerts() []plugin.DashboardAlert {
+func (s *AdminServer) dashboardAlerts(tamperCount int64) []plugin.DashboardAlert {
 	alerts := []plugin.DashboardAlert{}
 	ov := s.licenseOverview()
 	switch ov.Status {
@@ -74,11 +80,11 @@ func (s *AdminServer) dashboardAlerts() []plugin.DashboardAlert {
 			Detail: fmt.Sprintf("当前授权状态为 %s，请核实授权文件", ov.Status),
 		})
 	}
-	if n := s.unresolvedTamperCount(); n > 0 {
+	if tamperCount > 0 {
 		alerts = append(alerts, plugin.DashboardAlert{
 			Level:  "error",
 			Title:  "检测到审计篡改告警",
-			Detail: fmt.Sprintf("%d 条未处理，请立即核实处置", n),
+			Detail: fmt.Sprintf("%d 条未处理，请立即核实处置", tamperCount),
 			Link:   "/tamper-alerts",
 		})
 	}

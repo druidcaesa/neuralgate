@@ -280,6 +280,11 @@ type failingListStorage struct {
 	tamperErr        error
 	saveMCPServerErr error
 	mcpAuditErr      error
+	auditSamplesErr  error
+}
+
+func (f *failingListStorage) AuditSamples(start, end time.Time, max int) ([]*plugin.AuditSample, bool, error) {
+	return nil, false, f.auditSamplesErr
 }
 
 func (f *failingListStorage) ListMCPServers(page, size int) ([]*plugin.MCPServer, int64, error) {
