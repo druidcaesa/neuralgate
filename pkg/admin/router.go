@@ -80,7 +80,10 @@ func (s *AdminServer) registerRoutes(r *gin.Engine) {
 		// 系统信息
 		authz.GET("/system", s.RequirePermission(plugin.PermSystemRead), s.systemInfo)
 
-		// 首页概览：系统级只读总览，复用 system:read；
+		// 首页概览：系统级只读总览，复用 system:read。此处有意以 system:read 作为
+		// 「全局域」口径（与 /system、/license、/operation-logs 一致）：接口一次返回
+		// 全平台的请求量/成功率/Token 总量，不做租户过滤，故不套 scopeTenant，
+		// 也不套 globalOnlyGuard——租户账号因缺 system:read 本就进不来。
 		// 不新增权限码，以免既有部署的超管角色因权限全集变化而失效
 		authz.GET("/dashboard", s.RequirePermission(plugin.PermSystemRead), s.dashboard)
 
