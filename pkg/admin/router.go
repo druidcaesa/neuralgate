@@ -80,6 +80,10 @@ func (s *AdminServer) registerRoutes(r *gin.Engine) {
 		// 系统信息
 		authz.GET("/system", s.RequirePermission(plugin.PermSystemRead), s.systemInfo)
 
+		// 首页概览：系统级只读总览，复用 system:read；
+		// 不新增权限码，以免既有部署的超管角色因权限全集变化而失效
+		authz.GET("/dashboard", s.RequirePermission(plugin.PermSystemRead), s.dashboard)
+
 		// 授权信息
 		authz.GET("/license", s.RequirePermission(plugin.PermSystemRead), s.licenseInfo)
 		authz.POST("/license", s.RequirePermission(plugin.PermSystemWrite), s.uploadLicense)
