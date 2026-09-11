@@ -558,6 +558,42 @@ func TestComputeDashboardTopModelTotals(t *testing.T) {
 	}
 }
 
+// TestComputeDashboardTopModelsUnnamed 不带模型名的调用（如未标模型的工具调用）
+// 聚合为一行固定标签，与其他模型同样按请求量参与排序与截断，不因缺名而丢失可见性；
+// 该标签收纳多条记录，不得按空名拆成多行或保持空名
+func TestComputeDashboardTopModelsUnnamed(t *testing.T) {
+	now, _ := dashboardTestNow()
+
+	var samples []*AuditSample
+	for i := 0; i < 5; i++ {
+		samples = append(samples, &AuditSample{
+			CreatedAt: now, ResponseStatus: 200, ModelName: "", TotalTokens: 10,
+		})
+	}
+	samples = append(samples, sampleRepeat(now, "a", 3)...)
+	samples = append(samples, sampleRepeat(now, "b", 2)...)
+
+	d, err := ComputeDashboard(samples, DashboardWindow24h, now, false)
+	if err != nil {
+		t.Fatalf("ComputeDashboard: %v", err)
+	}
+	if len(d.TopModels) != 3 {
+		t.Fatalf("排行条数 = %d, want 3（空名须并入标签行而非单独成行）", len(d.TopModels))
+	}
+	top := d.TopModels[0]
+	if top.ModelName != dashboardUnnamedModel {
+		t.Fatalf("榜首模型名 = %q, want %q（空名须映射到标签）", top.ModelName, dashboardUnnamedModel)
+	}
+	if top.Requests != 5 || top.Tokens != 50 || top.Failed != 0 {
+		t.Errorf("标签行 = %+v, want Requests:5 Tokens:50 Failed:0", top)
+	}
+	for i, m := range d.TopModels {
+		if m.ModelName == "" {
+			t.Errorf("第 %d 名模型名仍为空，空名须并入标签行", i)
+		}
+	}
+}
+
 // TestComputeDashboardTokensSplit Token 构成与流式拆分各自累加
 func TestComputeDashboardTokensSplit(t *testing.T) {
 	now, _ := dashboardTestNow()

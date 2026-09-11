@@ -128,6 +128,45 @@ func TestDashboardAPIEmptyStorage(t *testing.T) {
 	}
 }
 
+// TestDashboardAPIResponseFieldNames 下发 JSON 的字段名是前端契约：
+// 前端按固定 key 取值，字段名一旦漂移会静默取不到数据，
+// 故对原始响应体做包含断言，绕开结构体解码对 tag 的免疫
+func TestDashboardAPIResponseFieldNames(t *testing.T) {
+	t.Run("空库响应", func(t *testing.T) {
+		s := newDashboardServer(t, oss.NewMemStorage(), nil)
+		body := getDashboard(t, s, "?window=24h").Body.String()
+
+		for _, key := range []string{
+			`"summary"`, `"trend"`, `"latency"`, `"status"`, `"top_models"`,
+			`"tokens"`, `"truncated"`, `"alerts"`,
+			`"avg_latency_ms"`, `"failed"`,
+			`"p50_ms"`, `"p95_ms"`, `"p99_ms"`,
+			`"prompt_tokens"`, `"stream_tokens"`, `"non_stream_requests"`,
+		} {
+			if !strings.Contains(body, key) {
+				t.Errorf("空库响应缺少字段 %s: %s", key, body)
+			}
+		}
+	})
+
+	// top_models 空库时为空数组，model_name 只在有排行行时出现，用最小种子数据覆盖
+	t.Run("有排行行时含 model_name", func(t *testing.T) {
+		storage := oss.NewMemStorage()
+		if err := storage.SaveAuditLog(&plugin.AuditLog{
+			ID: "l1", RequestID: "r1", CreatedAt: time.Now(),
+			ResponseStatus: 200, ModelName: "m1",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		s := newDashboardServer(t, storage, nil)
+		body := getDashboard(t, s, "?window=24h").Body.String()
+
+		if !strings.Contains(body, `"model_name"`) {
+			t.Errorf("响应缺少字段 model_name: %s", body)
+		}
+	})
+}
+
 func TestDashboardAPIAggregates(t *testing.T) {
 	storage := oss.NewMemStorage()
 	now := time.Now()

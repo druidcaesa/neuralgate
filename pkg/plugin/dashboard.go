@@ -37,6 +37,10 @@ const (
 // dashboardTopModels 模型排行取前 N 名
 const dashboardTopModels = 8
 
+// dashboardUnnamedModel 模型排行的固定标签行，收纳不带模型名的调用，
+// 使其与具名模型一样按请求量参与排序与截断，不因缺名而在榜内消失
+const dashboardUnnamedModel = "未指定"
+
 // AuditSample 仪表盘聚合用窄列采样行：只含聚合所需的最小字段，
 // 不含请求体/响应体/请求头等大字段
 type AuditSample struct {
@@ -308,14 +312,19 @@ func computeStatus(samples []*AuditSample) []StatusBucket {
 }
 
 // computeTopModels 按请求量降序取前 dashboardTopModels 名；不足则全量返回。
-// 并列按模型名升序：map 迭代顺序随机，缺次级键会让同一份数据两次请求给出不同顺序
+// 并列按模型名升序：map 迭代顺序随机，缺次级键会让同一份数据两次请求给出不同顺序。
+// 不带模型名的调用并入 dashboardUnnamedModel 标签行，与其他模型同规则排序
 func computeTopModels(samples []*AuditSample) []ModelStat {
 	stats := make(map[string]*ModelStat)
 	for _, s := range samples {
-		m := stats[s.ModelName]
+		name := s.ModelName
+		if name == "" {
+			name = dashboardUnnamedModel
+		}
+		m := stats[name]
 		if m == nil {
-			m = &ModelStat{ModelName: s.ModelName}
-			stats[s.ModelName] = m
+			m = &ModelStat{ModelName: name}
+			stats[name] = m
 		}
 		m.Requests++
 		m.Tokens += s.TotalTokens
