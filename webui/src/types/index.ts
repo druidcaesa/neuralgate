@@ -383,3 +383,33 @@ export interface MCPAuditLogItem {
   client_ip: string
   created_at: string
 }
+
+// ===== 控制台首页 =====
+export type DashboardWindow = '24h' | '7d' | '30d'
+
+export interface DashboardSummary {
+  requests: number
+  success_rate: number
+  tokens: number
+  avg_latency_ms: number
+}
+
+export interface TrendPoint {
+  date: string
+  requests: number
+  tokens: number
+}
+
+export interface DashboardAlert {
+  level: string
+  title: string
+  detail: string
+  link?: string
+}
+
+export interface DashboardData {
+  summary: DashboardSummary
+  trend: TrendPoint[]
+  truncated: boolean
+  alerts: DashboardAlert[]
+}
