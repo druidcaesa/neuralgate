@@ -645,14 +645,17 @@ func (s *SQLStorage) QueryAuditLogs(filter plugin.AuditLogFilter, page, size int
 }
 
 // AuditSamples 取 [start, end) 内的窄列采样供仪表盘聚合。
-// 只选聚合所需 4 列，绝不触碰 request_body / response_body 两个 TEXT 字段；
-// 走既有索引 idx_audit_created；达 max 行按 created_at 倒序保留最新 max 行
+// 只选聚合所需 8 列，绝不触碰 request_body / response_body 两个 TEXT 字段；
+// 走既有索引 idx_audit_created；达 max 行按 created_at 倒序保留最新 max 行。
+// is_stream 按 int 扫描后转 bool：该列在四方言下为 INTEGER/TINYINT，
+// 直接扫进 bool 在部分驱动上会失败，与 scanAuditLog 同款处理
 func (s *SQLStorage) AuditSamples(start, end time.Time, max int) ([]*plugin.AuditSample, bool, error) {
 	if max <= 0 {
 		return []*plugin.AuditSample{}, false, nil
 	}
 	rows, err := s.query(
-		"SELECT created_at, response_status, total_tokens, duration_ms FROM audit_logs"+
+		"SELECT created_at, response_status, model_name, prompt_tokens, completion_tokens,"+
+			" total_tokens, duration_ms, is_stream FROM audit_logs"+
 			" WHERE created_at >= ? AND created_at < ? ORDER BY created_at DESC LIMIT ?",
 		timeToMS(start), timeToMS(end), max)
 	if err != nil {
@@ -663,10 +666,14 @@ func (s *SQLStorage) AuditSamples(start, end time.Time, max int) ([]*plugin.Audi
 	out := make([]*plugin.AuditSample, 0, 1024)
 	for rows.Next() {
 		var createdAt string
+		var isStream int
 		sample := &plugin.AuditSample{}
-		if err := rows.Scan(&createdAt, &sample.ResponseStatus, &sample.TotalTokens, &sample.DurationMS); err != nil {
+		if err := rows.Scan(&createdAt, &sample.ResponseStatus, &sample.ModelName,
+			&sample.PromptTokens, &sample.CompletionTokens, &sample.TotalTokens,
+			&sample.DurationMS, &isStream); err != nil {
 			return nil, false, err
 		}
+		sample.IsStream = isStream == 1
 		var ms int64
 		fmt.Sscanf(createdAt, "%d", &ms)
 		sample.CreatedAt = msToTime(ms)

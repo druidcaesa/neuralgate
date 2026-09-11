@@ -106,8 +106,12 @@ func TestAuditSamplesImplConsistency(t *testing.T) {
 			t.Errorf("第 %d 行 created_at: mem=%v sql=%v", i, memGot[i].CreatedAt, sqlGot[i].CreatedAt)
 		}
 		if memGot[i].ResponseStatus != sqlGot[i].ResponseStatus ||
+			memGot[i].ModelName != sqlGot[i].ModelName ||
+			memGot[i].PromptTokens != sqlGot[i].PromptTokens ||
+			memGot[i].CompletionTokens != sqlGot[i].CompletionTokens ||
 			memGot[i].TotalTokens != sqlGot[i].TotalTokens ||
-			memGot[i].DurationMS != sqlGot[i].DurationMS {
+			memGot[i].DurationMS != sqlGot[i].DurationMS ||
+			memGot[i].IsStream != sqlGot[i].IsStream {
 			t.Errorf("第 %d 行字段不一致: mem=%+v sql=%+v", i, memGot[i], sqlGot[i])
 		}
 	}
@@ -207,6 +211,88 @@ func TestAuditSamplesEmptyRange(t *testing.T) {
 			}
 			if len(got) != 0 || truncated {
 				t.Errorf("空库应得 (0 行, truncated=false)，实得 (%d 行, %v)", len(got), truncated)
+			}
+		})
+	}
+}
+
+// TestAuditSamplesCarriesModelAndTokenColumns 采样须带出模型名、Token 构成与流式标记：
+// 四列都是后续面板的唯一数据来源，缺一列对应面板就恒为空
+func TestAuditSamplesCarriesModelAndTokenColumns(t *testing.T) {
+	loc := time.FixedZone("CST", 8*3600)
+	start := time.Date(2026, 9, 11, 13, 0, 0, 0, loc)
+	end := time.Date(2026, 9, 11, 14, 0, 0, 0, loc)
+	seed := []*plugin.AuditLog{
+		{
+			ID: "s1", CreatedAt: start.Add(10 * time.Minute), ModelName: "gpt-4o",
+			ResponseStatus: 200, PromptTokens: 11, CompletionTokens: 22,
+			TotalTokens: 33, Duration: 444, IsStream: true,
+		},
+	}
+
+	for _, tc := range []struct {
+		name string
+		make func(*testing.T) plugin.StoragePlugin
+	}{
+		{"MemStorage", func(t *testing.T) plugin.StoragePlugin { return NewMemStorage() }},
+		{"SQLStorage", func(t *testing.T) plugin.StoragePlugin { return newTestSQLStorage(t) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := tc.make(t)
+			seedAuditLogs(t, s, seed)
+			got, _, err := s.AuditSamples(start, end, 100)
+			if err != nil {
+				t.Fatalf("AuditSamples: %v", err)
+			}
+			if len(got) != 1 {
+				t.Fatalf("len = %d, want 1", len(got))
+			}
+			g := got[0]
+			if g.ModelName != "gpt-4o" {
+				t.Errorf("model_name = %q, want %q", g.ModelName, "gpt-4o")
+			}
+			if g.PromptTokens != 11 || g.CompletionTokens != 22 {
+				t.Errorf("token 构成 = %d/%d, want 11/22", g.PromptTokens, g.CompletionTokens)
+			}
+			if g.TotalTokens != 33 || g.DurationMS != 444 {
+				t.Errorf("total_tokens/duration_ms = %d/%d, want 33/444", g.TotalTokens, g.DurationMS)
+			}
+			if !g.IsStream {
+				t.Error("is_stream = false, want true")
+			}
+		})
+	}
+}
+
+// TestAuditSamplesIsStreamFalse 非流式行的 is_stream 必须为 false：
+// 该列按 int 扫描后转换，转换写错会让所有行都被判成流式
+func TestAuditSamplesIsStreamFalse(t *testing.T) {
+	loc := time.FixedZone("CST", 8*3600)
+	start := time.Date(2026, 9, 11, 13, 0, 0, 0, loc)
+	end := time.Date(2026, 9, 11, 14, 0, 0, 0, loc)
+	seed := []*plugin.AuditLog{
+		{ID: "s1", CreatedAt: start.Add(10 * time.Minute), ModelName: "m", ResponseStatus: 200, IsStream: false},
+	}
+
+	for _, tc := range []struct {
+		name string
+		make func(*testing.T) plugin.StoragePlugin
+	}{
+		{"MemStorage", func(t *testing.T) plugin.StoragePlugin { return NewMemStorage() }},
+		{"SQLStorage", func(t *testing.T) plugin.StoragePlugin { return newTestSQLStorage(t) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := tc.make(t)
+			seedAuditLogs(t, s, seed)
+			got, _, err := s.AuditSamples(start, end, 100)
+			if err != nil {
+				t.Fatalf("AuditSamples: %v", err)
+			}
+			if len(got) != 1 {
+				t.Fatalf("len = %d, want 1", len(got))
+			}
+			if got[0].IsStream {
+				t.Error("is_stream = true, want false")
 			}
 		})
 	}

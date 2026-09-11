@@ -301,10 +301,14 @@ func (s *MemStorage) AuditSamples(start, end time.Time, max int) ([]*plugin.Audi
 	out := make([]*plugin.AuditSample, 0, len(matched))
 	for _, l := range matched {
 		out = append(out, &plugin.AuditSample{
-			CreatedAt:      l.CreatedAt,
-			ResponseStatus: l.ResponseStatus,
-			TotalTokens:    int64(l.TotalTokens),
-			DurationMS:     l.Duration,
+			CreatedAt:        l.CreatedAt,
+			ResponseStatus:   l.ResponseStatus,
+			ModelName:        l.ModelName,
+			PromptTokens:     int64(l.PromptTokens),
+			CompletionTokens: int64(l.CompletionTokens),
+			TotalTokens:      int64(l.TotalTokens),
+			DurationMS:       l.Duration,
+			IsStream:         l.IsStream,
 		})
 	}
 	return out, truncated, nil

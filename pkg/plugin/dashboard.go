@@ -34,12 +34,16 @@ const (
 )
 
 // AuditSample 仪表盘聚合用窄列采样行：只含聚合所需的最小字段，
-// 不携带请求体/响应体等大字段
+// 不含请求体/响应体/请求头等大字段
 type AuditSample struct {
-	CreatedAt      time.Time
-	ResponseStatus int
-	TotalTokens    int64
-	DurationMS     int64
+	CreatedAt        time.Time
+	ResponseStatus   int
+	ModelName        string
+	PromptTokens     int64
+	CompletionTokens int64
+	TotalTokens      int64
+	DurationMS       int64
+	IsStream         bool
 }
 
 // DashboardSummary 首页指标卡

@@ -412,7 +412,7 @@ type StoragePlugin interface {
 	QueryAuditLogs(filter AuditLogFilter, page, size int) ([]*AuditLog, int64, error)
 
 	// AuditSamples 取 [start, end) 内的窄列采样供仪表盘聚合：
-	// 只含聚合所需字段，不含请求/响应体；
+	// 只含聚合所需字段（模型名、Token 构成、流式标记等），不含请求/响应体与请求头；
 	// 行数达 max 时按 created_at 倒序保留最新 max 行并返回 truncated=true
 	// max 必须 > 0
 	AuditSamples(start, end time.Time, max int) ([]*AuditSample, bool, error)
