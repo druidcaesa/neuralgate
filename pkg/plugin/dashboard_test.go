@@ -361,3 +361,78 @@ func TestComputeDashboardLatencyBucketLabels(t *testing.T) {
 			d.Latency.P50MS, d.Latency.P95MS, d.Latency.P99MS)
 	}
 }
+
+// TestComputeDashboardStatusBuckets 状态分布恒定五档，
+// 且分桶之和恒等于 requests——other 兜底使分类全量覆盖
+func TestComputeDashboardStatusBuckets(t *testing.T) {
+	now, _ := dashboardTestNow()
+
+	samples := []*AuditSample{
+		{CreatedAt: now, ResponseStatus: 200},
+		{CreatedAt: now, ResponseStatus: 204},
+		{CreatedAt: now, ResponseStatus: 302},
+		{CreatedAt: now, ResponseStatus: 404},
+		{CreatedAt: now, ResponseStatus: 500},
+		{CreatedAt: now, ResponseStatus: 503},
+		{CreatedAt: now, ResponseStatus: 0},   // 未产生响应
+		{CreatedAt: now, ResponseStatus: 100}, // 异常取值
+		{CreatedAt: now, ResponseStatus: 999}, // 异常取值
+	}
+	d, err := ComputeDashboard(samples, DashboardWindow24h, now, false)
+	if err != nil {
+		t.Fatalf("ComputeDashboard: %v", err)
+	}
+
+	if len(d.Status) != 5 {
+		t.Fatalf("档数 = %d, want 5", len(d.Status))
+	}
+	want := []struct {
+		class string
+		count int64
+	}{
+		{"2xx", 2},   // 200 204
+		{"3xx", 1},   // 302
+		{"4xx", 1},   // 404
+		{"5xx", 2},   // 500 503
+		{"other", 3}, // 0 100 999
+	}
+	var sum int64
+	for i, w := range want {
+		if d.Status[i].Class != w.class || d.Status[i].Count != w.count {
+			t.Errorf("档 %d = %s/%d, want %s/%d",
+				i, d.Status[i].Class, d.Status[i].Count, w.class, w.count)
+		}
+		sum += d.Status[i].Count
+	}
+	if sum != d.Summary.Requests {
+		t.Errorf("分桶之和 = %d, want requests = %d", sum, d.Summary.Requests)
+	}
+	// 成功判定为 status ∈ [200,400)：200 204 302 共 3 个成功，其余 6 个失败
+	if d.Summary.Failed != 6 {
+		t.Errorf("failed = %d, want 6", d.Summary.Failed)
+	}
+}
+
+// TestComputeDashboardEmptySkeletons 空样本各面板仍须返回骨架而非 null
+func TestComputeDashboardEmptySkeletons(t *testing.T) {
+	now, _ := dashboardTestNow()
+
+	d, err := ComputeDashboard(nil, DashboardWindow24h, now, false)
+	if err != nil {
+		t.Fatalf("ComputeDashboard: %v", err)
+	}
+	if len(d.Status) != 5 {
+		t.Errorf("status 档数 = %d, want 5", len(d.Status))
+	}
+	if d.Status == nil {
+		t.Error("status 为 nil, want 非 nil 骨架")
+	}
+	for i, want := range []string{"2xx", "3xx", "4xx", "5xx", "other"} {
+		if d.Status[i].Class != want {
+			t.Errorf("档 %d = %q, want %q", i, d.Status[i].Class, want)
+		}
+		if d.Status[i].Count != 0 {
+			t.Errorf("档 %d 空样本计数 = %d, want 0", i, d.Status[i].Count)
+		}
+	}
+}

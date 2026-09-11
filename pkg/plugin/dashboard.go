@@ -47,10 +47,12 @@ type AuditSample struct {
 	IsStream         bool
 }
 
-// DashboardSummary 首页指标卡
+// DashboardSummary 首页指标卡。
+// Failed 由服务端唯一计算（与 SuccessRate 同出处），前端不得由状态分桶求和反推
 type DashboardSummary struct {
 	Requests     int64   `json:"requests"`
 	SuccessRate  float64 `json:"success_rate"`
+	Failed       int64   `json:"failed"`
 	Tokens       int64   `json:"tokens"`
 	AvgLatencyMS int64   `json:"avg_latency_ms"`
 }
@@ -76,6 +78,12 @@ type DashboardLatency struct {
 	Buckets []LatencyBucket `json:"buckets"`
 }
 
+// StatusBucket 状态码分布的一档
+type StatusBucket struct {
+	Class string `json:"class"`
+	Count int64  `json:"count"`
+}
+
 // DashboardAlert 首页告警条目
 type DashboardAlert struct {
 	Level  string `json:"level"`
@@ -91,6 +99,7 @@ type DashboardData struct {
 	Truncated bool             `json:"truncated"`
 	Alerts    []DashboardAlert `json:"alerts"`
 	Latency   DashboardLatency `json:"latency"`
+	Status    []StatusBucket   `json:"status"`
 }
 
 // DashboardRange 返回窗口对应的查询区间 [start, end) 与分桶规格。
@@ -151,6 +160,7 @@ func ComputeDashboard(samples []*AuditSample, window string, now time.Time, trun
 		Alerts:    []DashboardAlert{},
 		// 各面板恒返回骨架（分档全零、切片非 nil），前端无需判空即可绘图
 		Latency: computeLatency(samples),
+		Status:  computeStatus(samples),
 	}
 	if len(samples) == 0 {
 		return data, nil
@@ -159,7 +169,7 @@ func ComputeDashboard(samples []*AuditSample, window string, now time.Time, trun
 	var success, sumTokens, sumLatency int64
 	for _, s := range samples {
 		data.Summary.Requests++
-		if s.ResponseStatus >= 200 && s.ResponseStatus < 400 {
+		if isSuccess(s.ResponseStatus) {
 			success++
 		}
 		sumTokens += s.TotalTokens
@@ -177,6 +187,7 @@ func ComputeDashboard(samples []*AuditSample, window string, now time.Time, trun
 
 	n := int64(len(samples))
 	data.Summary.Tokens = sumTokens
+	data.Summary.Failed = n - success
 	// 平均延迟四舍五入为整数毫秒，与成功率同口径；采样值恒为非负，n/2 补偿即四舍五入。
 	// n>0 由上方空样本提前返回保证，此处不会除零。
 	data.Summary.AvgLatencyMS = (sumLatency + n/2) / n
@@ -231,5 +242,42 @@ func computeLatency(samples []*AuditSample) DashboardLatency {
 	out.P50MS = percentile(durations, 50)
 	out.P95MS = percentile(durations, 95)
 	out.P99MS = percentile(durations, 99)
+	return out
+}
+
+// statusClasses 状态分布档位与固定输出顺序。
+// other 收纳 status 为 0（未产生响应）及 [200,600) 之外的异常取值，
+// 使分类全量覆盖，sum(分桶) == requests 恒成立
+var statusClasses = []string{"2xx", "3xx", "4xx", "5xx", "other"}
+
+// isSuccess 成功判定：status ∈ [200,400)
+func isSuccess(status int) bool { return status >= 200 && status < 400 }
+
+// statusClass 把响应状态归入分布档位
+func statusClass(status int) string {
+	switch status / 100 {
+	case 2:
+		return "2xx"
+	case 3:
+		return "3xx"
+	case 4:
+		return "4xx"
+	case 5:
+		return "5xx"
+	default:
+		return "other"
+	}
+}
+
+// computeStatus 状态分布：恒定返回 statusClasses 顺序的五档（含零值）
+func computeStatus(samples []*AuditSample) []StatusBucket {
+	counts := make(map[string]int64, len(statusClasses))
+	for _, s := range samples {
+		counts[statusClass(s.ResponseStatus)]++
+	}
+	out := make([]StatusBucket, len(statusClasses))
+	for i, c := range statusClasses {
+		out[i] = StatusBucket{Class: c, Count: counts[c]}
+	}
 	return out
 }
