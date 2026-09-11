@@ -173,5 +173,5 @@ onMounted(() => {
 
 <style scoped>
 .filter-bar { margin-bottom: 12px; }
-.json-block { background: #f9fafb; padding: 10px; border-radius: 4px; max-height: 300px; overflow: auto; font-size: 12px; white-space: pre-wrap; word-break: break-all; }
+.json-block { background: var(--ng-bg-body); padding: 10px; border-radius: var(--ng-radius-sm); max-height: 300px; overflow: auto; font-size: 12px; white-space: pre-wrap; word-break: break-all; }
 </style>
