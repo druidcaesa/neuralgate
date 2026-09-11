@@ -390,6 +390,8 @@ export type DashboardWindow = '24h' | '7d' | '30d'
 export interface DashboardSummary {
   requests: number
   success_rate: number
+  /** 失败数由服务端唯一计算，前端不得由 status 分桶求和反推 */
+  failed: number
   tokens: number
   avg_latency_ms: number
 }
@@ -398,6 +400,39 @@ export interface TrendPoint {
   date: string
   requests: number
   tokens: number
+}
+
+export interface LatencyBucket {
+  label: string
+  count: number
+}
+
+export interface DashboardLatency {
+  p50_ms: number
+  p95_ms: number
+  p99_ms: number
+  buckets: LatencyBucket[]
+}
+
+export interface StatusBucket {
+  class: string
+  count: number
+}
+
+export interface ModelStat {
+  model_name: string
+  requests: number
+  tokens: number
+  failed: number
+}
+
+export interface DashboardTokens {
+  prompt_tokens: number
+  completion_tokens: number
+  stream_requests: number
+  non_stream_requests: number
+  stream_tokens: number
+  non_stream_tokens: number
 }
 
 export interface DashboardAlert {
@@ -410,6 +445,10 @@ export interface DashboardAlert {
 export interface DashboardData {
   summary: DashboardSummary
   trend: TrendPoint[]
+  latency: DashboardLatency
+  status: StatusBucket[]
+  top_models: ModelStat[]
+  tokens: DashboardTokens
   truncated: boolean
   alerts: DashboardAlert[]
 }
