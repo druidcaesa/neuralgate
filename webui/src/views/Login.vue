@@ -58,7 +58,7 @@ async function submit() {
       result.token, result.username, result.permissions ?? [], result.is_super ?? false,
       result.tenant_id ?? '', result.edition ?? '', result.features ?? []
     )
-    router.replace('/models')
+    router.replace('/')
   } catch {
     // 错误提示由 client 拦截器统一弹出(登录页 401 不跳转)
   } finally {

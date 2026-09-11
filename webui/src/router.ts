@@ -1,11 +1,11 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
-import { getAdminToken, hasFeature } from './api/auth'
+import { getAdminToken, hasFeature, hasPerm } from './api/auth'
 
 const router = createRouter({
   history: createWebHistory(),
   routes: [
-    { path: '/', name: 'dashboard', component: () => import('./views/Dashboard.vue'), meta: { title: '概览' } },
+    { path: '/', name: 'dashboard', component: () => import('./views/Dashboard.vue'), meta: { title: '概览', perm: 'system:read' } },
     { path: '/login', name: 'login', component: () => import('./views/Login.vue'), meta: { title: '登录' } },
     { path: '/models', name: 'models', component: () => import('./views/ModelList.vue'), meta: { title: '模型配置' } },
     { path: '/api-keys', name: 'api-keys', component: () => import('./views/ApiKeyList.vue'), meta: { title: 'API Key' } },
@@ -25,7 +25,8 @@ const router = createRouter({
   ]
 })
 
-// 全局守卫：无会话回登录页；企业功能未授权则拦截并弹升级提示（点击锁定菜单/直接改 URL 均覆盖）
+// 全局守卫：无会话回登录页；企业功能未授权则拦截并弹升级提示（点击锁定菜单/直接改 URL 均覆盖）；
+// 缺所需权限码则回落到 /models 而非拦截
 router.beforeEach((to) => {
   if (to.path !== '/login' && !getAdminToken()) {
     return { path: '/login' }
@@ -36,6 +37,12 @@ router.beforeEach((to) => {
       confirmButtonText: '知道了'
     }).catch(() => {})
     return false
+  }
+  // 权限门控：缺权限码时回落而非中止导航——登录后跳 / 再中止会让人卡在登录页，形似「登录成功却进不去」；
+  // 回落目标 /models 未声明 perm（全库仅 / 声明），故不会再触发本分支，无重定向环
+  const perm = to.meta.perm as string | undefined
+  if (perm && !hasPerm(perm)) {
+    return { path: '/models' }
   }
   return true
 })

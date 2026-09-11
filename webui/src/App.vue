@@ -142,7 +142,7 @@ function toggleCollapse() {
 // 侧栏分组（perm 字段与原 v-if 权限守卫一一对应，逻辑不变）
 const menuGroups: MenuGroup[] = [
   { title: '概览', items: [
-    { index: '/', title: '概览', icon: Odometer }
+    { index: '/', title: '概览', icon: Odometer, perm: 'system:read' }
   ] },
   { title: '配置', items: [
     { index: '/models', title: '模型配置', icon: Cpu },
