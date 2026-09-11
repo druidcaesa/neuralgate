@@ -199,6 +199,24 @@ func TestComputeDashboardAggregation(t *testing.T) {
 	}
 }
 
+// TestComputeDashboardAvgLatencyRounds 平均延迟四舍五入为整数毫秒：整除截断会得 1，规格要求 2
+func TestComputeDashboardAvgLatencyRounds(t *testing.T) {
+	now, loc := dashboardTestNow()
+	at := func(m int) time.Time { return time.Date(2026, 9, 11, 14, m, 0, 0, loc) }
+
+	samples := []*AuditSample{
+		{CreatedAt: at(5), ResponseStatus: 200, DurationMS: 1},
+		{CreatedAt: at(6), ResponseStatus: 200, DurationMS: 2},
+	}
+	d, err := ComputeDashboard(samples, DashboardWindow24h, now, false)
+	if err != nil {
+		t.Fatalf("ComputeDashboard: %v", err)
+	}
+	if d.Summary.AvgLatencyMS != 2 {
+		t.Errorf("avg_latency_ms = %d, want 2（(1+2)/2 应四舍五入而非截断）", d.Summary.AvgLatencyMS)
+	}
+}
+
 func TestComputeDashboardSuccessRateEdges(t *testing.T) {
 	now, loc := dashboardTestNow()
 	at := func(h int) time.Time { return time.Date(2026, 9, 11, h, 0, 0, 0, loc) }

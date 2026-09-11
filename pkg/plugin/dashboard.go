@@ -149,8 +149,11 @@ func ComputeDashboard(samples []*AuditSample, window string, now time.Time, trun
 		}
 	}
 
+	n := int64(len(samples))
 	data.Summary.Tokens = sumTokens
-	data.Summary.AvgLatencyMS = sumLatency / int64(len(samples))
+	// 平均延迟四舍五入为整数毫秒，与成功率同口径；采样值恒为非负，n/2 补偿即四舍五入。
+	// n>0 由上方空样本提前返回保证，此处不会除零。
+	data.Summary.AvgLatencyMS = (sumLatency + n/2) / n
 	data.Summary.SuccessRate = math.Round(float64(success)/float64(len(samples))*1000) / 10
 	return data, nil
 }
