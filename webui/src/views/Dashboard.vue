@@ -65,7 +65,7 @@ import { hasFeature } from '../api/auth'
 echarts.use([LineChart, GridComponent, TooltipComponent, CanvasRenderer])
 
 const windows: DashboardWindow[] = ['24h', '7d', '30d']
-// 变量名不得用 window：会遮蔽全局 window，导致下方 resize 监听挂到 ref 上
+// 变量名不得用 window：会遮蔽全局 window
 const activeWindow = ref<DashboardWindow>('7d')
 const data = ref<DashboardData | null>(null)
 const chartEl = ref<HTMLElement | null>(null)
