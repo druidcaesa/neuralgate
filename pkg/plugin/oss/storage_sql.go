@@ -644,6 +644,37 @@ func (s *SQLStorage) QueryAuditLogs(filter plugin.AuditLogFilter, page, size int
 	return logs, total, rows.Err()
 }
 
+// AuditSamples 取 [start, end) 内的窄列采样供仪表盘聚合。
+// 只选聚合所需 4 列，绝不触碰 request_body / response_body 两个 TEXT 字段；
+// 走既有索引 idx_audit_created；达 max 行按 created_at 倒序保留最新 max 行
+func (s *SQLStorage) AuditSamples(start, end time.Time, max int) ([]*plugin.AuditSample, bool, error) {
+	rows, err := s.query(
+		"SELECT created_at, response_status, total_tokens, duration_ms FROM audit_logs"+
+			" WHERE created_at >= ? AND created_at < ? ORDER BY created_at DESC LIMIT ?",
+		timeToMS(start), timeToMS(end), max)
+	if err != nil {
+		return nil, false, fmt.Errorf("query audit samples: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]*plugin.AuditSample, 0, 1024)
+	for rows.Next() {
+		var createdAt string
+		sample := &plugin.AuditSample{}
+		if err := rows.Scan(&createdAt, &sample.ResponseStatus, &sample.TotalTokens, &sample.DurationMS); err != nil {
+			return nil, false, err
+		}
+		var ms int64
+		fmt.Sscanf(createdAt, "%d", &ms)
+		sample.CreatedAt = msToTime(ms)
+		out = append(out, sample)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	return out, len(out) >= max, nil
+}
+
 // ===== 健康检查 =====
 
 func (s *SQLStorage) Ping() error { return s.db.Ping() }

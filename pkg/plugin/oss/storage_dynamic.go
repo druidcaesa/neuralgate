@@ -93,6 +93,9 @@ func (d *dynamicStorage) BatchSaveAuditLogs(logs []*plugin.AuditLog) error {
 func (d *dynamicStorage) QueryAuditLogs(filter plugin.AuditLogFilter, page, size int) ([]*plugin.AuditLog, int64, error) {
 	return d.impl.QueryAuditLogs(filter, page, size)
 }
+func (d *dynamicStorage) AuditSamples(start, end time.Time, max int) ([]*plugin.AuditSample, bool, error) {
+	return d.impl.AuditSamples(start, end, max)
+}
 func (d *dynamicStorage) GetRateLimitConfig(tenantID, modelName string) (*plugin.RateLimitConfig, error) {
 	return d.impl.GetRateLimitConfig(tenantID, modelName)
 }

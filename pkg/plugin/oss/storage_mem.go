@@ -276,6 +276,37 @@ func (s *MemStorage) QueryAuditLogs(filter plugin.AuditLogFilter, page, size int
 	return matched[start:end], int64(len(matched)), nil
 }
 
+// AuditSamples 取 [start, end) 内的窄列采样供仪表盘聚合。
+// 与 SQL 实现同语义：created_at 倒序保留最新 max 行，达上限置 truncated
+func (s *MemStorage) AuditSamples(start, end time.Time, max int) ([]*plugin.AuditSample, bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	matched := make([]*plugin.AuditLog, 0, len(s.auditLogs))
+	for _, l := range s.auditLogs {
+		if l.CreatedAt.Before(start) || !l.CreatedAt.Before(end) {
+			continue
+		}
+		matched = append(matched, l)
+	}
+	sort.Slice(matched, func(i, j int) bool { return matched[i].CreatedAt.After(matched[j].CreatedAt) })
+
+	truncated := max > 0 && len(matched) >= max
+	if truncated {
+		matched = matched[:max]
+	}
+	out := make([]*plugin.AuditSample, 0, len(matched))
+	for _, l := range matched {
+		out = append(out, &plugin.AuditSample{
+			CreatedAt:      l.CreatedAt,
+			ResponseStatus: l.ResponseStatus,
+			TotalTokens:    int64(l.TotalTokens),
+			DurationMS:     l.Duration,
+		})
+	}
+	return out, truncated, nil
+}
+
 // ===== 健康检查 =====
 
 func (s *MemStorage) Ping() error { return nil }

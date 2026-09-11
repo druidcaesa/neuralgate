@@ -411,6 +411,11 @@ type StoragePlugin interface {
 	BatchSaveAuditLogs(logs []*AuditLog) error
 	QueryAuditLogs(filter AuditLogFilter, page, size int) ([]*AuditLog, int64, error)
 
+	// AuditSamples 取 [start, end) 内的窄列采样供仪表盘聚合：
+	// 只含聚合所需字段，不含请求/响应体；
+	// 行数达 max 时按 created_at 倒序保留最新 max 行并返回 truncated=true
+	AuditSamples(start, end time.Time, max int) ([]*AuditSample, bool, error)
+
 	// 留存清理：删除 cutoff 之前的各日志表记录，返回删除条数。
 	// 统一留存 worker 逐表调用；多副本并发删除幂等(分批删除,重复命中计数 0)
 	DeleteAuditLogsBefore(cutoff time.Time) (int64, error)
