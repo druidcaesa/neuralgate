@@ -70,6 +70,10 @@ const activeWindow = ref<DashboardWindow>('7d')
 const data = ref<DashboardData | null>(null)
 const chartEl = ref<HTMLElement | null>(null)
 let chart: ReturnType<typeof echarts.init> | null = null
+// 观察图表容器自身尺寸，覆盖侧栏折叠等不触发 window resize 的布局变动
+let ro: ResizeObserver | null = null
+// 请求序号，只采纳最新一次 load 的响应，避免快速切换窗口时旧数据覆盖新数据
+let seq = 0
 
 const cards = computed(() => {
   const s = data.value?.summary
@@ -101,21 +105,26 @@ function render() {
 }
 
 async function load() {
-  data.value = await getDashboard(activeWindow.value)
+  const cur = ++seq
+  const d = await getDashboard(activeWindow.value)
+  // 迟到的旧响应直接丢弃，不能先写 data.value 再判断，否则仍会覆盖已渲染的新数据
+  if (cur !== seq) return
+  data.value = d
   render()
 }
 
-function onResize() {
-  chart?.resize()
-}
-
 onMounted(async () => {
-  window.addEventListener('resize', onResize)
+  if (chartEl.value) {
+    ro = new ResizeObserver(() => chart?.resize())
+    ro.observe(chartEl.value)
+  }
   await load()
 })
 
 onBeforeUnmount(() => {
-  window.removeEventListener('resize', onResize)
+  // 先断开观察器再销毁图表，避免卸载后回调再触发 resize
+  ro?.disconnect()
+  ro = null
   chart?.dispose()
   chart = null
 })
