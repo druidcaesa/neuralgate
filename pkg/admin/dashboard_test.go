@@ -60,7 +60,14 @@ func TestDashboardForbiddenWithoutPerm(t *testing.T) {
 	f := newRBACFixture(t, true)
 	rec := f.do(f.scopedTok, http.MethodGet, "/api/dashboard?window=24h", "")
 	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "无权限") {
-		t.Errorf("无 system:read 访问首页应 403 无权限, got %d %s", rec.Code, rec.Body.String())
+		t.Fatalf("无 system:read 访问首页应 403 无权限, got %d %s", rec.Code, rec.Body.String())
+	}
+	var resp Response
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Code != http.StatusForbidden {
+		t.Errorf("业务码应 403, got %d", resp.Code)
 	}
 }
 

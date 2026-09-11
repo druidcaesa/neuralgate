@@ -199,7 +199,7 @@ func TestComputeDashboardAggregation(t *testing.T) {
 	}
 }
 
-// TestComputeDashboardAvgLatencyRounds 平均延迟四舍五入为整数毫秒：整除截断会得 1，规格要求 2
+// TestComputeDashboardAvgLatencyRounds 平均延迟四舍五入为整数毫秒：截断实现得 1，本用例钉住取整口径
 func TestComputeDashboardAvgLatencyRounds(t *testing.T) {
 	now, loc := dashboardTestNow()
 	at := func(m int) time.Time { return time.Date(2026, 9, 11, 14, m, 0, 0, loc) }
