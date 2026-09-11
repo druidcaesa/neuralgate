@@ -90,6 +90,12 @@ type ChartOption = ComposeOption<
   LineSeriesOption | GridComponentOption | LegendComponentOption | TooltipComponentOption
 >
 
+// tooltipTheme 提示框跟随主题：echarts 默认底色在暗色卡底上是一块亮斑，
+// 与卡片脱节，故各图统一以卡片色作底、边框色描边
+function tooltipTheme(p: ChartPalette) {
+  return { backgroundColor: p.card, borderColor: p.border, textStyle: { color: p.textSecondary } }
+}
+
 const windows: DashboardWindow[] = ['24h', '7d', '30d']
 // 变量名不得用 window：会遮蔽全局 window
 const activeWindow = ref<DashboardWindow>('7d')
@@ -113,7 +119,7 @@ const { palette } = useChartTheme(() => renderAll())
 // 加载失败由页面级错误提示负责，不得显示「暂无请求」掩盖故障
 const showEmpty = computed(() => !!data.value && data.value.summary.requests === 0)
 
-// 无采样时延迟无定义，「0 ms」会被读成瞬时，故与失败率同口径显示占位符
+// 无采样时延迟无定义，「0 ms」会被读成瞬时，故显示占位符
 const avgLatencyText = computed(() => {
   const s = data.value?.summary
   if (!s || s.requests === 0) return '-'
@@ -164,7 +170,7 @@ function renderTrend(p: ChartPalette) {
   const trend = data.value?.trend ?? []
   draw('trend', trendEl.value, {
     color: [p.primary, p.success],
-    tooltip: { trigger: 'axis' },
+    tooltip: { trigger: 'axis', ...tooltipTheme(p) },
     legend: { data: ['请求量', 'Token'], textStyle: { color: p.textSecondary } },
     grid: { left: 56, right: 56, top: 40, bottom: 32 },
     xAxis: {
