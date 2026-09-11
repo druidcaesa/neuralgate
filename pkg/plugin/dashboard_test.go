@@ -91,3 +91,144 @@ func TestDashboardRange(t *testing.T) {
 		}
 	})
 }
+
+func TestComputeDashboardBucketAlignment(t *testing.T) {
+	now, _ := dashboardTestNow()
+
+	t.Run("24h 桶键为连续整点", func(t *testing.T) {
+		d, err := ComputeDashboard(nil, DashboardWindow24h, now, false)
+		if err != nil {
+			t.Fatalf("ComputeDashboard: %v", err)
+		}
+		if len(d.Trend) != 24 {
+			t.Fatalf("trend len = %d, want 24", len(d.Trend))
+		}
+		if d.Trend[0].Date != "15:00" {
+			t.Errorf("首桶 = %s, want 15:00", d.Trend[0].Date)
+		}
+		if d.Trend[23].Date != "14:00" {
+			t.Errorf("末桶 = %s, want 14:00（当前小时）", d.Trend[23].Date)
+		}
+	})
+
+	t.Run("7d 桶键为连续自然日且末桶为当日", func(t *testing.T) {
+		d, err := ComputeDashboard(nil, DashboardWindow7d, now, false)
+		if err != nil {
+			t.Fatalf("ComputeDashboard: %v", err)
+		}
+		if len(d.Trend) != 7 {
+			t.Fatalf("trend len = %d, want 7", len(d.Trend))
+		}
+		if d.Trend[0].Date != "2026-09-05" {
+			t.Errorf("首桶 = %s, want 2026-09-05", d.Trend[0].Date)
+		}
+		if d.Trend[6].Date != "2026-09-11" {
+			t.Errorf("末桶 = %s, want 2026-09-11（当日）", d.Trend[6].Date)
+		}
+	})
+
+	t.Run("30d 桶数为 30", func(t *testing.T) {
+		d, err := ComputeDashboard(nil, DashboardWindow30d, now, false)
+		if err != nil {
+			t.Fatalf("ComputeDashboard: %v", err)
+		}
+		if len(d.Trend) != 30 {
+			t.Fatalf("trend len = %d, want 30", len(d.Trend))
+		}
+		if d.Trend[0].Date != "2026-08-13" {
+			t.Errorf("首桶 = %s, want 2026-08-13", d.Trend[0].Date)
+		}
+	})
+
+	t.Run("空样本补零占位不跳点", func(t *testing.T) {
+		d, err := ComputeDashboard(nil, DashboardWindow7d, now, false)
+		if err != nil {
+			t.Fatalf("ComputeDashboard: %v", err)
+		}
+		for i, p := range d.Trend {
+			if p.Requests != 0 || p.Tokens != 0 {
+				t.Errorf("桶 %d (%s) = %+v, want 全零", i, p.Date, p)
+			}
+		}
+		if d.Trend == nil || d.Alerts == nil {
+			t.Fatal("Trend/Alerts 必须为空切片而非 nil，否则 JSON 序列化为 null")
+		}
+	})
+
+	t.Run("非法 window 返回错误", func(t *testing.T) {
+		if _, err := ComputeDashboard(nil, "1h", now, false); err == nil {
+			t.Fatal("非法 window 应返回错误")
+		}
+	})
+}
+
+func TestComputeDashboardAggregation(t *testing.T) {
+	now, loc := dashboardTestNow()
+	at := func(h, m int) time.Time { return time.Date(2026, 9, 11, h, m, 0, 0, loc) }
+
+	samples := []*AuditSample{
+		{CreatedAt: at(14, 5), ResponseStatus: 200, TotalTokens: 100, DurationMS: 500},
+		{CreatedAt: at(14, 30), ResponseStatus: 0, TotalTokens: 50, DurationMS: 1500},
+		{CreatedAt: at(13, 10), ResponseStatus: 404, TotalTokens: 0, DurationMS: 100},
+	}
+	d, err := ComputeDashboard(samples, DashboardWindow24h, now, false)
+	if err != nil {
+		t.Fatalf("ComputeDashboard: %v", err)
+	}
+
+	if d.Summary.Requests != 3 {
+		t.Errorf("requests = %d, want 3", d.Summary.Requests)
+	}
+	if d.Summary.Tokens != 150 {
+		t.Errorf("tokens = %d, want 150", d.Summary.Tokens)
+	}
+	// (500+1500+100)/3 = 700
+	if d.Summary.AvgLatencyMS != 700 {
+		t.Errorf("avg_latency_ms = %d, want 700", d.Summary.AvgLatencyMS)
+	}
+	// 仅 200 计入成功；status==0 视为失败，404 视为失败 → 1/3 = 33.3
+	if d.Summary.SuccessRate != 33.3 {
+		t.Errorf("success_rate = %v, want 33.3", d.Summary.SuccessRate)
+	}
+	// 14:05 与 14:30 落在末桶（14:00 起），13:10 落在第 22 桶
+	if d.Trend[23].Requests != 2 || d.Trend[23].Tokens != 150 {
+		t.Errorf("末桶 = %+v, want requests=2 tokens=150", d.Trend[23])
+	}
+	if d.Trend[22].Requests != 1 || d.Trend[22].Tokens != 0 {
+		t.Errorf("第 22 桶 = %+v, want requests=1 tokens=0", d.Trend[22])
+	}
+}
+
+func TestComputeDashboardSuccessRateEdges(t *testing.T) {
+	now, loc := dashboardTestNow()
+	at := func(h int) time.Time { return time.Date(2026, 9, 11, h, 0, 0, 0, loc) }
+
+	// 200/302 计成功，400/500/0 计失败 → 2/5 = 40.0
+	samples := []*AuditSample{
+		{CreatedAt: at(14), ResponseStatus: 200},
+		{CreatedAt: at(14), ResponseStatus: 302},
+		{CreatedAt: at(14), ResponseStatus: 400},
+		{CreatedAt: at(14), ResponseStatus: 500},
+		{CreatedAt: at(14), ResponseStatus: 0},
+	}
+	d, err := ComputeDashboard(samples, DashboardWindow24h, now, false)
+	if err != nil {
+		t.Fatalf("ComputeDashboard: %v", err)
+	}
+	if d.Summary.SuccessRate != 40.0 {
+		t.Errorf("success_rate = %v, want 40.0（status==0 计失败）", d.Summary.SuccessRate)
+	}
+}
+
+func TestComputeDashboardTruncated(t *testing.T) {
+	now, loc := dashboardTestNow()
+	d, err := ComputeDashboard(
+		[]*AuditSample{{CreatedAt: time.Date(2026, 9, 11, 14, 0, 0, 0, loc), ResponseStatus: 200}},
+		DashboardWindow24h, now, true)
+	if err != nil {
+		t.Fatalf("ComputeDashboard: %v", err)
+	}
+	if !d.Truncated {
+		t.Error("truncated 标记未透传")
+	}
+}

@@ -16,6 +16,7 @@ package plugin
 
 import (
 	"fmt"
+	"math"
 	"time"
 )
 
@@ -106,4 +107,50 @@ func bucketLabel(t time.Time, window string) string {
 		return t.Format("15:04")
 	}
 	return t.Format("2006-01-02")
+}
+
+// ComputeDashboard 把窄列采样聚合为首页数据。纯函数：无 IO、不读时钟——
+// 分桶边界经 DashboardRange 派生，与调用方的查询区间同源。
+// samples 为 [start, end) 内的采样，顺序无关；truncated 由存储层透传。
+//
+// 成功率为 status ∈ [200,400) 的行占比，status==0 计入失败（未记录响应不算成功）。
+// 平均延迟为 duration_ms 的算术平均，长连接流式请求会显著拉高该值，非 SLA 指标。
+func ComputeDashboard(samples []*AuditSample, window string, now time.Time, truncated bool) (*DashboardData, error) {
+	start, end, interval, buckets, err := DashboardRange(window, now)
+	if err != nil {
+		return nil, err
+	}
+
+	trend := make([]TrendPoint, buckets)
+	for i := range trend {
+		trend[i] = TrendPoint{Date: bucketLabel(start.Add(time.Duration(i)*interval), window)}
+	}
+	data := &DashboardData{Trend: trend, Truncated: truncated, Alerts: []DashboardAlert{}}
+	if len(samples) == 0 {
+		return data, nil
+	}
+
+	var success, sumTokens, sumLatency int64
+	for _, s := range samples {
+		data.Summary.Requests++
+		if s.ResponseStatus >= 200 && s.ResponseStatus < 400 {
+			success++
+		}
+		sumTokens += s.TotalTokens
+		sumLatency += s.DurationMS
+
+		// 区间外的行不计入趋势（查询已限定区间，此处为防御性边界检查）
+		if s.CreatedAt.Before(start) || !s.CreatedAt.Before(end) {
+			continue
+		}
+		if idx := int(s.CreatedAt.Sub(start) / interval); idx >= 0 && idx < buckets {
+			trend[idx].Requests++
+			trend[idx].Tokens += s.TotalTokens
+		}
+	}
+
+	data.Summary.Tokens = sumTokens
+	data.Summary.AvgLatencyMS = sumLatency / int64(len(samples))
+	data.Summary.SuccessRate = math.Round(float64(success)/float64(len(samples))*1000) / 10
+	return data, nil
 }
