@@ -645,7 +645,7 @@ func (s *SQLStorage) QueryAuditLogs(filter plugin.AuditLogFilter, page, size int
 }
 
 // AuditSamples 取 [start, end) 内的窄列采样供仪表盘聚合。
-// 只选聚合所需 8 列，绝不触碰 request_body / response_body 两个 TEXT 字段；
+// 只选聚合所需 8 列，绝不触碰 request_body / request_headers / response_body 三个 TEXT 字段；
 // 走既有索引 idx_audit_created；达 max 行按 created_at 倒序保留最新 max 行。
 // is_stream 按 int 扫描后转 bool：该列在四方言下为 INTEGER/TINYINT，
 // 直接扫进 bool 在部分驱动上会失败，与 scanAuditLog 同款处理

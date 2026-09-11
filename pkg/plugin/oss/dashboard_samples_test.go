@@ -22,16 +22,27 @@ import (
 	"github.com/druidcaesa/neuralgate/pkg/plugin"
 )
 
-// sampleFixture 三个时间点各一条审计日志，末条恰好落在区间右边界外
+// sampleFixture 三个时间点各一条审计日志，末条恰好落在区间右边界外。
+// 各条的模型名、Token 构成与流式标记互不相同且非零：字段映射串位或写死任一列，
+// 都会在跨实现逐字段比对中暴露
 func sampleFixture(t *testing.T) (start, end time.Time, want []*plugin.AuditLog) {
 	t.Helper()
 	loc := time.FixedZone("CST", 8*3600)
 	start = time.Date(2026, 9, 11, 13, 0, 0, 0, loc)
 	end = time.Date(2026, 9, 11, 14, 0, 0, 0, loc)
 	want = []*plugin.AuditLog{
-		{ID: "l1", CreatedAt: start, ResponseStatus: 200, TotalTokens: 10, Duration: 100}, // 左闭：计入
-		{ID: "l2", CreatedAt: start.Add(30 * time.Minute), ResponseStatus: 500, TotalTokens: 20, Duration: 200},
-		{ID: "l3", CreatedAt: end, ResponseStatus: 200, TotalTokens: 30, Duration: 300}, // 右开：排除
+		{ // 左闭：计入
+			ID: "l1", CreatedAt: start, ResponseStatus: 200, ModelName: "gpt-4o",
+			PromptTokens: 11, CompletionTokens: 22, TotalTokens: 10, Duration: 100, IsStream: true,
+		},
+		{
+			ID: "l2", CreatedAt: start.Add(30 * time.Minute), ResponseStatus: 500, ModelName: "claude-3",
+			PromptTokens: 33, CompletionTokens: 44, TotalTokens: 20, Duration: 200, IsStream: false,
+		},
+		{ // 右开：排除
+			ID: "l3", CreatedAt: end, ResponseStatus: 200, ModelName: "qwen-max",
+			PromptTokens: 55, CompletionTokens: 66, TotalTokens: 30, Duration: 300, IsStream: true,
+		},
 	}
 	return start, end, want
 }
@@ -217,7 +228,7 @@ func TestAuditSamplesEmptyRange(t *testing.T) {
 }
 
 // TestAuditSamplesCarriesModelAndTokenColumns 采样须带出模型名、Token 构成与流式标记：
-// 四列都是后续面板的唯一数据来源，缺一列对应面板就恒为空
+// 这些列都是后续面板的唯一数据来源，缺一列对应面板就恒为空
 func TestAuditSamplesCarriesModelAndTokenColumns(t *testing.T) {
 	loc := time.FixedZone("CST", 8*3600)
 	start := time.Date(2026, 9, 11, 13, 0, 0, 0, loc)
@@ -264,8 +275,8 @@ func TestAuditSamplesCarriesModelAndTokenColumns(t *testing.T) {
 	}
 }
 
-// TestAuditSamplesIsStreamFalse 非流式行的 is_stream 必须为 false：
-// 该列按 int 扫描后转换，转换写错会让所有行都被判成流式
+// TestAuditSamplesIsStreamFalse 非流式行经存储往返后 is_stream 须为 false：
+// sqlite 驱动下 0 可直接扫进 bool，本用例只钉住取值本身不被写成 true
 func TestAuditSamplesIsStreamFalse(t *testing.T) {
 	loc := time.FixedZone("CST", 8*3600)
 	start := time.Date(2026, 9, 11, 13, 0, 0, 0, loc)
