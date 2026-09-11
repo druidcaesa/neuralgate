@@ -23,8 +23,8 @@ import (
 )
 
 // sampleFixture 三个时间点各一条审计日志，末条恰好落在区间右边界外。
-// 各条的模型名、Token 构成与流式标记互不相同且非零：字段映射串位或写死任一列，
-// 都会在跨实现逐字段比对中暴露
+// 各条的模型名与 Token 构成互不相同且非零，流式标记两种取值都有：
+// 字段映射串位或写死任一列，都会在跨实现逐字段比对中暴露
 func sampleFixture(t *testing.T) (start, end time.Time, want []*plugin.AuditLog) {
 	t.Helper()
 	loc := time.FixedZone("CST", 8*3600)
