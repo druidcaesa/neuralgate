@@ -15,6 +15,7 @@
 package oss
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -151,6 +152,39 @@ func TestAuditSamplesTruncation(t *testing.T) {
 				t.Errorf("保留的不是最新两行: %d, %d", got[0].TotalTokens, got[1].TotalTokens)
 			}
 		})
+	}
+}
+
+// TestAuditSamplesNonPositiveMax max <= 0 为非法入参：两实现均须返回非 nil 空切片且不置 truncated
+func TestAuditSamplesNonPositiveMax(t *testing.T) {
+	start, end, logs := sampleFixture(t)
+
+	for _, tc := range []struct {
+		name string
+		make func(*testing.T) plugin.StoragePlugin
+	}{
+		{"MemStorage", func(t *testing.T) plugin.StoragePlugin { return NewMemStorage() }},
+		{"SQLStorage", func(t *testing.T) plugin.StoragePlugin { return newTestSQLStorage(t) }},
+	} {
+		for _, max := range []int{0, -1} {
+			t.Run(fmt.Sprintf("%s/max=%d", tc.name, max), func(t *testing.T) {
+				s := tc.make(t)
+				seedAuditLogs(t, s, logs)
+				got, truncated, err := s.AuditSamples(start, end, max)
+				if err != nil {
+					t.Fatalf("max=%d AuditSamples: %v", max, err)
+				}
+				if len(got) != 0 {
+					t.Errorf("max=%d len = %d, want 0", max, len(got))
+				}
+				if got == nil {
+					t.Errorf("max=%d 返回 nil 切片, want 非 nil 空切片", max)
+				}
+				if truncated {
+					t.Errorf("max=%d truncated = true, want false", max)
+				}
+			})
+		}
 	}
 }
 

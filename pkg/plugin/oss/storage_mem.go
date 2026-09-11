@@ -279,6 +279,9 @@ func (s *MemStorage) QueryAuditLogs(filter plugin.AuditLogFilter, page, size int
 // AuditSamples 取 [start, end) 内的窄列采样供仪表盘聚合。
 // 与 SQL 实现同语义：created_at 倒序保留最新 max 行，达上限置 truncated
 func (s *MemStorage) AuditSamples(start, end time.Time, max int) ([]*plugin.AuditSample, bool, error) {
+	if max <= 0 {
+		return []*plugin.AuditSample{}, false, nil
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 

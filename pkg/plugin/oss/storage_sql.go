@@ -648,6 +648,9 @@ func (s *SQLStorage) QueryAuditLogs(filter plugin.AuditLogFilter, page, size int
 // 只选聚合所需 4 列，绝不触碰 request_body / response_body 两个 TEXT 字段；
 // 走既有索引 idx_audit_created；达 max 行按 created_at 倒序保留最新 max 行
 func (s *SQLStorage) AuditSamples(start, end time.Time, max int) ([]*plugin.AuditSample, bool, error) {
+	if max <= 0 {
+		return []*plugin.AuditSample{}, false, nil
+	}
 	rows, err := s.query(
 		"SELECT created_at, response_status, total_tokens, duration_ms FROM audit_logs"+
 			" WHERE created_at >= ? AND created_at < ? ORDER BY created_at DESC LIMIT ?",

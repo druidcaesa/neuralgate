@@ -414,6 +414,7 @@ type StoragePlugin interface {
 	// AuditSamples 取 [start, end) 内的窄列采样供仪表盘聚合：
 	// 只含聚合所需字段，不含请求/响应体；
 	// 行数达 max 时按 created_at 倒序保留最新 max 行并返回 truncated=true
+	// max 必须 > 0
 	AuditSamples(start, end time.Time, max int) ([]*AuditSample, bool, error)
 
 	// 留存清理：删除 cutoff 之前的各日志表记录，返回删除条数。
