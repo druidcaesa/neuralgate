@@ -17,6 +17,7 @@ package plugin
 import (
 	"fmt"
 	"math"
+	"sort"
 	"time"
 )
 
@@ -61,6 +62,20 @@ type TrendPoint struct {
 	Tokens   int64  `json:"tokens"`
 }
 
+// LatencyBucket 延迟直方图的一档
+type LatencyBucket struct {
+	Label string `json:"label"`
+	Count int64  `json:"count"`
+}
+
+// DashboardLatency 延迟分位与分布
+type DashboardLatency struct {
+	P50MS   int64           `json:"p50_ms"`
+	P95MS   int64           `json:"p95_ms"`
+	P99MS   int64           `json:"p99_ms"`
+	Buckets []LatencyBucket `json:"buckets"`
+}
+
 // DashboardAlert 首页告警条目
 type DashboardAlert struct {
 	Level  string `json:"level"`
@@ -75,6 +90,7 @@ type DashboardData struct {
 	Trend     []TrendPoint     `json:"trend"`
 	Truncated bool             `json:"truncated"`
 	Alerts    []DashboardAlert `json:"alerts"`
+	Latency   DashboardLatency `json:"latency"`
 }
 
 // DashboardRange 返回窗口对应的查询区间 [start, end) 与分桶规格。
@@ -129,7 +145,13 @@ func ComputeDashboard(samples []*AuditSample, window string, now time.Time, trun
 	for i := range trend {
 		trend[i] = TrendPoint{Date: bucketLabel(start.Add(time.Duration(i)*interval), window)}
 	}
-	data := &DashboardData{Trend: trend, Truncated: truncated, Alerts: []DashboardAlert{}}
+	data := &DashboardData{
+		Trend:     trend,
+		Truncated: truncated,
+		Alerts:    []DashboardAlert{},
+		// 各面板恒返回骨架（分档全零、切片非 nil），前端无需判空即可绘图
+		Latency: computeLatency(samples),
+	}
 	if len(samples) == 0 {
 		return data, nil
 	}
@@ -160,4 +182,54 @@ func ComputeDashboard(samples []*AuditSample, window string, now time.Time, trun
 	data.Summary.AvgLatencyMS = (sumLatency + n/2) / n
 	data.Summary.SuccessRate = math.Round(float64(success)/float64(len(samples))*1000) / 10
 	return data, nil
+}
+
+// latencyBucketBounds 延迟分档上界（毫秒，左闭右开），与 latencyBucketLabels 一一对应；
+// 超出最后一个上界的归入末档
+var latencyBucketBounds = []int64{100, 300, 1000, 3000, 10000}
+
+// latencyBucketLabels 档位文案，即下发前端的 label 精确取值
+var latencyBucketLabels = []string{"<100ms", "100–300ms", "0.3–1s", "1–3s", "3–10s", "≥10s"}
+
+// latencyBucketIndex 返回耗时所属档位下标：依次与上界比较，
+// 未落入任何上界者归入末档
+func latencyBucketIndex(ms int64) int {
+	for i, ub := range latencyBucketBounds {
+		if ms < ub {
+			return i
+		}
+	}
+	return len(latencyBucketBounds)
+}
+
+// percentile 最近秩法分位数：索引 = ceil(k*n/100) - 1。
+// 用整数运算避免浮点误差：(k*n+99)/100 即向上取整。
+// 前置条件：sorted 已升序、非空，k ∈ [1,100]——此时索引必落在 [0, n-1]
+func percentile(sorted []int64, k int) int64 {
+	return sorted[(k*len(sorted)+99)/100-1]
+}
+
+// computeLatency 延迟分位与分布。空样本返回全零分位与六档零计数骨架，
+// 前端无需判空即可绘图
+func computeLatency(samples []*AuditSample) DashboardLatency {
+	out := DashboardLatency{Buckets: make([]LatencyBucket, len(latencyBucketLabels))}
+	for i, l := range latencyBucketLabels {
+		out.Buckets[i].Label = l
+	}
+	if len(samples) == 0 {
+		return out
+	}
+
+	// 排序在副本上进行，不得改动入参顺序
+	durations := make([]int64, 0, len(samples))
+	for _, s := range samples {
+		durations = append(durations, s.DurationMS)
+		out.Buckets[latencyBucketIndex(s.DurationMS)].Count++
+	}
+	sort.Slice(durations, func(i, j int) bool { return durations[i] < durations[j] })
+
+	out.P50MS = percentile(durations, 50)
+	out.P95MS = percentile(durations, 95)
+	out.P99MS = percentile(durations, 99)
+	return out
 }

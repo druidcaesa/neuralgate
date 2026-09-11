@@ -250,3 +250,114 @@ func TestComputeDashboardTruncated(t *testing.T) {
 		t.Error("truncated 标记未透传")
 	}
 }
+
+// TestComputeDashboardLatencyPercentiles 最近秩法分位：
+// 升序排列后取 v[ceil(k*n/100)-1]，不插值
+func TestComputeDashboardLatencyPercentiles(t *testing.T) {
+	now, _ := dashboardTestNow()
+
+	// 1..100 毫秒共 100 个样本：P50=50、P95=95、P99=99
+	hundred := make([]int64, 100)
+	for i := range hundred {
+		hundred[i] = int64(i + 1)
+	}
+
+	for _, tc := range []struct {
+		name          string
+		ms            []int64
+		p50, p95, p99 int64
+	}{
+		{"单样本", []int64{7}, 7, 7, 7},
+		{"两样本取最近秩", []int64{1, 3}, 1, 3, 3},
+		{"五样本", []int64{10, 20, 30, 40, 50}, 30, 50, 50},
+		{"全等值", []int64{5, 5, 5, 5}, 5, 5, 5},
+		{"乱序输入", []int64{50, 10, 40, 20, 30}, 30, 50, 50},
+		{"100 样本", hundred, 50, 95, 99},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			samples := make([]*AuditSample, 0, len(tc.ms))
+			for _, d := range tc.ms {
+				samples = append(samples, &AuditSample{
+					CreatedAt: now, ResponseStatus: 200, DurationMS: d})
+			}
+			d, err := ComputeDashboard(samples, DashboardWindow24h, now, false)
+			if err != nil {
+				t.Fatalf("ComputeDashboard: %v", err)
+			}
+			if d.Latency.P50MS != tc.p50 || d.Latency.P95MS != tc.p95 || d.Latency.P99MS != tc.p99 {
+				t.Errorf("P50/P95/P99 = %d/%d/%d, want %d/%d/%d",
+					d.Latency.P50MS, d.Latency.P95MS, d.Latency.P99MS, tc.p50, tc.p95, tc.p99)
+			}
+			// 排序必须发生在副本上：入参顺序不得被改动
+			for i, want := range tc.ms {
+				if samples[i].DurationMS != want {
+					t.Fatalf("入参第 %d 项被改动: %d, want %d", i, samples[i].DurationMS, want)
+				}
+			}
+		})
+	}
+}
+
+// TestComputeDashboardLatencyBuckets 延迟分档边界：左闭右开，末档为 ≥10s
+func TestComputeDashboardLatencyBuckets(t *testing.T) {
+	now, _ := dashboardTestNow()
+
+	for _, tc := range []struct {
+		ms   int64
+		want int
+	}{
+		{0, 0}, {99, 0},
+		{100, 1}, {299, 1},
+		{300, 2}, {999, 2},
+		{1000, 3}, {2999, 3},
+		{3000, 4}, {9999, 4},
+		{10000, 5}, {60000, 5},
+	} {
+		d, err := ComputeDashboard(
+			[]*AuditSample{{CreatedAt: now, ResponseStatus: 200, DurationMS: tc.ms}},
+			DashboardWindow24h, now, false)
+		if err != nil {
+			t.Fatalf("耗时 %dms ComputeDashboard: %v", tc.ms, err)
+		}
+		if len(d.Latency.Buckets) != 6 {
+			t.Fatalf("耗时 %dms 档数 = %d, want 6", tc.ms, len(d.Latency.Buckets))
+		}
+		for i, b := range d.Latency.Buckets {
+			want := int64(0)
+			if i == tc.want {
+				want = 1
+			}
+			if b.Count != want {
+				t.Errorf("耗时 %dms: 档 %d(%s) 计数 = %d, want %d",
+					tc.ms, i, b.Label, b.Count, want)
+			}
+		}
+	}
+}
+
+// TestComputeDashboardLatencyBucketLabels 档位文案即下发前端的精确取值，
+// 空样本下也须返回完整骨架
+func TestComputeDashboardLatencyBucketLabels(t *testing.T) {
+	now, _ := dashboardTestNow()
+
+	d, err := ComputeDashboard(nil, DashboardWindow24h, now, false)
+	if err != nil {
+		t.Fatalf("ComputeDashboard: %v", err)
+	}
+	want := []string{"<100ms", "100–300ms", "0.3–1s", "1–3s", "3–10s", "≥10s"}
+	if len(d.Latency.Buckets) != len(want) {
+		t.Fatalf("档数 = %d, want %d", len(d.Latency.Buckets), len(want))
+	}
+	for i, w := range want {
+		if d.Latency.Buckets[i].Label != w {
+			t.Errorf("档 %d 文案 = %q, want %q", i, d.Latency.Buckets[i].Label, w)
+		}
+		if d.Latency.Buckets[i].Count != 0 {
+			t.Errorf("档 %d 空样本计数 = %d, want 0", i, d.Latency.Buckets[i].Count)
+		}
+	}
+	if d.Latency.P50MS != 0 || d.Latency.P95MS != 0 || d.Latency.P99MS != 0 {
+		t.Errorf("空样本分位应为 0，实得 %d/%d/%d",
+			d.Latency.P50MS, d.Latency.P95MS, d.Latency.P99MS)
+	}
+}
