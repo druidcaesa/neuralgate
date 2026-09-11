@@ -112,6 +112,19 @@ func TestDashboardAPIEmptyStorage(t *testing.T) {
 		if d.Trend == nil || d.Alerts == nil {
 			t.Errorf("%s Trend/Alerts 不得为 null", tc.query)
 		}
+		// 新增面板同样必须下发骨架而非 null，前端无需判空
+		if len(d.Latency.Buckets) != 6 {
+			t.Errorf("%s latency.buckets 档数 = %d, want 6", tc.query, len(d.Latency.Buckets))
+		}
+		if len(d.Status) != 5 {
+			t.Errorf("%s status 档数 = %d, want 5", tc.query, len(d.Status))
+		}
+		if d.TopModels == nil {
+			t.Errorf("%s top_models 不得为 null", tc.query)
+		}
+		if d.Summary.Failed != 0 {
+			t.Errorf("%s 空库 failed 应为 0，实得 %d", tc.query, d.Summary.Failed)
+		}
 	}
 }
 

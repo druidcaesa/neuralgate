@@ -95,6 +95,16 @@ type ModelStat struct {
 	Failed    int64  `json:"failed"`
 }
 
+// DashboardTokens Token 构成与流式拆分
+type DashboardTokens struct {
+	PromptTokens      int64 `json:"prompt_tokens"`
+	CompletionTokens  int64 `json:"completion_tokens"`
+	StreamRequests    int64 `json:"stream_requests"`
+	NonStreamRequests int64 `json:"non_stream_requests"`
+	StreamTokens      int64 `json:"stream_tokens"`
+	NonStreamTokens   int64 `json:"non_stream_tokens"`
+}
+
 // DashboardAlert 首页告警条目
 type DashboardAlert struct {
 	Level  string `json:"level"`
@@ -107,11 +117,12 @@ type DashboardAlert struct {
 type DashboardData struct {
 	Summary   DashboardSummary `json:"summary"`
 	Trend     []TrendPoint     `json:"trend"`
-	Truncated bool             `json:"truncated"`
-	Alerts    []DashboardAlert `json:"alerts"`
 	Latency   DashboardLatency `json:"latency"`
 	Status    []StatusBucket   `json:"status"`
 	TopModels []ModelStat      `json:"top_models"`
+	Tokens    DashboardTokens  `json:"tokens"`
+	Truncated bool             `json:"truncated"`
+	Alerts    []DashboardAlert `json:"alerts"`
 }
 
 // DashboardRange 返回窗口对应的查询区间 [start, end) 与分桶规格。
@@ -174,6 +185,7 @@ func ComputeDashboard(samples []*AuditSample, window string, now time.Time, trun
 		Latency:   computeLatency(samples),
 		Status:    computeStatus(samples),
 		TopModels: computeTopModels(samples),
+		Tokens:    computeTokens(samples),
 	}
 	if len(samples) == 0 {
 		return data, nil
@@ -324,6 +336,23 @@ func computeTopModels(samples []*AuditSample) []ModelStat {
 	})
 	if len(out) > dashboardTopModels {
 		out = out[:dashboardTopModels]
+	}
+	return out
+}
+
+// computeTokens Token 构成与流式拆分
+func computeTokens(samples []*AuditSample) DashboardTokens {
+	var out DashboardTokens
+	for _, s := range samples {
+		out.PromptTokens += s.PromptTokens
+		out.CompletionTokens += s.CompletionTokens
+		if s.IsStream {
+			out.StreamRequests++
+			out.StreamTokens += s.TotalTokens
+		} else {
+			out.NonStreamRequests++
+			out.NonStreamTokens += s.TotalTokens
+		}
 	}
 	return out
 }

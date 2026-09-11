@@ -557,3 +557,49 @@ func TestComputeDashboardTopModelTotals(t *testing.T) {
 		}
 	}
 }
+
+// TestComputeDashboardTokensSplit Token 构成与流式拆分各自累加
+func TestComputeDashboardTokensSplit(t *testing.T) {
+	now, _ := dashboardTestNow()
+
+	samples := []*AuditSample{
+		{CreatedAt: now, ResponseStatus: 200, PromptTokens: 10, CompletionTokens: 20,
+			TotalTokens: 30, IsStream: true},
+		{CreatedAt: now, ResponseStatus: 200, PromptTokens: 1, CompletionTokens: 2,
+			TotalTokens: 3, IsStream: true},
+		{CreatedAt: now, ResponseStatus: 200, PromptTokens: 100, CompletionTokens: 200,
+			TotalTokens: 300, IsStream: false},
+	}
+	d, err := ComputeDashboard(samples, DashboardWindow24h, now, false)
+	if err != nil {
+		t.Fatalf("ComputeDashboard: %v", err)
+	}
+
+	want := DashboardTokens{
+		PromptTokens:      111, // 10+1+100
+		CompletionTokens:  222, // 20+2+200
+		StreamRequests:    2,
+		NonStreamRequests: 1,
+		StreamTokens:      33, // 30+3
+		NonStreamTokens:   300,
+	}
+	if d.Tokens != want {
+		t.Errorf("tokens = %+v, want %+v", d.Tokens, want)
+	}
+}
+
+// TestComputeDashboardTokensEmpty 空样本 Token 面板全零，不得为 null
+func TestComputeDashboardTokensEmpty(t *testing.T) {
+	now, _ := dashboardTestNow()
+
+	d, err := ComputeDashboard(nil, DashboardWindow24h, now, false)
+	if err != nil {
+		t.Fatalf("ComputeDashboard: %v", err)
+	}
+	if d.Tokens != (DashboardTokens{}) {
+		t.Errorf("空样本 tokens = %+v, want 全零", d.Tokens)
+	}
+	if d.TopModels == nil {
+		t.Error("top_models 为 nil, want 非 nil 空切片")
+	}
+}
