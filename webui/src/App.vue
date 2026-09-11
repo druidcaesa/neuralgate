@@ -100,7 +100,7 @@ import { ElMessage } from 'element-plus'
 import {
   Cpu, Key, Document, Timer, Setting, Warning, User, ArrowDown, Lock, Bell,
   OfficeBuilding, Avatar, UserFilled, List, DataAnalysis, Connection, Tickets,
-  Sunny, Moon, Fold, Expand
+  Sunny, Moon, Fold, Expand, Odometer
 } from '@element-plus/icons-vue'
 import { changePassword, clearAdminSession, getAdminUsername, hasPerm, hasFeature } from './api/auth'
 import { getGatewayMeta } from './api/system'
@@ -141,6 +141,9 @@ function toggleCollapse() {
 
 // 侧栏分组（perm 字段与原 v-if 权限守卫一一对应，逻辑不变）
 const menuGroups: MenuGroup[] = [
+  { title: '概览', items: [
+    { index: '/', title: '概览', icon: Odometer }
+  ] },
   { title: '配置', items: [
     { index: '/models', title: '模型配置', icon: Cpu },
     { index: '/api-keys', title: 'API Key', icon: Key },

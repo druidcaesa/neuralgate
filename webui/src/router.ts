@@ -5,7 +5,7 @@ import { getAdminToken, hasFeature } from './api/auth'
 const router = createRouter({
   history: createWebHistory(),
   routes: [
-    { path: '/', redirect: '/models' },
+    { path: '/', name: 'dashboard', component: () => import('./views/Dashboard.vue'), meta: { title: '概览' } },
     { path: '/login', name: 'login', component: () => import('./views/Login.vue'), meta: { title: '登录' } },
     { path: '/models', name: 'models', component: () => import('./views/ModelList.vue'), meta: { title: '模型配置' } },
     { path: '/api-keys', name: 'api-keys', component: () => import('./views/ApiKeyList.vue'), meta: { title: 'API Key' } },
