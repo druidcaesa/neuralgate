@@ -17,8 +17,11 @@ package admin
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -128,42 +131,133 @@ func TestDashboardAPIEmptyStorage(t *testing.T) {
 	}
 }
 
+// jsonKey 一条契约字段断言：path 按层定位 key，want 为 nil 时只查该 key 是否存在，
+// 否则同时核对取值。want 里的数字须写成 float64——encoding/json 把 JSON 数字解为 float64
+type jsonKey struct {
+	path string
+	want any
+}
+
+// assertJSONKeys 逐条断言下发 JSON 满足契约字段。
+// 响应体解进 map[string]any 而非结构体：结构体解码按 Go 字段名匹配、自行反查 json tag，
+// 等于绕开 tag 本身，钉不住前端赖以取值的 key；map 保留真实下发的 key，
+// 按路径逐层下钻即只查「该 key 是否存在」，既不依赖字段声明顺序，也不受同层新增字段影响
+// ——JSON key 顺序对前端没有语义。requests/tokens/failed/count 等同名 key 落在多个结构体上，
+// 由完整路径区分（如 data.summary.tokens 与 data.top_models[0].tokens）。
+// 数组取首个元素取样（下标写成 [i]），故排行行/告警条目各有种子用例覆盖。
+// 失败信息点名断开的路径，便于判断是哪个字段漂了。
+func assertJSONKeys(t *testing.T, body string, keys []jsonKey) {
+	t.Helper()
+	var root map[string]any
+	if err := json.Unmarshal([]byte(body), &root); err != nil {
+		t.Fatalf("响应体解析失败: %v; body=%s", err, body)
+	}
+	for _, k := range keys {
+		segs := strings.Split(strings.NewReplacer("[", ".", "]", "").Replace(k.path), ".")
+		got, broken := probeJSONPath(root, segs)
+		if broken != "" {
+			t.Errorf("下发 JSON 缺失路径 %s（%s，字段名或层级已漂移）; body=%s", k.path, broken, body)
+			continue
+		}
+		if k.want != nil && !reflect.DeepEqual(got, k.want) {
+			t.Errorf("路径 %s 取值 = %#v, want %#v; body=%s", k.path, got, k.want, body)
+		}
+	}
+}
+
+// probeJSONPath 从根逐层下钻：map 按 key、切片按下标取值。
+// 返回叶子值与首个断点的说明（以父层路径 + 缺失/越界的段描述），断点为空表示整条路径存在
+func probeJSONPath(root any, segs []string) (any, string) {
+	cur := root
+	for i, seg := range segs {
+		switch node := cur.(type) {
+		case map[string]any:
+			v, ok := node[seg]
+			if !ok {
+				return nil, fmt.Sprintf("%s 下无 key %q", probeParent(segs[:i]), seg)
+			}
+			cur = v
+		case []any:
+			idx, err := strconv.Atoi(seg)
+			if err != nil || idx < 0 || idx >= len(node) {
+				return nil, fmt.Sprintf("%s 的下标 %s 越界（len=%d）", probeParent(segs[:i]), seg, len(node))
+			}
+			cur = node[idx]
+		default:
+			return nil, fmt.Sprintf("%s 不是对象或数组（%T）", probeParent(segs[:i]), cur)
+		}
+	}
+	return cur, ""
+}
+
+// probeParent 渲染断点父层的路径，用于失败信息里点名断在了哪一层；
+// 数组下标还原成 [i] 写法，与断言里的路径写法一致
+func probeParent(segs []string) string {
+	if len(segs) == 0 {
+		return "响应体根"
+	}
+	var b strings.Builder
+	for _, seg := range segs {
+		if _, err := strconv.Atoi(seg); err == nil {
+			fmt.Fprintf(&b, "[%s]", seg)
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteByte('.')
+		}
+		b.WriteString(seg)
+	}
+	return b.String()
+}
+
 // TestDashboardAPIResponseFieldNames 下发 JSON 的字段名是前端契约，前端按固定 key
-// 取值，字段名一旦漂移会静默取不到数据，故对原始响应体做包含断言，绕开结构体解码
-// 对 tag 的免疫。requests/tokens/failed/count 等同名 key 落在多个结构体上，
-// 裸 key 断言会被同名者顶掉，故每个片段都带足够层级（相邻字段或前一层面板 key）唯一定位：
-// 改任一字段的 json tag 都会让对应片段失配。
+// 取值，字段名一旦漂移会静默取不到数据，故对原始响应体按路径逐层断言 key 的存在性，
+// 绕开结构体解码对 tag 的免疫。改任一字段的 json tag 都会让对应路径失配
 func TestDashboardAPIResponseFieldNames(t *testing.T) {
+	// 空库下各面板仍须下发骨架，指标恒为零值
 	t.Run("空库骨架", func(t *testing.T) {
 		s := newDashboardServer(t, oss.NewMemStorage(), nil)
 		body := getDashboard(t, s, "?window=24h").Body.String()
 
-		for _, want := range []struct {
-			panel    string
-			fragment string
-		}{
-			// DashboardData.summary 与其五个字段按声明顺序紧凑输出
-			{"指标卡", `"summary":{"requests":0,"success_rate":0,"failed":0,"tokens":0,"avg_latency_ms":0}`},
-			// trend 面板 key 与首个数据点的 date（桶键随当前整点变化，故只钉前缀）
-			{"趋势面板", `"trend":[{"date":"`},
-			// 相邻两个数据点：TrendPoint.requests/tokens 的唯一出处
-			{"趋势数据点", `"requests":0,"tokens":0},{"date":"`},
+		assertJSONKeys(t, body, []jsonKey{
+			// DashboardData 八个面板 key
+			{path: "data.summary"},
+			{path: "data.trend"},
+			{path: "data.latency"},
+			{path: "data.status"},
+			{path: "data.top_models", want: []any{}}, // 空库须为空数组而非 null
+			{path: "data.tokens"},
+			{path: "data.truncated"},
+			{path: "data.alerts", want: []any{}}, // 同上
+			// DashboardSummary 五个指标
+			{path: "data.summary.requests"},
+			{path: "data.summary.success_rate"},
+			{path: "data.summary.failed"},
+			{path: "data.summary.tokens"},
+			{path: "data.summary.avg_latency_ms"},
+			// TrendPoint 三个字段；24h 窗口桶数恒定，首个数据点必然存在
+			{path: "data.trend[0].date"},
+			{path: "data.trend[0].requests"},
+			{path: "data.trend[0].tokens"},
 			// DashboardLatency 三档分位 + buckets 切片
-			{"延迟面板", `"latency":{"p50_ms":0,"p95_ms":0,"p99_ms":0,"buckets":[{`},
-			// 相邻两档：LatencyBucket.count/label 的唯一出处；档位文案含 "<"，
-			// 会被 gin 的 HTML 转义改写，故不取文案值做锚点
-			{"延迟分档", `"count":0},{"label":`},
-			// StatusBucket 恒定五档，取前两档钉住 class/count
-			{"状态分布", `"status":[{"class":"2xx","count":0},{"class":"3xx","count":0}`},
-			{"排行面板", `"top_models":[]`},
-			// DashboardData.tokens 与 Summary.tokens 同名，用前一面板收尾做锚点
-			{"Token 面板", `"top_models":[],"tokens":{"prompt_tokens":0,"completion_tokens":0,"stream_requests":0,"non_stream_requests":0,"stream_tokens":0,"non_stream_tokens":0}`},
-			{"截断标记与告警面板", `"non_stream_tokens":0},"truncated":false,"alerts":[]`},
-		} {
-			if !strings.Contains(body, want.fragment) {
-				t.Errorf("%s 片段失配（字段名或层级漂移），want %s: %s", want.panel, want.fragment, body)
-			}
-		}
+			{path: "data.latency.p50_ms"},
+			{path: "data.latency.p95_ms"},
+			{path: "data.latency.p99_ms"},
+			{path: "data.latency.buckets"},
+			// LatencyBucket 两字段；档位文案含 "<"，会被 gin 的 HTML 转义改写，故不钉取值
+			{path: "data.latency.buckets[0].label"},
+			{path: "data.latency.buckets[0].count"},
+			// StatusBucket 两字段；恒定五档
+			{path: "data.status[0].class"},
+			{path: "data.status[0].count"},
+			// DashboardTokens 六个字段
+			{path: "data.tokens.prompt_tokens"},
+			{path: "data.tokens.completion_tokens"},
+			{path: "data.tokens.stream_requests"},
+			{path: "data.tokens.non_stream_requests"},
+			{path: "data.tokens.stream_tokens"},
+			{path: "data.tokens.non_stream_tokens"},
+		})
 	})
 
 	// top_models 空库时为空数组，排行行字段只在有行时出现，用最小种子数据覆盖；
@@ -179,9 +273,13 @@ func TestDashboardAPIResponseFieldNames(t *testing.T) {
 		s := newDashboardServer(t, storage, nil)
 		body := getDashboard(t, s, "?window=24h").Body.String()
 
-		if !strings.Contains(body, `"top_models":[{"model_name":"m1","requests":1,"tokens":42,"failed":1}]`) {
-			t.Errorf("排行行片段失配（字段名漂移或非 2xx 未计入 failed）: %s", body)
-		}
+		// ModelStat 四个字段；单条 500 即 1 请求 1 失败
+		assertJSONKeys(t, body, []jsonKey{
+			{path: "data.top_models[0].model_name", want: "m1"},
+			{path: "data.top_models[0].requests", want: float64(1)},
+			{path: "data.top_models[0].tokens", want: float64(42)},
+			{path: "data.top_models[0].failed", want: float64(1)},
+		})
 	})
 
 	// alerts 无异常时为空数组，告警条目字段只在有告警时出现，用篡改告警种子覆盖
@@ -195,18 +293,14 @@ func TestDashboardAPIResponseFieldNames(t *testing.T) {
 		s := newDashboardServer(t, storage, nil)
 		body := getDashboard(t, s, "").Body.String()
 
-		// DashboardAlert 按 level/title/detail/link 声明顺序输出，文案不在此处钉，
-		// 只钉字段名与层级：level 借 alerts 面板 key、detail 借 title 的值收尾、
-		// link 借其取值（omitempty 下仅篡改告警携带）定位
-		for _, fragment := range []string{
-			`"alerts":[{"level":"error","title":`,
-			`","detail":"`,
-			`","link":"/tamper-alerts"}`,
-		} {
-			if !strings.Contains(body, fragment) {
-				t.Errorf("告警条目片段失配（字段名或层级漂移），want %s: %s", fragment, body)
-			}
-		}
+		// DashboardAlert 四个字段；文案不在此处钉，link 带 omitempty，
+		// 篡改告警是唯一携 link 的条目，故同时核对取值
+		assertJSONKeys(t, body, []jsonKey{
+			{path: "data.alerts[0].level", want: "error"},
+			{path: "data.alerts[0].title"},
+			{path: "data.alerts[0].detail"},
+			{path: "data.alerts[0].link", want: "/tamper-alerts"},
+		})
 	})
 }
 

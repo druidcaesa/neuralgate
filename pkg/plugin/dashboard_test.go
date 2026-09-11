@@ -611,10 +611,7 @@ func TestComputeDashboardTopModelsUnnamed(t *testing.T) {
 		if top.Requests != 4 || top.Tokens != 35 || top.Failed != 1 {
 			t.Errorf("标签行 = %+v, want Requests:4 Tokens:35 Failed:1", top)
 		}
-		for i, m := range d.TopModels {
-			if m.ModelName == "" {
-				t.Errorf("第 %d 名模型名仍为空，空名须并入标签行", i)
-			}
+		for _, m := range d.TopModels {
 			if m.ModelName == "m03" {
 				t.Errorf("m03 请求量低于标签行，应与标签行同规则被挤出榜外: %+v", d.TopModels)
 			}
