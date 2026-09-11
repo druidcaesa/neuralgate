@@ -63,37 +63,113 @@
         P50/P95/P99 同理。
       </p>
     </el-card>
+
+    <el-row :gutter="16">
+      <el-col :xs="24" :lg="12">
+        <el-card shadow="never" class="panel">
+          <template #header><span>延迟分位与分布</span></template>
+          <div class="stat-row">
+            <div v-for="q in percentiles" :key="q.label">
+              <div class="metric-label">{{ q.label }}</div>
+              <div class="stat-value">{{ q.value }}</div>
+            </div>
+          </div>
+          <div class="chart-wrap">
+            <div ref="latencyEl" class="chart"></div>
+            <div v-if="showEmpty" class="chart-empty">窗口内暂无请求</div>
+          </div>
+        </el-card>
+      </el-col>
+      <el-col :xs="24" :lg="12">
+        <el-card shadow="never" class="panel">
+          <template #header><span>状态码分布与错误数</span></template>
+          <div class="chart-wrap">
+            <div ref="statusEl" class="chart"></div>
+            <div v-if="showEmpty" class="chart-empty">窗口内暂无请求</div>
+          </div>
+          <p class="note">失败 {{ failedText }} 次 · 失败率 {{ failRateText }}</p>
+        </el-card>
+      </el-col>
+    </el-row>
+
+    <el-row :gutter="16">
+      <el-col :xs="24" :lg="12">
+        <el-card shadow="never" class="panel">
+          <template #header><span>模型 TOP 8</span></template>
+          <div class="chart-wrap">
+            <div ref="modelsEl" class="chart"></div>
+            <div v-if="showEmpty" class="chart-empty">窗口内暂无请求</div>
+          </div>
+        </el-card>
+      </el-col>
+      <el-col :xs="24" :lg="12">
+        <el-card shadow="never" class="panel">
+          <template #header><span>Token 构成与流式拆分</span></template>
+          <div class="chart-wrap">
+            <div ref="tokensEl" class="chart"></div>
+            <div v-if="showEmpty" class="chart-empty">窗口内暂无请求</div>
+          </div>
+          <p class="note">流式 {{ streamText }}<br />非流式 {{ nonStreamText }}</p>
+        </el-card>
+      </el-col>
+    </el-row>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import * as echarts from 'echarts/core'
-import { LineChart } from 'echarts/charts'
+import { BarChart, LineChart, PieChart } from 'echarts/charts'
 import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import type { ComposeOption } from 'echarts/core'
-import type { LineSeriesOption } from 'echarts/charts'
+import type { BarSeriesOption, LineSeriesOption, PieSeriesOption } from 'echarts/charts'
 import type { GridComponentOption, LegendComponentOption, TooltipComponentOption } from 'echarts/components'
-import type { DashboardData, DashboardWindow } from '../types'
+import type { DashboardData, DashboardTokens, DashboardWindow } from '../types'
 import { getDashboard } from '../api/dashboard'
 import { hasFeature } from '../api/auth'
 import { useChartTheme } from '../composables/useChartTheme'
 import type { ChartPalette } from '../composables/useChartTheme'
 
-// 按需注册：只引折线图 + 网格/图例/提示框 + Canvas 渲染器，避免全量引入撑大产物
-echarts.use([LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
+// 按需注册：折线 + 条形 + 环形 + 网格/图例/提示框 + Canvas 渲染器，避免全量引入撑大产物
+echarts.use([
+  LineChart, BarChart, PieChart,
+  GridComponent, LegendComponent, TooltipComponent, CanvasRenderer
+])
 
 // ComposeOption 是唯一能让 option 获得上下文类型的写法：
 // EChartsCoreOption 过宽，formatter 参数会退化成隐式 any
 type ChartOption = ComposeOption<
-  LineSeriesOption | GridComponentOption | LegendComponentOption | TooltipComponentOption
+  | LineSeriesOption
+  | BarSeriesOption
+  | PieSeriesOption
+  | GridComponentOption
+  | LegendComponentOption
+  | TooltipComponentOption
 >
 
 // tooltipTheme 提示框跟随主题：echarts 默认底色在暗色卡底上是一块亮斑，
 // 与卡片脱节，故各图统一以卡片色作底、边框色描边
 function tooltipTheme(p: ChartPalette) {
   return { backgroundColor: p.card, borderColor: p.border, textStyle: { color: p.textSecondary } }
+}
+
+// 状态码按语义取色，不参与 primary → success → … 的序列取色
+const STATUS_COLORS: Record<string, keyof ChartPalette> = {
+  '2xx': 'success',
+  '3xx': 'info',
+  '4xx': 'warning',
+  '5xx': 'danger',
+  other: 'textSecondary'
+}
+
+// STATUS_LABELS 环形图图例文案；other 如出现异常取值也如实标注
+const STATUS_LABELS: Record<string, string> = {
+  '2xx': '2xx 成功',
+  '3xx': '3xx 跳转',
+  '4xx': '4xx 客户端错误',
+  '5xx': '5xx 服务端错误',
+  other: '无响应/其他'
 }
 
 const windows: DashboardWindow[] = ['24h', '7d', '30d']
@@ -104,6 +180,10 @@ const loading = ref(false)
 // 非空即整页错误态
 const error = ref('')
 const trendEl = ref<HTMLElement | null>(null)
+const latencyEl = ref<HTMLElement | null>(null)
+const statusEl = ref<HTMLElement | null>(null)
+const modelsEl = ref<HTMLElement | null>(null)
+const tokensEl = ref<HTMLElement | null>(null)
 
 // chartInstances 按面板键复用 echarts 实例，避免每次重绘重复 init
 const chartInstances = new Map<string, ReturnType<typeof echarts.init>>()
@@ -144,6 +224,48 @@ const cards = computed(() => {
   ]
 })
 
+const percentiles = computed(() => {
+  const d = data.value
+  // 无采样时延迟无定义，「0 ms」会被读成瞬时，故显示占位符
+  if (!d || d.summary.requests === 0) {
+    return ['P50', 'P95', 'P99'].map((label) => ({ label, value: '-' }))
+  }
+  return [
+    { label: 'P50', value: `${d.latency.p50_ms} ms` },
+    { label: 'P95', value: `${d.latency.p95_ms} ms` },
+    { label: 'P99', value: `${d.latency.p99_ms} ms` }
+  ]
+})
+
+// 失败数与请求数均取自服务端 summary；此处只做除法展示，
+// 不得由 status 分桶求和重算失败数
+const failedText = computed(() => (data.value ? data.value.summary.failed.toLocaleString() : '-'))
+
+const failRateText = computed(() => {
+  const s = data.value?.summary
+  if (!s || s.requests === 0) return '-'
+  return `${((s.failed / s.requests) * 100).toFixed(1)}%`
+})
+
+// splitText 流式与非流式口径完全一致，仅取的字段不同
+function splitText(t: DashboardTokens, stream: boolean): string {
+  const requests = stream ? t.stream_requests : t.non_stream_requests
+  const tokens = stream ? t.stream_tokens : t.non_stream_tokens
+  const total = t.stream_requests + t.non_stream_requests
+  const pct = total === 0 ? 0 : Math.round((requests / total) * 1000) / 10
+  return `${requests.toLocaleString()} 次（${pct}%）· ${tokens.toLocaleString()} Token`
+}
+
+const streamText = computed(() => {
+  const t = data.value?.tokens
+  return t ? splitText(t, true) : '-'
+})
+
+const nonStreamText = computed(() => {
+  const t = data.value?.tokens
+  return t ? splitText(t, false) : '-'
+})
+
 // draw 在指定容器上绘制：首次 init，之后复用实例；
 // notMerge 置真，避免上一份 option 的残留系列影响新图形
 function draw(key: string, el: HTMLElement | null, option: ChartOption) {
@@ -163,7 +285,12 @@ function renderAll() {
     return
   }
   // 每次绘制都重新读取色板，否则明暗切换后仍用旧色
-  renderTrend(palette())
+  const p = palette()
+  renderTrend(p)
+  renderLatency(p)
+  renderStatus(p)
+  renderModels(p)
+  renderTokens(p)
 }
 
 function renderTrend(p: ChartPalette) {
@@ -216,6 +343,107 @@ function renderTrend(p: ChartPalette) {
   })
 }
 
+function renderLatency(p: ChartPalette) {
+  const buckets = data.value?.latency.buckets ?? []
+  draw('latency', latencyEl.value, {
+    color: [p.primary],
+    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, ...tooltipTheme(p) },
+    grid: { left: 48, right: 16, top: 16, bottom: 32 },
+    xAxis: {
+      type: 'category',
+      data: buckets.map(b => b.label),
+      axisLine: { lineStyle: { color: p.border } },
+      axisLabel: { color: p.textSecondary, interval: 0, fontSize: 11 }
+    },
+    yAxis: {
+      type: 'value',
+      // 计数为整数，避免出现小数刻度
+      minInterval: 1,
+      axisLabel: { color: p.textSecondary },
+      splitLine: { lineStyle: { color: p.border } }
+    },
+    series: [{ type: 'bar', data: buckets.map(b => b.count), barMaxWidth: 36 }]
+  })
+}
+
+function renderStatus(p: ChartPalette) {
+  const buckets = data.value?.status ?? []
+  draw('status', statusEl.value, {
+    color: buckets.map(b => p[STATUS_COLORS[b.class] ?? 'textSecondary']),
+    tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)', ...tooltipTheme(p) },
+    legend: { bottom: 0, textStyle: { color: p.textSecondary } },
+    series: [
+      {
+        type: 'pie',
+        radius: ['52%', '74%'],
+        center: ['50%', '44%'],
+        label: { color: p.textSecondary, formatter: '{b}\n{c}' },
+        data: buckets.map(b => ({
+          name: STATUS_LABELS[b.class] ?? b.class,
+          value: b.count
+        }))
+      }
+    ]
+  })
+}
+
+function renderModels(p: ChartPalette) {
+  const models = data.value?.top_models ?? []
+  draw('models', modelsEl.value, {
+    color: [p.primary],
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      ...tooltipTheme(p),
+      // 轴标签为截断显示，tooltip 补全名与 Token/失败数
+      formatter: params => {
+        const first = Array.isArray(params) ? params[0] : params
+        const m = models[first?.dataIndex ?? -1]
+        if (!m) return ''
+        const name = m.model_name || '未记录'
+        return `${name}<br/>请求 ${m.requests} · Token ${m.tokens} · 失败 ${m.failed}`
+      }
+    },
+    grid: { left: 100, right: 24, top: 16, bottom: 24 },
+    xAxis: {
+      type: 'value',
+      minInterval: 1,
+      axisLabel: { color: p.textSecondary },
+      splitLine: { lineStyle: { color: p.border } }
+    },
+    yAxis: {
+      type: 'category',
+      // 横向条形自下而上排布，inverse 让请求量最高者落在顶部
+      inverse: true,
+      data: models.map(m => m.model_name || '未记录'),
+      axisLine: { lineStyle: { color: p.border } },
+      axisLabel: { color: p.textSecondary, width: 88, overflow: 'truncate' }
+    },
+    series: [{ type: 'bar', data: models.map(m => m.requests), barMaxWidth: 18 }]
+  })
+}
+
+function renderTokens(p: ChartPalette) {
+  const t = data.value?.tokens
+  draw('tokens', tokensEl.value, {
+    color: [p.primary, p.success],
+    tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)', ...tooltipTheme(p) },
+    legend: { bottom: 0, textStyle: { color: p.textSecondary } },
+    series: [
+      {
+        type: 'pie',
+        radius: ['52%', '74%'],
+        center: ['50%', '44%'],
+        label: { color: p.textSecondary, formatter: '{b}\n{c}' },
+        data: [
+          { name: 'Prompt', value: t?.prompt_tokens ?? 0 },
+          { name: 'Completion', value: t?.completion_tokens ?? 0 }
+        ]
+      }
+    ]
+  })
+}
+
 async function load() {
   const cur = ++seq
   loading.value = true
@@ -240,11 +468,14 @@ async function load() {
 }
 
 onMounted(async () => {
-  if (trendEl.value) {
+  const containers = [trendEl.value, latencyEl.value, statusEl.value, modelsEl.value, tokensEl.value]
+  if (containers.some(Boolean)) {
     ro = new ResizeObserver(() => {
       for (const c of chartInstances.values()) c.resize()
     })
-    ro.observe(trendEl.value)
+    for (const el of containers) {
+      if (el) ro.observe(el)
+    }
   }
   await load()
 })
@@ -304,6 +535,18 @@ onBeforeUnmount(() => {
   justify-content: center;
   color: var(--ng-text-secondary);
   font-size: 13px;
+}
+.stat-row {
+  display: flex;
+  gap: var(--ng-space-5);
+  margin-bottom: var(--ng-space-3);
+}
+.stat-value {
+  margin-top: var(--ng-space-1);
+  font-family: var(--ng-font-mono);
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--ng-text-primary);
 }
 .note {
   margin: var(--ng-space-3) 0 0;
