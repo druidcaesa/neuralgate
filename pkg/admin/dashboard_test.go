@@ -55,6 +55,15 @@ func decodeDashboard(t *testing.T, rec *httptest.ResponseRecorder) plugin.Dashbo
 	return resp.Data
 }
 
+// TestDashboardForbiddenWithoutPerm 启用 RBAC 时，无 system:read 的会话访问首页 → 403 无权限
+func TestDashboardForbiddenWithoutPerm(t *testing.T) {
+	f := newRBACFixture(t, true)
+	rec := f.do(f.scopedTok, http.MethodGet, "/api/dashboard?window=24h", "")
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "无权限") {
+		t.Errorf("无 system:read 访问首页应 403 无权限, got %d %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestDashboardAPIInvalidWindow(t *testing.T) {
 	s := newDashboardServer(t, oss.NewMemStorage(), nil)
 
