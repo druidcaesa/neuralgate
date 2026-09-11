@@ -559,39 +559,88 @@ func TestComputeDashboardTopModelTotals(t *testing.T) {
 }
 
 // TestComputeDashboardTopModelsUnnamed 不带模型名的调用（如未标模型的工具调用）
-// 聚合为一行固定标签，与其他模型同样按请求量参与排序与截断，不因缺名而丢失可见性；
-// 该标签收纳多条记录，不得按空名拆成多行或保持空名
+// 聚合为一行固定标签，与其他模型同样按请求量参与排序与截断：既不得因缺名而
+// 丢失可见性，也不得因缺名而受优待（请求量低于截断线时照样落榜，不得先截断
+// 具名模型再把标签行补挂末尾）；该标签收纳多条记录，不得按空名拆成多行或保持空名
 func TestComputeDashboardTopModelsUnnamed(t *testing.T) {
 	now, _ := dashboardTestNow()
 
-	var samples []*AuditSample
-	for i := 0; i < 5; i++ {
-		samples = append(samples, &AuditSample{
-			CreatedAt: now, ResponseStatus: 200, ModelName: "", TotalTokens: 10,
+	// 十个具名模型请求量 1..10，截断线落在 8 名：m10..m03 上榜，m02/m01 落榜
+	namedSamples := func() []*AuditSample {
+		var samples []*AuditSample
+		for i := 1; i <= 10; i++ {
+			samples = append(samples, sampleRepeat(now, fmt.Sprintf("m%02d", i), i)...)
+		}
+		return samples
+	}
+	// 无模型名样本：ok 条 200 各 10 Token，外加 1 条 500 计失败
+	unnamedSamples := func(ok int) []*AuditSample {
+		var samples []*AuditSample
+		for i := 0; i < ok; i++ {
+			samples = append(samples, &AuditSample{
+				CreatedAt: now, ResponseStatus: 200, TotalTokens: 10,
+			})
+		}
+		return append(samples, &AuditSample{
+			CreatedAt: now, ResponseStatus: 500, TotalTokens: 5,
 		})
 	}
-	samples = append(samples, sampleRepeat(now, "a", 3)...)
-	samples = append(samples, sampleRepeat(now, "b", 2)...)
 
-	d, err := ComputeDashboard(samples, DashboardWindow24h, now, false)
-	if err != nil {
-		t.Fatalf("ComputeDashboard: %v", err)
-	}
-	if len(d.TopModels) != 3 {
-		t.Fatalf("排行条数 = %d, want 3（空名须并入标签行而非单独成行）", len(d.TopModels))
-	}
-	top := d.TopModels[0]
-	if top.ModelName != dashboardUnnamedModel {
-		t.Fatalf("榜首模型名 = %q, want %q（空名须映射到标签）", top.ModelName, dashboardUnnamedModel)
-	}
-	if top.Requests != 5 || top.Tokens != 50 || top.Failed != 0 {
-		t.Errorf("标签行 = %+v, want Requests:5 Tokens:50 Failed:0", top)
-	}
-	for i, m := range d.TopModels {
-		if m.ModelName == "" {
-			t.Errorf("第 %d 名模型名仍为空，空名须并入标签行", i)
+	// 标签行 4 请求与 m04 并列且落在第 8 名边界内：按名升序 m04 在先，
+	// 标签行占末席并把 m03 挤出榜外
+	t.Run("与具名模型同规则排序参与截断", func(t *testing.T) {
+		d, err := ComputeDashboard(append(namedSamples(), unnamedSamples(3)...),
+			DashboardWindow24h, now, false)
+		if err != nil {
+			t.Fatalf("ComputeDashboard: %v", err)
 		}
-	}
+		if len(d.TopModels) != 8 {
+			t.Fatalf("排行条数 = %d, want 8（标签行须与具名模型同规则截断）", len(d.TopModels))
+		}
+		want := []string{"m10", "m09", "m08", "m07", "m06", "m05", "m04", dashboardUnnamedModel}
+		for i, name := range want {
+			if d.TopModels[i].ModelName != name {
+				t.Errorf("第 %d 名 = %q, want %q", i, d.TopModels[i].ModelName, name)
+			}
+		}
+		// 标签行收纳 4 条记录：3 条 200 各 10 Token，1 条 500 计失败
+		top := d.TopModels[7]
+		if top.ModelName != dashboardUnnamedModel {
+			t.Fatalf("末席模型名 = %q, want %q（空名须映射到标签）", top.ModelName, dashboardUnnamedModel)
+		}
+		if top.Requests != 4 || top.Tokens != 35 || top.Failed != 1 {
+			t.Errorf("标签行 = %+v, want Requests:4 Tokens:35 Failed:1", top)
+		}
+		for i, m := range d.TopModels {
+			if m.ModelName == "" {
+				t.Errorf("第 %d 名模型名仍为空，空名须并入标签行", i)
+			}
+			if m.ModelName == "m03" {
+				t.Errorf("m03 请求量低于标签行，应与标签行同规则被挤出榜外: %+v", d.TopModels)
+			}
+		}
+	})
+
+	// 标签行 2 请求与 m02 并列、按名升序落在截断线外，须与具名模型一样落榜：
+	// 截断后补挂标签行的实现会多出一行
+	t.Run("低于截断线时同样被截掉", func(t *testing.T) {
+		d, err := ComputeDashboard(append(namedSamples(), unnamedSamples(1)...),
+			DashboardWindow24h, now, false)
+		if err != nil {
+			t.Fatalf("ComputeDashboard: %v", err)
+		}
+		if len(d.TopModels) != 8 {
+			t.Fatalf("排行条数 = %d, want 8（标签行不得在截断后被补挂回榜内）", len(d.TopModels))
+		}
+		if d.TopModels[7].ModelName != "m03" {
+			t.Errorf("末位 = %q, want m03", d.TopModels[7].ModelName)
+		}
+		for _, m := range d.TopModels {
+			if m.ModelName == dashboardUnnamedModel {
+				t.Errorf("标签行请求量低于截断线，不应上榜: %+v", d.TopModels)
+			}
+		}
+	})
 }
 
 // TestComputeDashboardTokensSplit Token 构成与流式拆分各自累加

@@ -128,41 +128,84 @@ func TestDashboardAPIEmptyStorage(t *testing.T) {
 	}
 }
 
-// TestDashboardAPIResponseFieldNames 下发 JSON 的字段名是前端契约：
-// 前端按固定 key 取值，字段名一旦漂移会静默取不到数据，
-// 故对原始响应体做包含断言，绕开结构体解码对 tag 的免疫
+// TestDashboardAPIResponseFieldNames 下发 JSON 的字段名是前端契约，前端按固定 key
+// 取值，字段名一旦漂移会静默取不到数据，故对原始响应体做包含断言，绕开结构体解码
+// 对 tag 的免疫。requests/tokens/failed/count 等同名 key 落在多个结构体上，
+// 裸 key 断言会被同名者顶掉，故每个片段都带足够层级（相邻字段或前一层面板 key）唯一定位：
+// 改任一字段的 json tag 都会让对应片段失配。
 func TestDashboardAPIResponseFieldNames(t *testing.T) {
-	t.Run("空库响应", func(t *testing.T) {
+	t.Run("空库骨架", func(t *testing.T) {
 		s := newDashboardServer(t, oss.NewMemStorage(), nil)
 		body := getDashboard(t, s, "?window=24h").Body.String()
 
-		for _, key := range []string{
-			`"summary"`, `"trend"`, `"latency"`, `"status"`, `"top_models"`,
-			`"tokens"`, `"truncated"`, `"alerts"`,
-			`"avg_latency_ms"`, `"failed"`,
-			`"p50_ms"`, `"p95_ms"`, `"p99_ms"`,
-			`"prompt_tokens"`, `"stream_tokens"`, `"non_stream_requests"`,
+		for _, want := range []struct {
+			panel    string
+			fragment string
+		}{
+			// DashboardData.summary 与其五个字段按声明顺序紧凑输出
+			{"指标卡", `"summary":{"requests":0,"success_rate":0,"failed":0,"tokens":0,"avg_latency_ms":0}`},
+			// trend 面板 key 与首个数据点的 date（桶键随当前整点变化，故只钉前缀）
+			{"趋势面板", `"trend":[{"date":"`},
+			// 相邻两个数据点：TrendPoint.requests/tokens 的唯一出处
+			{"趋势数据点", `"requests":0,"tokens":0},{"date":"`},
+			// DashboardLatency 三档分位 + buckets 切片
+			{"延迟面板", `"latency":{"p50_ms":0,"p95_ms":0,"p99_ms":0,"buckets":[{`},
+			// 相邻两档：LatencyBucket.count/label 的唯一出处；档位文案含 "<"，
+			// 会被 gin 的 HTML 转义改写，故不取文案值做锚点
+			{"延迟分档", `"count":0},{"label":`},
+			// StatusBucket 恒定五档，取前两档钉住 class/count
+			{"状态分布", `"status":[{"class":"2xx","count":0},{"class":"3xx","count":0}`},
+			{"排行面板", `"top_models":[]`},
+			// DashboardData.tokens 与 Summary.tokens 同名，用前一面板收尾做锚点
+			{"Token 面板", `"top_models":[],"tokens":{"prompt_tokens":0,"completion_tokens":0,"stream_requests":0,"non_stream_requests":0,"stream_tokens":0,"non_stream_tokens":0}`},
+			{"截断标记与告警面板", `"non_stream_tokens":0},"truncated":false,"alerts":[]`},
 		} {
-			if !strings.Contains(body, key) {
-				t.Errorf("空库响应缺少字段 %s: %s", key, body)
+			if !strings.Contains(body, want.fragment) {
+				t.Errorf("%s 片段失配（字段名或层级漂移），want %s: %s", want.panel, want.fragment, body)
 			}
 		}
 	})
 
-	// top_models 空库时为空数组，model_name 只在有排行行时出现，用最小种子数据覆盖
-	t.Run("有排行行时含 model_name", func(t *testing.T) {
+	// top_models 空库时为空数组，排行行字段只在有行时出现，用最小种子数据覆盖；
+	// 非 2xx 样本同时钉住 failed 的取值出处
+	t.Run("有排行行时含排行行字段", func(t *testing.T) {
 		storage := oss.NewMemStorage()
 		if err := storage.SaveAuditLog(&plugin.AuditLog{
 			ID: "l1", RequestID: "r1", CreatedAt: time.Now(),
-			ResponseStatus: 200, ModelName: "m1",
+			ResponseStatus: 500, ModelName: "m1", TotalTokens: 42,
 		}); err != nil {
 			t.Fatal(err)
 		}
 		s := newDashboardServer(t, storage, nil)
 		body := getDashboard(t, s, "?window=24h").Body.String()
 
-		if !strings.Contains(body, `"model_name"`) {
-			t.Errorf("响应缺少字段 model_name: %s", body)
+		if !strings.Contains(body, `"top_models":[{"model_name":"m1","requests":1,"tokens":42,"failed":1}]`) {
+			t.Errorf("排行行片段失配（字段名漂移或非 2xx 未计入 failed）: %s", body)
+		}
+	})
+
+	// alerts 无异常时为空数组，告警条目字段只在有告警时出现，用篡改告警种子覆盖
+	t.Run("有告警时含告警条目字段", func(t *testing.T) {
+		storage := oss.NewMemStorage()
+		if err := storage.SaveTamperAlerts([]*plugin.TamperAlert{
+			{AuditLogID: "a1", Reason: "指纹不一致"},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		s := newDashboardServer(t, storage, nil)
+		body := getDashboard(t, s, "").Body.String()
+
+		// DashboardAlert 按 level/title/detail/link 声明顺序输出，文案不在此处钉，
+		// 只钉字段名与层级：level 借 alerts 面板 key、detail 借 title 的值收尾、
+		// link 借其取值（omitempty 下仅篡改告警携带）定位
+		for _, fragment := range []string{
+			`"alerts":[{"level":"error","title":`,
+			`","detail":"`,
+			`","link":"/tamper-alerts"}`,
+		} {
+			if !strings.Contains(body, fragment) {
+				t.Errorf("告警条目片段失配（字段名或层级漂移），want %s: %s", fragment, body)
+			}
 		}
 	})
 }
