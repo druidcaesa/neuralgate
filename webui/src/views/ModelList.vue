@@ -75,7 +75,7 @@
             :loading="fetchingModels"
             :disabled="!canFetchModels"
             @click="openModelPicker">{{ fetchDisabledReason || '拉取清单' }}</el-button>
-          <el-text v-if="upstreamAddressChanged && !modelForm.api_key && editing" type="warning" size="small">
+          <el-text v-if="!isAnthropic && modelForm.base_url && upstreamAddressChanged && !modelForm.api_key && editing" type="warning" size="small">
             已切换上游地址,请先填写该地址的 API Key(否则拉到的还是旧地址的清单)
           </el-text>
         </el-form-item>
@@ -227,7 +227,7 @@ function onProviderChange(p: string) {
 function onProtocolChange() {
   syncDefaultMaxTokens()
 }
-// 编辑态密钥不回显时走库中密钥,后端随之改用该模型自身的 base_url(见规格 §3.1)。
+// 编辑态密钥不回显时走库中密钥,后端随之改用该模型自身的 base_url。
 // 表单地址被改过而密钥仍为空时,拉到的会是旧地址的清单——与其静默给出误导结果,
 // 不如提前禁用并说明。比较前去掉尾部斜杠,避免存量行与预设只差一个 "/" 时误判
 const upstreamAddressChanged = computed(() => {

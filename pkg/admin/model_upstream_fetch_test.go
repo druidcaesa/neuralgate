@@ -118,6 +118,11 @@ func TestFetchUpstreamModelsMapsUpstreamStatus(t *testing.T) {
 		// 故须自己判失败:响应体即使是一份合法清单,也不得当成 200 收下
 		{http.StatusMultipleChoices, CodeUpstreamModelsUpstreamError, http.StatusBadGateway,
 			`{"data":[{"id":"x"}]}`},
+		// 301 带 Location 才会被 client 跟随;stubUpstream 不设 Location,故这一行走的正是
+		// 「无 Location 的 3xx 原样返回」那一支——上面的注释所声称的覆盖面由此钉住。
+		// 响应体给一份合法清单:若闸门退回 >=400 判,这条会被当成成功收下而转红
+		{http.StatusMovedPermanently, CodeUpstreamModelsUpstreamError, http.StatusBadGateway,
+			`{"data":[{"id":"x"}]}`},
 	}
 	for _, tc := range cases {
 		body := tc.body

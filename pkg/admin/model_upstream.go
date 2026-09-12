@@ -89,8 +89,9 @@ func fetchUpstreamModels(baseURL, apiKey string) ([]upstreamModelItem, int, int,
 		return nil, http.StatusBadRequest, CodeUpstreamModelsUpstreamNotFound, "上游无此地址,请检查上游地址"
 	}
 	// 只认 200。client 仅在带 Location 时自动跟随 301/302/303/307/308
-	// (net/http client.go:643-649:无 Location 的 3xx 原样返回),故本闸门覆盖的
-	// 不只是 300/304/305/306——无 Location 的重定向同样落在这里。
+	// (net/http 的 client.do 对空 Location 直接原样返回,其注释明写
+	// 「3xx responses without a Location have been observed in the wild」),
+	// 故本闸门覆盖的不只是 300/304/305/306——无 Location 的重定向同样落在这里。
 	// 若按 >=400 判,带合法清单体的 300 会被当成成功收下,而本接口的全部价值
 	// 就在精确归因,故非 200 一律归上游错误
 	if resp.StatusCode != http.StatusOK {

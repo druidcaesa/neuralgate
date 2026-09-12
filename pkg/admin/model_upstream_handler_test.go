@@ -343,4 +343,7 @@ func TestUpstreamModelsStoredBaseURLBadSchemeRejected(t *testing.T) {
 		t.Errorf("status=%d code=%d, want 400/%d (msg=%q)",
 			status, resp.Code, CodeUpstreamModelsBadScheme, resp.Message)
 	}
+	if !strings.Contains(resp.Message, "该模型配置的上游地址") {
+		t.Errorf("msg = %q, want 含「该模型配置的上游地址」——钉住判定来自库中地址这一支,而非 fetchUpstreamModels 里同为 400/4605 的「上游地址无效」", resp.Message)
+	}
 }
