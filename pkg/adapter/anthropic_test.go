@@ -140,6 +140,47 @@ func TestAnthropicParseRequest(t *testing.T) {
 	}
 }
 
+// TestAnthropicParseRequestSystemBlocks system 为内容块数组时须与字符串形态等价。
+// Claude Code 等客户端恒发数组形态并带 cache_control;若只在字段上做类型断言,
+// 数组形态会静默退化成空串,提示词无声丢失,比直接报错更难排查
+func TestAnthropicParseRequestSystemBlocks(t *testing.T) {
+	body := `{
+	  "model":"gpt-x","max_tokens":64,
+	  "system":[
+	    {"type":"text","text":"第一段","cache_control":{"type":"ephemeral"}},
+	    {"type":"text","text":"第二段"}
+	  ],
+	  "messages":[{"role":"user","content":"hi"}]
+	}`
+	u, err := ParseAnthropicRequest([]byte(body))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(u.Messages) != 2 {
+		t.Fatalf("messages = %d; want 2(system+user)", len(u.Messages))
+	}
+	if u.Messages[0].Role != "system" || u.Messages[0].Content != "第一段\n第二段" {
+		t.Fatalf("system = %+v", u.Messages[0])
+	}
+}
+
+// TestAnthropicParseRequestSystemAbsent 无 system 或 system 为 null 时不得编造 system 消息
+func TestAnthropicParseRequestSystemAbsent(t *testing.T) {
+	for _, body := range []string{
+		`{"model":"gpt-x","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`,
+		`{"model":"gpt-x","max_tokens":64,"system":null,"messages":[{"role":"user","content":"hi"}]}`,
+		`{"model":"gpt-x","max_tokens":64,"system":[],"messages":[{"role":"user","content":"hi"}]}`,
+	} {
+		u, err := ParseAnthropicRequest([]byte(body))
+		if err != nil {
+			t.Fatalf("parse %s: %v", body, err)
+		}
+		if len(u.Messages) != 1 || u.Messages[0].Role != "user" {
+			t.Fatalf("body %s → messages = %+v; want 仅 user", body, u.Messages)
+		}
+	}
+}
+
 // TestAnthropicParseResponse 上游 Anthropic 响应 → 统一(文本 + tool_use)
 func TestAnthropicParseResponse(t *testing.T) {
 	body := `{"id":"msg_1","type":"message","role":"assistant","model":"claude-x",

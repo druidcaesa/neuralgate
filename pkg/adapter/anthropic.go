@@ -68,6 +68,38 @@ type anthropicBlock struct {
 	Content   json.RawMessage `json:"content,omitempty"` // tool_result(对象/字符串)
 }
 
+// anthropicSystem system 字段的两种线上形态:字符串,或内容块数组。
+// 数组是 Claude Code 等客户端的默认形态(块内带 cache_control);
+// 字段直接声明为 string 会让数组在 Unmarshal 阶段即报错,整条请求被判 400。
+// 非字符串/数组的异常形态不阻断请求,按无 system 处理
+type anthropicSystem string
+
+func (s *anthropicSystem) UnmarshalJSON(b []byte) error {
+	trimmed := bytes.TrimSpace(b)
+	if len(trimmed) > 0 && trimmed[0] == '"' {
+		var str string
+		if err := json.Unmarshal(trimmed, &str); err != nil {
+			return err
+		}
+		*s = anthropicSystem(str)
+		return nil
+	}
+	var blocks []anthropicTextBlock
+	if err := json.Unmarshal(trimmed, &blocks); err != nil {
+		*s = ""
+		return nil
+	}
+	parts := make([]string, 0, len(blocks))
+	for _, blk := range blocks {
+		if blk.Text != "" {
+			parts = append(parts, blk.Text)
+		}
+	}
+	// 多块按换行拼接,与出站构造 systemParts 的拼接口径一致
+	*s = anthropicSystem(strings.Join(parts, "\n"))
+	return nil
+}
+
 type anthropicRequest struct {
 	Model         string                `json:"model"`
 	MaxTokens     *int                  `json:"max_tokens,omitempty"` // anthropic 必填;缺省由代理层按模型默认注入
@@ -75,7 +107,7 @@ type anthropicRequest struct {
 	TopP          *float64              `json:"top_p,omitempty"`
 	StopSequences []string              `json:"stop_sequences,omitempty"`
 	Stream        bool                  `json:"stream,omitempty"`
-	System        string                `json:"system,omitempty"`
+	System        anthropicSystem       `json:"system,omitempty"`
 	Messages      []anthropicRawMessage `json:"messages"`
 	Tools         []anthropicTool       `json:"tools,omitempty"`
 	ToolChoice    *anthropicToolChoice  `json:"tool_choice,omitempty"`
@@ -174,7 +206,7 @@ func AnthropicEncodeRequest(u *UnifiedRequest, model string) ([]byte, error) {
 		}
 	}
 	if len(systemParts) > 0 {
-		req.System = strings.Join(systemParts, "\n")
+		req.System = anthropicSystem(strings.Join(systemParts, "\n"))
 	}
 	// system/developer 之外的对话逐条物化为 anthropic 消息
 	req.Messages = make([]anthropicRawMessage, 0, len(conv))
@@ -332,7 +364,7 @@ func ParseAnthropicRequest(body []byte) (*UnifiedRequest, error) {
 	}
 
 	// system 前置为一条 system 消息
-	if sys := stringContent(req.System); sys != "" {
+	if sys := string(req.System); sys != "" {
 		u.Messages = append(u.Messages, Message{Role: "system", Content: sys})
 	}
 	for _, m := range req.Messages {

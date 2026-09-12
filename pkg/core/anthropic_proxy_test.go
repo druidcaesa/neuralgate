@@ -330,6 +330,58 @@ func TestAnthropicMatrix_AnthropicEntry_OpenAIUpstream_NonStream(t *testing.T) {
 	}
 }
 
+// ===== 3.5 Claude Code 形态请求:system 为内容块数组(带 cache_control)=====
+
+// TestAnthropicEntryClaudeCodeShape Claude Code 发给 /v1/messages 的请求中,
+// system 是内容块数组而非字符串。该形态曾因 System 字段声明为 string 而在解析阶段
+// 直接报错,整条请求被判 400——且只发生在反向转换路径(原生 anthropic 上游走 map 透传,不受影响)
+func TestAnthropicEntryClaudeCodeShape(t *testing.T) {
+	var upBody string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		upBody = string(body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-1","object":"chat.completion","created":1700000000,"model":"gpt-4o",
+			"choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],
+			"usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10}}`))
+	}))
+	defer upstream.Close()
+
+	_, pc := newDualProxy(t, dualModel("gpt4", "openai", "gpt-4o", upstream.URL, "sk-openai", 0))
+
+	body := `{
+	  "model":"gpt4","max_tokens":32000,"stream":false,
+	  "system":[
+	    {"type":"text","text":"You are Claude Code.","cache_control":{"type":"ephemeral"}},
+	    {"type":"text","text":"Be concise."}
+	  ],
+	  "messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}],
+	  "tools":[{"name":"Read","description":"read a file",
+	    "input_schema":{"type":"object","properties":{"path":{"type":"string"}}}}],
+	  "metadata":{"user_id":"u1"}
+	}`
+	rec := dualReq(t, pc, "/v1/messages", body,
+		map[string]string{"x-api-key": "ng-test", "anthropic-version": "2023-06-01"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	// system 块数组须转成上游的一条 system 消息,两块按换行拼接(JSON 里换行为 \n 两字符)
+	if !strings.Contains(upBody, `You are Claude Code.\nBe concise.`) {
+		t.Fatalf("上游 system 未正确转换: %s", upBody)
+	}
+	// tools 与 metadata 不得因 system 形态而丢失
+	if !strings.Contains(upBody, `"Read"`) {
+		t.Fatalf("上游 tools 丢失: %s", upBody)
+	}
+	if !strings.Contains(upBody, `"u1"`) {
+		t.Fatalf("上游 metadata.user_id 丢失: %s", upBody)
+	}
+	// 客户端侧线仍为 Anthropic Message 形状
+	if got := strAt(jsonDoc(t, rec.Body.String()), "type"); got != "message" {
+		t.Fatalf("client type = %q; want message; body=%s", got, rec.Body.String())
+	}
+}
+
 // ===== 4. anthropic 入口 × openai 上游:流式编码(message_start→message_stop,无 [DONE]) =====
 
 func TestAnthropicMatrix_AnthropicEntry_OpenAIUpstream_Stream(t *testing.T) {
