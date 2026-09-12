@@ -64,6 +64,7 @@
             <el-option label="qwen（通义千问）" value="qwen" />
             <el-option label="zhipu" value="zhipu" />
             <el-option label="anthropic" value="anthropic" />
+            <el-option label="siliconflow（硅基流动）" value="siliconflow" />
             <el-option :label="CUSTOM_PROVIDER_LABEL" :value="CUSTOM_PROVIDER" />
           </el-select>
         </el-form-item>
@@ -142,7 +143,8 @@ const BUILTIN_BASE_URLS: Record<string, string> = {
   deepseek: 'https://api.deepseek.com',
   qwen: 'https://dashscope.aliyuncs.com/compatible-mode',
   zhipu: 'https://open.bigmodel.cn/api/paas/v4',
-  anthropic: 'https://api.anthropic.com'
+  anthropic: 'https://api.anthropic.com',
+  siliconflow: 'https://api.siliconflow.cn'
 }
 
 // 自定义供应商:下拉显式选项的值与展示名(手输任意非内置值同样视为自定义,协议由 tags.adapter 决定);
