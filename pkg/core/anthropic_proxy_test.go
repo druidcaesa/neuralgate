@@ -349,16 +349,28 @@ func TestAnthropicEntryClaudeCodeShape(t *testing.T) {
 
 	_, pc := newDualProxy(t, dualModel("gpt4", "openai", "gpt-4o", upstream.URL, "sk-openai", 0))
 
+	// 线上实测形态:一条用户消息含多个文本块,其后跟一条 role 为 system 的消息
+	//(Anthropic 规范只允许 user/assistant,此处按 out-of-contract 输入验证不阻断);
+	// 另含若干本网关不认识的新版顶层字段,须被忽略而非报错
 	body := `{
 	  "model":"gpt4","max_tokens":32000,"stream":false,
 	  "system":[
 	    {"type":"text","text":"You are Claude Code.","cache_control":{"type":"ephemeral"}},
 	    {"type":"text","text":"Be concise."}
 	  ],
-	  "messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}],
+	  "messages":[
+	    {"role":"user","content":[
+	      {"type":"text","text":"hi"},
+	      {"type":"text","text":"second block","cache_control":{"type":"ephemeral"}}
+	    ]},
+	    {"role":"system","content":"session context"}
+	  ],
 	  "tools":[{"name":"Read","description":"read a file",
 	    "input_schema":{"type":"object","properties":{"path":{"type":"string"}}}}],
-	  "metadata":{"user_id":"u1"}
+	  "metadata":{"user_id":"u1"},
+	  "thinking":{"type":"adaptive"},
+	  "context_management":{"edits":[{"type":"clear_thinking_20251015","keep":"all"}]},
+	  "output_config":{"effort":"high"}
 	}`
 	rec := dualReq(t, pc, "/v1/messages", body,
 		map[string]string{"x-api-key": "ng-test", "anthropic-version": "2023-06-01"})
@@ -375,6 +387,12 @@ func TestAnthropicEntryClaudeCodeShape(t *testing.T) {
 	}
 	if !strings.Contains(upBody, `"u1"`) {
 		t.Fatalf("上游 metadata.user_id 丢失: %s", upBody)
+	}
+	// 多块 user 消息与 role=system 消息的内容都不得丢失
+	for _, want := range []string{"hi", "second block", "session context"} {
+		if !strings.Contains(upBody, want) {
+			t.Fatalf("上游缺少内容 %q: %s", want, upBody)
+		}
 	}
 	// 客户端侧线仍为 Anthropic Message 形状
 	if got := strAt(jsonDoc(t, rec.Body.String()), "type"); got != "message" {
