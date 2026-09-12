@@ -231,19 +231,22 @@ var latencyBucketBounds = []int64{100, 300, 1000, 3000, 10000}
 // latencyBucketLabels 档位文案，即下发前端的 label 精确取值
 var latencyBucketLabels = []string{"<100ms", "100–300ms", "0.3–1s", "1–3s", "3–10s", "≥10s"}
 
-// latencyBucketIndex 返回耗时所属档位下标：依次与上界比较，
-// 未落入任何上界者归入末档。返回值以档位文案数为上限钳制，
-// 否则上界多于文案时这里会返回越界下标，调用方索引 Buckets 即 panic
+// latencyBucketIndex 返回耗时所属档位下标：依次与上界比较，未落入任何上界者归入末档。
+// 桶按文案数建，故下标上界只由文案数决定，与上界表长度无关；
+// 上界多于文案时（例如只加上界忘加文案）一并钳到末档，
+// 否则钳制前的下标会溢出到不存在的档位，调用方索引 Buckets 即 panic
 func latencyBucketIndex(ms int64) int {
+	idx := len(latencyBucketBounds)
 	for i, ub := range latencyBucketBounds {
 		if ms < ub {
-			return i
+			idx = i
+			break
 		}
 	}
-	if last := len(latencyBucketLabels) - 1; len(latencyBucketBounds) > last {
-		return last
+	if last := len(latencyBucketLabels) - 1; idx > last {
+		idx = last
 	}
-	return len(latencyBucketBounds)
+	return idx
 }
 
 // percentile 最近秩法分位数：索引 = ceil(k*n/100) - 1。

@@ -336,6 +336,31 @@ func TestComputeDashboardLatencyBuckets(t *testing.T) {
 	}
 }
 
+// TestLatencyBucketIndexAlwaysInRange 钉住「返回值必须能安全索引 computeLatency 的 Buckets」：
+// 桶按文案数建，故下标上界只由文案数决定，与上界表长度无关。
+// 上界多于文案时循环内那条 return 曾直接返回越界下标，调用方索引即 panic
+func TestLatencyBucketIndexAlwaysInRange(t *testing.T) {
+	origBounds, origLabels := latencyBucketBounds, latencyBucketLabels
+	defer func() {
+		latencyBucketBounds, latencyBucketLabels = origBounds, origLabels
+	}()
+
+	// 文案不动、上界补两条，模拟「只加上界忘加文案」
+	latencyBucketBounds = append(append([]int64{}, origBounds...), 50000, 200000)
+
+	last := len(latencyBucketLabels) - 1
+	for _, ms := range []int64{0, 99, 100, 299, 1000, 3000, 9999, 10000, 60000, 1 << 40} {
+		if idx := latencyBucketIndex(ms); idx < 0 || idx > last {
+			t.Errorf("耗时 %dms 档位下标 = %d，越出 [0,%d]，调用方索引 Buckets 即 panic",
+				ms, idx, last)
+		}
+	}
+	// 未落入任何上界者归末档，不得溢出到不存在的档位
+	if idx := latencyBucketIndex(60000); idx != last {
+		t.Errorf("超出全部上界的耗时归入档 %d, want %d", idx, last)
+	}
+}
+
 // TestComputeDashboardLatencyBucketLabels 档位文案即下发前端的精确取值，
 // 空样本下也须返回完整骨架
 func TestComputeDashboardLatencyBucketLabels(t *testing.T) {

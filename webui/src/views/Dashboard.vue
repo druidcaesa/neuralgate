@@ -241,9 +241,12 @@ const percentiles = computed(() => {
 // 不得由 status 分桶求和重算失败数
 const failedText = computed(() => (data.value ? data.value.summary.failed.toLocaleString() : '-'))
 
+// 空窗按规格取 0：requests 为 0 时 0/0 无定义，须显式短路，
+// 不能指望除法；只有「未取到数据」才用占位符
 const failRateText = computed(() => {
   const s = data.value?.summary
-  if (!s || s.requests === 0) return '-'
+  if (!s) return '-'
+  if (s.requests === 0) return '0.0%'
   return `${((s.failed / s.requests) * 100).toFixed(1)}%`
 })
 
