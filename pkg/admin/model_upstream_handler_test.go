@@ -129,6 +129,118 @@ func TestUpstreamModelsFallsBackToStoredKey(t *testing.T) {
 	}
 }
 
+// TestUpstreamModelsStoredKeyEgressesToOwnBaseURL 密钥与地址同源:
+// 回落库中密钥时,出网地址必须是该模型自己的 base_url,而非调用方传入的地址。
+// 否则调用方可用任意已存模型换出该模型的密钥,并把 Bearer 发往自己指定的主机
+func TestUpstreamModelsStoredKeyEgressesToOwnBaseURL(t *testing.T) {
+	var attackerHits, ownHits int
+	var ownAuth string
+	attacker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attackerHits++
+		_, _ = w.Write([]byte(`{"data":[{"id":"from-attacker"}]}`))
+	}))
+	t.Cleanup(attacker.Close)
+	own := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ownHits++
+		ownAuth = r.Header.Get("Authorization")
+		_, _ = w.Write([]byte(`{"data":[{"id":"from-own"}]}`))
+	}))
+	t.Cleanup(own.Close)
+
+	svr, st := newUpstreamModelsServer(t)
+	if err := st.SaveModelConfig(&plugin.ModelConfig{
+		ID: "m-stored", ModelName: "stored-model", Provider: "openai", ProviderModel: "gpt-4o",
+		BaseURL: own.URL, APIKey: "sk-stored", Enabled: true,
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("SaveModelConfig: %v", err)
+	}
+
+	status, resp := postUpstreamModels(t, svr, `{"base_url":"`+attacker.URL+`","model_id":"m-stored"}`)
+
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body=%+v", status, resp)
+	}
+	if ownHits != 1 {
+		t.Errorf("模型自身地址收到 %d 次请求, want 1", ownHits)
+	}
+	if attackerHits != 0 {
+		t.Errorf("调用方传入的地址收到 %d 次请求, want 0(库中密钥不得发往调用方指定主机)", attackerHits)
+	}
+	if ownAuth != "Bearer sk-stored" {
+		t.Errorf("Authorization = %q, want %q", ownAuth, "Bearer sk-stored")
+	}
+	if len(resp.Data.Models) != 1 || resp.Data.Models[0].ID != "from-own" {
+		t.Errorf("models = %+v, want [from-own](清单须来自模型自身地址)", resp.Data.Models)
+	}
+}
+
+// TestUpstreamModelsEmptyStoredKeyRejected 库中密钥为空串时一并拦下:
+// createModelConfig 不校验 api_key,故存在 APIKey == "" 且未标记不可解密的行,
+// 放行会以 "Bearer " 出网换回误导性的 4611
+func TestUpstreamModelsEmptyStoredKeyRejected(t *testing.T) {
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		_, _ = w.Write([]byte(`{"data":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	svr, st := newUpstreamModelsServer(t)
+	if err := st.SaveModelConfig(&plugin.ModelConfig{
+		ID: "m-empty", ModelName: "empty-key", Provider: "openai", ProviderModel: "gpt-4o",
+		BaseURL: srv.URL, APIKey: "", Enabled: true,
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("SaveModelConfig: %v", err)
+	}
+
+	status, resp := postUpstreamModels(t, svr, `{"base_url":"`+srv.URL+`","model_id":"m-empty"}`)
+
+	if status != http.StatusBadRequest || resp.Code != CodeUpstreamModelsKeyUnreadable {
+		t.Errorf("status=%d code=%d, want 400/%d (msg=%q)",
+			status, resp.Code, CodeUpstreamModelsKeyUnreadable, resp.Message)
+	}
+	if hits != 0 {
+		t.Errorf("空密钥行仍发出了 %d 次上游请求, want 0", hits)
+	}
+}
+
+// TestUpstreamModelsPlaintextKeyUsesCallerBaseURL 明文密钥路径仍用调用方地址:
+// 同源约束只针对库中密钥,新建态(表单现填密钥+地址)必须照旧
+func TestUpstreamModelsPlaintextKeyUsesCallerBaseURL(t *testing.T) {
+	var ownHits, callerHits int
+	own := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ownHits++
+		_, _ = w.Write([]byte(`{"data":[]}`))
+	}))
+	t.Cleanup(own.Close)
+	caller := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callerHits++
+		_, _ = w.Write([]byte(`{"data":[{"id":"from-caller"}]}`))
+	}))
+	t.Cleanup(caller.Close)
+
+	svr, st := newUpstreamModelsServer(t)
+	if err := st.SaveModelConfig(&plugin.ModelConfig{
+		ID: "m-stored", ModelName: "stored-model", Provider: "openai", ProviderModel: "gpt-4o",
+		BaseURL: own.URL, APIKey: "sk-stored", Enabled: true,
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("SaveModelConfig: %v", err)
+	}
+
+	status, resp := postUpstreamModels(t, svr,
+		`{"base_url":"`+caller.URL+`","model_id":"m-stored","api_key":"sk-plain"}`)
+
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body=%+v", status, resp)
+	}
+	if callerHits != 1 || ownHits != 0 {
+		t.Errorf("caller=%d own=%d, want caller=1 own=0(明文密钥须走调用方地址)", callerHits, ownHits)
+	}
+}
+
 // TestUpstreamModelsGatewayErrors 网关侧校验各自返回独立业务码,且不出网
 func TestUpstreamModelsGatewayErrors(t *testing.T) {
 	var hits int

@@ -155,13 +155,21 @@ func (s *AdminServer) listUpstreamModels(c *gin.Context) {
 			Error(c, http.StatusNotFound, CodeUpstreamModelsModelNotFound, "模型配置不存在")
 			return
 		}
-		// 密钥不可解密时不发请求,避免用空 key 换回误导性的上游 401
-		if cfg.APIKeyUnreadable {
+		// 密钥不可解密或为空串时不发请求,避免用空 key 换回误导性的上游 401。
+		// 空串这一支是必需的:createModelConfig 不校验 api_key,库里允许存在
+		// APIKey == "" 且 APIKeyUnreadable == false 的行
+		if cfg.APIKeyUnreadable || cfg.APIKey == "" {
 			Error(c, http.StatusBadRequest, CodeUpstreamModelsKeyUnreadable,
-				"该模型密钥无法解密,请重新填写 API Key")
+				"该模型密钥为空或无法解密,请重新填写 API Key")
 			return
 		}
 		apiKey = cfg.APIKey
+		// 密钥与地址同源:回落库中密钥时,出网地址改用该模型自己的 base_url,
+		// 忽略调用方传入的地址。否则持 PermModelWrite 的调用方可将任意已存密钥
+		// 送往自己指定的主机(如切换预设改写 base_url 后点拉取)。
+		// 上方对调用方 base_url 的校验保持原样先跑:4601/4605 的契约对两种密钥
+		// 来源一致,不因本行改走库中地址而变化
+		baseURL = cfg.BaseURL
 	}
 
 	models, status, code, msg := fetchUpstreamModels(baseURL, apiKey)
