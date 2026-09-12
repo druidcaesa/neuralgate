@@ -258,6 +258,7 @@ func TestUpstreamModelsGatewayErrors(t *testing.T) {
 	}{
 		{"缺 base_url", `{"api_key":"sk-x"}`, CodeUpstreamModelsMissingBaseURL, http.StatusBadRequest},
 		{"协议非法", `{"base_url":"ftp://x","api_key":"sk-x"}`, CodeUpstreamModelsBadScheme, http.StatusBadRequest},
+		{"协议合法但无主机名", `{"base_url":"http://","api_key":"sk-x"}`, CodeUpstreamModelsBadScheme, http.StatusBadRequest},
 		{"既无密钥也无 model_id", `{"base_url":"` + srv.URL + `"}`, CodeUpstreamModelsMissingAPIKey, http.StatusBadRequest},
 		{"model_id 不存在", `{"base_url":"` + srv.URL + `","model_id":"nope"}`, CodeUpstreamModelsModelNotFound, http.StatusNotFound},
 	}
@@ -322,28 +323,42 @@ func TestUpstreamModelsUpstreamErrorPassesThrough(t *testing.T) {
 	}
 }
 
-// TestUpstreamModelsStoredBaseURLBadSchemeRejected 库中地址协议非法时同样归 4605:
+// TestUpstreamModelsStoredBaseURLBadSchemeRejected 库中地址不合法时同样归 4605:
 // 显式白名单必须也跑在 cfg.BaseURL 上。只靠传输层兜底会把「地址写错」报成
 // 4614「无法连接上游」,而本接口的价值正是精确归因,归类错等于白归。
+// 表覆盖两种畸形形态:协议非法,以及协议合法但无主机名(后者能过 url.Parse,
+// 只在传输层以 no Host in request URL 失败)。
 // 调用方地址此处是合法字面量且不会被拨号(库中密钥路径不走它),故断言只针对归类
 func TestUpstreamModelsStoredBaseURLBadSchemeRejected(t *testing.T) {
-	svr, st := newUpstreamModelsServer(t)
-	if err := st.SaveModelConfig(&plugin.ModelConfig{
-		ID: "m-ftp", ModelName: "ftp-row", Provider: "openai", ProviderModel: "gpt-4o",
-		BaseURL: "ftp://example.invalid", APIKey: "sk-stored", Enabled: true,
-		CreatedAt: time.Now(), UpdatedAt: time.Now(),
-	}); err != nil {
-		t.Fatalf("SaveModelConfig: %v", err)
+	cases := []struct {
+		name      string
+		storedURL string
+		modelID   string
+	}{
+		{"协议非法", "ftp://example.invalid", "m-ftp"},
+		{"协议合法但无主机名", "http://", "m-nohost"},
 	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svr, st := newUpstreamModelsServer(t)
+			if err := st.SaveModelConfig(&plugin.ModelConfig{
+				ID: tc.modelID, ModelName: tc.name, Provider: "openai", ProviderModel: "gpt-4o",
+				BaseURL: tc.storedURL, APIKey: "sk-stored", Enabled: true,
+				CreatedAt: time.Now(), UpdatedAt: time.Now(),
+			}); err != nil {
+				t.Fatalf("SaveModelConfig: %v", err)
+			}
 
-	status, resp := postUpstreamModels(t, svr,
-		`{"base_url":"https://example.invalid","model_id":"m-ftp"}`)
+			status, resp := postUpstreamModels(t, svr,
+				`{"base_url":"https://example.invalid","model_id":"`+tc.modelID+`"}`)
 
-	if status != http.StatusBadRequest || resp.Code != CodeUpstreamModelsBadScheme {
-		t.Errorf("status=%d code=%d, want 400/%d (msg=%q)",
-			status, resp.Code, CodeUpstreamModelsBadScheme, resp.Message)
-	}
-	if !strings.Contains(resp.Message, "该模型配置的上游地址") {
-		t.Errorf("msg = %q, want 含「该模型配置的上游地址」——钉住判定来自库中地址这一支,而非 fetchUpstreamModels 里同为 400/4605 的「上游地址无效」", resp.Message)
+			if status != http.StatusBadRequest || resp.Code != CodeUpstreamModelsBadScheme {
+				t.Errorf("status=%d code=%d, want 400/%d (msg=%q)",
+					status, resp.Code, CodeUpstreamModelsBadScheme, resp.Message)
+			}
+			if !strings.Contains(resp.Message, "该模型配置的上游地址") {
+				t.Errorf("msg = %q, want 含「该模型配置的上游地址」——钉住判定来自库中地址这一支,而非 fetchUpstreamModels 里同为 400/4605 的「上游地址无效」", resp.Message)
+			}
+		})
 	}
 }

@@ -76,7 +76,7 @@
             :disabled="!canFetchModels"
             @click="openModelPicker">{{ fetchDisabledReason || '拉取清单' }}</el-button>
           <el-text v-if="!isAnthropic && modelForm.base_url && upstreamAddressChanged && !modelForm.api_key && editing" type="warning" size="small">
-            已切换上游地址,请先填写该地址的 API Key(否则拉到的还是旧地址的清单)
+            {{ fetchDisabledReason }}(否则拉到的还是旧地址的清单)
           </el-text>
         </el-form-item>
         <el-form-item label="上游地址" required>

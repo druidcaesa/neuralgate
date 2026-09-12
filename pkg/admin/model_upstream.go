@@ -56,11 +56,13 @@ type upstreamModelItem struct {
 	ID string `json:"id"`
 }
 
-// schemeAllowed 出网协议白名单:仅 http / https。file、ftp、gopher 等一律拒绝,
-// 避免管理面被当成任意协议的取数器
+// schemeAllowed 出网地址白名单:scheme 仅 http/https,且必须带主机名。
+// 有 scheme 无 host 的形态(如 "http://")能过 url.Parse,却在传输层以
+// 「no Host in request URL」失败,会被报成 4614「无法连接上游」——与
+// 「地址本身写错」混为一谈。此处提前拦下,一并归入 4605
 func schemeAllowed(raw string) bool {
 	u, err := url.Parse(raw)
-	return err == nil && (u.Scheme == "http" || u.Scheme == "https")
+	return err == nil && u.Host != "" && (u.Scheme == "http" || u.Scheme == "https")
 }
 
 // fetchUpstreamModels 代拉上游 /v1/models 并解析。
@@ -150,7 +152,7 @@ func (s *AdminServer) listUpstreamModels(c *gin.Context) {
 		return
 	}
 	if !schemeAllowed(baseURL) {
-		Error(c, http.StatusBadRequest, CodeUpstreamModelsBadScheme, "上游地址必须是 http 或 https")
+		Error(c, http.StatusBadRequest, CodeUpstreamModelsBadScheme, "上游地址必须是 http 或 https,且需包含主机名")
 		return
 	}
 
@@ -184,7 +186,7 @@ func (s *AdminServer) listUpstreamModels(c *gin.Context) {
 		// 但归类错误与本接口的精确归因相悖
 		if !schemeAllowed(cfg.BaseURL) {
 			Error(c, http.StatusBadRequest, CodeUpstreamModelsBadScheme,
-				"该模型配置的上游地址必须是 http 或 https")
+				"该模型配置的上游地址必须是 http 或 https,且需包含主机名")
 			return
 		}
 		baseURL = cfg.BaseURL
