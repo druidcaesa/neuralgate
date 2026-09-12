@@ -57,12 +57,13 @@ type upstreamModelItem struct {
 }
 
 // schemeAllowed 出网地址白名单:scheme 仅 http/https,且必须带主机名。
-// 有 scheme 无 host 的形态(如 "http://")能过 url.Parse,却在传输层以
-// 「no Host in request URL」失败,会被报成 4614「无法连接上游」——与
-// 「地址本身写错」混为一谈。此处提前拦下,一并归入 4605
+// 用 Hostname() 而非 Host:后者对 "http://:" 会给出 ":"(非空),而传输层会先
+// removeEmptyPort 把它抹成空串,最终以「no Host in request URL」失败、被报成
+// 4614「无法连接上游」——正是本白名单要消灭的归类错。Hostname() 同时抹掉端口与
+// IPv6 方括号,故 "http://:8000" 这类「端口在、主机不在」的形态也一并拦下
 func schemeAllowed(raw string) bool {
 	u, err := url.Parse(raw)
-	return err == nil && u.Host != "" && (u.Scheme == "http" || u.Scheme == "https")
+	return err == nil && u.Hostname() != "" && (u.Scheme == "http" || u.Scheme == "https")
 }
 
 // fetchUpstreamModels 代拉上游 /v1/models 并解析。

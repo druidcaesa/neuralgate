@@ -255,12 +255,14 @@ func TestUpstreamModelsGatewayErrors(t *testing.T) {
 		body     string
 		wantCode int
 		wantHTTP int
+		wantMsg  string
 	}{
-		{"缺 base_url", `{"api_key":"sk-x"}`, CodeUpstreamModelsMissingBaseURL, http.StatusBadRequest},
-		{"协议非法", `{"base_url":"ftp://x","api_key":"sk-x"}`, CodeUpstreamModelsBadScheme, http.StatusBadRequest},
-		{"协议合法但无主机名", `{"base_url":"http://","api_key":"sk-x"}`, CodeUpstreamModelsBadScheme, http.StatusBadRequest},
-		{"既无密钥也无 model_id", `{"base_url":"` + srv.URL + `"}`, CodeUpstreamModelsMissingAPIKey, http.StatusBadRequest},
-		{"model_id 不存在", `{"base_url":"` + srv.URL + `","model_id":"nope"}`, CodeUpstreamModelsModelNotFound, http.StatusNotFound},
+		{"缺 base_url", `{"api_key":"sk-x"}`, CodeUpstreamModelsMissingBaseURL, http.StatusBadRequest, ""},
+		{"协议非法", `{"base_url":"ftp://x","api_key":"sk-x"}`, CodeUpstreamModelsBadScheme, http.StatusBadRequest, "上游地址必须是 http 或 https"},
+		{"协议合法但无主机名", `{"base_url":"http://","api_key":"sk-x"}`, CodeUpstreamModelsBadScheme, http.StatusBadRequest, "上游地址必须是 http 或 https"},
+		{"空主机名带端口", `{"base_url":"http://:8000","api_key":"sk-x"}`, CodeUpstreamModelsBadScheme, http.StatusBadRequest, "上游地址必须是 http 或 https"},
+		{"既无密钥也无 model_id", `{"base_url":"` + srv.URL + `"}`, CodeUpstreamModelsMissingAPIKey, http.StatusBadRequest, ""},
+		{"model_id 不存在", `{"base_url":"` + srv.URL + `","model_id":"nope"}`, CodeUpstreamModelsModelNotFound, http.StatusNotFound, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -272,6 +274,9 @@ func TestUpstreamModelsGatewayErrors(t *testing.T) {
 			}
 			if resp.Code != tc.wantCode {
 				t.Errorf("code = %d, want %d (msg=%q)", resp.Code, tc.wantCode, resp.Message)
+			}
+			if tc.wantMsg != "" && !strings.Contains(resp.Message, tc.wantMsg) {
+				t.Errorf("msg = %q, want 含 %q", resp.Message, tc.wantMsg)
 			}
 		})
 	}
@@ -337,6 +342,8 @@ func TestUpstreamModelsStoredBaseURLBadSchemeRejected(t *testing.T) {
 	}{
 		{"协议非法", "ftp://example.invalid", "m-ftp"},
 		{"协议合法但无主机名", "http://", "m-nohost"},
+		{"空主机名冒号端口", "http://:", "m-emptypc"},
+		{"无主机名带端口", "http://:8000", "m-nohostport"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
