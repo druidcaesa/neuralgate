@@ -32,7 +32,7 @@ func stubUpstream(t *testing.T, status int, body string) *httptest.Server {
 	return srv
 }
 
-// TestFetchUpstreamModelsSuccess 正常路径:解析 data[].id 并去重字段
+// TestFetchUpstreamModelsSuccess 正常路径:只取 data[].id 字段,按字典序返回
 func TestFetchUpstreamModelsSuccess(t *testing.T) {
 	srv := stubUpstream(t, http.StatusOK,
 		`{"object":"list","data":[{"id":"b-model","owned_by":"x"},{"id":"a-model"}]}`)
@@ -89,10 +89,13 @@ func TestFetchUpstreamModelsBadResponse(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			srv := stubUpstream(t, http.StatusOK, body)
 
-			_, _, code, msg := fetchUpstreamModels(srv.URL, "sk-test")
+			_, status, code, msg := fetchUpstreamModels(srv.URL, "sk-test")
 
 			if code != CodeUpstreamModelsBadResponse {
 				t.Errorf("code = %d, want %d (msg=%q)", code, CodeUpstreamModelsBadResponse, msg)
+			}
+			if status != http.StatusBadGateway {
+				t.Errorf("status = %d, want %d (msg=%q)", status, http.StatusBadGateway, msg)
 			}
 		})
 	}
@@ -101,22 +104,26 @@ func TestFetchUpstreamModelsBadResponse(t *testing.T) {
 // TestFetchUpstreamModelsMapsUpstreamStatus 上游状态码按原因归类,不折叠成单一码
 func TestFetchUpstreamModelsMapsUpstreamStatus(t *testing.T) {
 	cases := []struct {
-		status   int
-		wantCode int
+		status     int
+		wantCode   int
+		wantStatus int
 	}{
-		{http.StatusUnauthorized, CodeUpstreamModelsAuthFailed},
-		{http.StatusForbidden, CodeUpstreamModelsForbidden},
-		{http.StatusNotFound, CodeUpstreamModelsUpstreamNotFound},
-		{http.StatusInternalServerError, CodeUpstreamModelsUpstreamError},
-		{http.StatusTooManyRequests, CodeUpstreamModelsUpstreamError},
+		{http.StatusUnauthorized, CodeUpstreamModelsAuthFailed, http.StatusBadRequest},
+		{http.StatusForbidden, CodeUpstreamModelsForbidden, http.StatusBadRequest},
+		{http.StatusNotFound, CodeUpstreamModelsUpstreamNotFound, http.StatusBadRequest},
+		{http.StatusInternalServerError, CodeUpstreamModelsUpstreamError, http.StatusBadGateway},
+		{http.StatusTooManyRequests, CodeUpstreamModelsUpstreamError, http.StatusBadGateway},
 	}
 	for _, tc := range cases {
 		srv := stubUpstream(t, tc.status, `{"error":{"message":"nope"}}`)
 
-		_, _, code, msg := fetchUpstreamModels(srv.URL, "sk-test")
+		_, status, code, msg := fetchUpstreamModels(srv.URL, "sk-test")
 
 		if code != tc.wantCode {
 			t.Errorf("上游 %d → code = %d, want %d (msg=%q)", tc.status, code, tc.wantCode, msg)
+		}
+		if status != tc.wantStatus {
+			t.Errorf("上游 %d → status = %d, want %d (msg=%q)", tc.status, status, tc.wantStatus, msg)
 		}
 	}
 }
@@ -126,10 +133,13 @@ func TestFetchUpstreamModelsUnreachable(t *testing.T) {
 	srv := stubUpstream(t, http.StatusOK, `{"data":[]}`)
 	srv.Close() // 关闭后地址不可达
 
-	_, _, code, msg := fetchUpstreamModels(srv.URL, "sk-test")
+	_, status, code, msg := fetchUpstreamModels(srv.URL, "sk-test")
 
 	if code != CodeUpstreamModelsUnreachable {
 		t.Errorf("code = %d, want %d (msg=%q)", code, CodeUpstreamModelsUnreachable, msg)
+	}
+	if status != http.StatusBadGateway {
+		t.Errorf("status = %d, want %d (msg=%q)", status, http.StatusBadGateway, msg)
 	}
 }
 
