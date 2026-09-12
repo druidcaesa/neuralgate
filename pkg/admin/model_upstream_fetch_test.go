@@ -107,15 +107,24 @@ func TestFetchUpstreamModelsMapsUpstreamStatus(t *testing.T) {
 		status     int
 		wantCode   int
 		wantStatus int
+		body       string // 空则用通用错误体
 	}{
-		{http.StatusUnauthorized, CodeUpstreamModelsAuthFailed, http.StatusBadRequest},
-		{http.StatusForbidden, CodeUpstreamModelsForbidden, http.StatusBadRequest},
-		{http.StatusNotFound, CodeUpstreamModelsUpstreamNotFound, http.StatusBadRequest},
-		{http.StatusInternalServerError, CodeUpstreamModelsUpstreamError, http.StatusBadGateway},
-		{http.StatusTooManyRequests, CodeUpstreamModelsUpstreamError, http.StatusBadGateway},
+		{http.StatusUnauthorized, CodeUpstreamModelsAuthFailed, http.StatusBadRequest, ""},
+		{http.StatusForbidden, CodeUpstreamModelsForbidden, http.StatusBadRequest, ""},
+		{http.StatusNotFound, CodeUpstreamModelsUpstreamNotFound, http.StatusBadRequest, ""},
+		{http.StatusInternalServerError, CodeUpstreamModelsUpstreamError, http.StatusBadGateway, ""},
+		{http.StatusTooManyRequests, CodeUpstreamModelsUpstreamError, http.StatusBadGateway, ""},
+		// 300 不在 Go client 自动跟随之列(只跟 301/302/303/307/308),会原样返回,
+		// 故须自己判失败:响应体即使是一份合法清单,也不得当成 200 收下
+		{http.StatusMultipleChoices, CodeUpstreamModelsUpstreamError, http.StatusBadGateway,
+			`{"data":[{"id":"x"}]}`},
 	}
 	for _, tc := range cases {
-		srv := stubUpstream(t, tc.status, `{"error":{"message":"nope"}}`)
+		body := tc.body
+		if body == "" {
+			body = `{"error":{"message":"nope"}}`
+		}
+		srv := stubUpstream(t, tc.status, body)
 
 		_, status, code, msg := fetchUpstreamModels(srv.URL, "sk-test")
 

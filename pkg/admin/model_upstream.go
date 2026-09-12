@@ -81,7 +81,10 @@ func fetchUpstreamModels(baseURL, apiKey string) ([]upstreamModelItem, int, int,
 	case http.StatusNotFound:
 		return nil, http.StatusBadRequest, CodeUpstreamModelsUpstreamNotFound, "上游无此地址,请检查上游地址"
 	}
-	if resp.StatusCode >= 400 {
+	// 只认 200。3xx 里只有 301/302/303/307/308 会被 client 自动跟随,
+	// 300/304/305/306 会原样落到这里——若按 >=400 判,带合法清单体的 300 会被
+	// 当成成功收下,而本接口的全部价值就在精确归因,故非 200 一律归上游错误
+	if resp.StatusCode != http.StatusOK {
 		return nil, http.StatusBadGateway, CodeUpstreamModelsUpstreamError,
 			fmt.Sprintf("上游返回 %d", resp.StatusCode)
 	}

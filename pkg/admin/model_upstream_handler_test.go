@@ -76,7 +76,9 @@ func TestUpstreamModelsRouteNotShadowed(t *testing.T) {
 	}
 }
 
-// TestUpstreamModelsPlaintextKeyWins 请求体带明文密钥时直接使用,不需要 model_id
+// TestUpstreamModelsPlaintextKeyWins 明文密钥与库中密钥同时可选时,明文优先。
+// 本用例同时传 api_key 与 model_id,钉的是「先看明文、再看 model_id」这一**顺序**,
+// 不是「明文可用」——若精简成只传 api_key,顺序被写反也照样通过
 func TestUpstreamModelsPlaintextKeyWins(t *testing.T) {
 	var gotAuth string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -84,12 +86,21 @@ func TestUpstreamModelsPlaintextKeyWins(t *testing.T) {
 		_, _ = w.Write([]byte(`{"data":[]}`))
 	}))
 	t.Cleanup(srv.Close)
-	svr, _ := newUpstreamModelsServer(t)
 
-	_, _ = postUpstreamModels(t, svr, `{"base_url":"`+srv.URL+`","api_key":"sk-plain"}`)
+	svr, st := newUpstreamModelsServer(t)
+	if err := st.SaveModelConfig(&plugin.ModelConfig{
+		ID: "m-stored", ModelName: "stored-model", Provider: "openai", ProviderModel: "gpt-4o",
+		BaseURL: srv.URL, APIKey: "sk-stored", Enabled: true,
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("SaveModelConfig: %v", err)
+	}
+
+	_, _ = postUpstreamModels(t, svr,
+		`{"base_url":"`+srv.URL+`","model_id":"m-stored","api_key":"sk-plain"}`)
 
 	if gotAuth != "Bearer sk-plain" {
-		t.Errorf("Authorization = %q, want %q", gotAuth, "Bearer sk-plain")
+		t.Errorf("Authorization = %q, want %q (明文密钥须盖过库中密钥)", gotAuth, "Bearer sk-plain")
 	}
 }
 
