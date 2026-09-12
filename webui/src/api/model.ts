@@ -45,3 +45,15 @@ export async function deleteUpstream(uid: string): Promise<{ id: string }> {
   const resp = await client.delete<ApiResponse<{ id: string }>>(`/upstreams/${uid}`)
   return resp.data.data
 }
+
+// 拉取上游模型清单。错误由 client 拦截器统一弹出(message 即归类原因),
+// 调用方只需处理成功路径
+export async function listUpstreamModels(data: {
+  model_id?: string
+  base_url: string
+  api_key?: string
+}): Promise<{ id: string }[]> {
+  const resp = await client.post<ApiResponse<{ models: { id: string }[] }>>(
+    '/models/upstream-models', data)
+  return resp.data.data.models
+}

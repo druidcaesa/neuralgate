@@ -68,7 +68,14 @@
             <el-option :label="CUSTOM_PROVIDER_LABEL" :value="CUSTOM_PROVIDER" />
           </el-select>
         </el-form-item>
-        <el-form-item label="上游模型" required><el-input v-model="modelForm.provider_model" /></el-form-item>
+        <el-form-item label="上游模型" required>
+          <el-input v-model="modelForm.provider_model" />
+          <el-button
+            size="small" plain style="margin-top:6px"
+            :loading="fetchingModels"
+            :disabled="!canFetchModels"
+            @click="openModelPicker">{{ fetchDisabledReason || '拉取清单' }}</el-button>
+        </el-form-item>
         <el-form-item label="上游地址" required>
           <el-input v-model="modelForm.base_url"
             :placeholder="isBuiltinProvider(modelForm.provider) ? BUILTIN_BASE_URLS[modelForm.provider] : 'http://你的推理服务:8000 (服务根地址,不含 /v1)'"
@@ -111,6 +118,20 @@
         <el-button type="primary" :loading="saving" @click="saveUpstream">保存</el-button>
       </template>
     </el-dialog>
+
+    <!-- 上游模型清单选择:数据来自上游实时返回,不代表账号一定能调用 -->
+    <el-dialog v-model="pickerDialog" title="选择上游模型" width="560px">
+      <el-text type="warning" size="small">
+        以下为上游返回的模型目录,不代表你的账号一定能调用。选好后请用列表里的「测试」确认。
+      </el-text>
+      <el-input v-model="pickerFilter" placeholder="搜索模型 ID" clearable style="margin:10px 0" />
+      <el-table :data="filteredPickerModels" height="320" @row-click="pickModel">
+        <el-table-column prop="id" label="模型 ID" />
+      </el-table>
+      <template #footer>
+        <el-button @click="pickerDialog=false">关闭</el-button>
+      </template>
+    </el-dialog>
   </el-card>
 </template>
 
@@ -118,7 +139,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { ModelItem, ModelCreateRequest, UpstreamItem, UpstreamRequest } from '../types'
-import { listModels, createModel, updateModel, deleteModel, testModel, listUpstreams, createUpstream, updateUpstream, deleteUpstream } from '../api/model'
+import { listModels, createModel, updateModel, deleteModel, testModel, listUpstreams, createUpstream, updateUpstream, deleteUpstream, listUpstreamModels } from '../api/model'
 
 const models = ref<ModelItem[]>([])
 const page = ref(1)
@@ -203,6 +224,51 @@ function onProviderChange(p: string) {
 function onProtocolChange() {
   syncDefaultMaxTokens()
 }
+// 拉取上游清单:按钮可用性与禁用原因。空串表示可用,非空即为按钮文案
+const fetchDisabledReason = computed(() => {
+  if (isAnthropic.value) return 'Anthropic 协议不支持清单拉取'
+  if (!modelForm.base_url) return '请先填写上游地址'
+  // 编辑态且密钥不回显时,走 model_id 取库中已存密钥
+  if (!modelForm.api_key && !editing.value) return '请先填写 API Key'
+  return ''
+})
+const canFetchModels = computed(() => fetchDisabledReason.value === '')
+
+const fetchingModels = ref(false)
+const pickerDialog = ref(false)
+const pickerFilter = ref('')
+const pickerModels = ref<{ id: string }[]>([])
+const filteredPickerModels = computed(() => {
+  const q = pickerFilter.value.trim().toLowerCase()
+  if (!q) return pickerModels.value
+  return pickerModels.value.filter((m) => m.id.toLowerCase().includes(q))
+})
+
+async function openModelPicker() {
+  fetchingModels.value = true
+  try {
+    pickerModels.value = await listUpstreamModels({
+      model_id: editing.value?.id,
+      base_url: modelForm.base_url,
+      api_key: modelForm.api_key || undefined
+    })
+    pickerFilter.value = ''
+    pickerDialog.value = true
+    if (pickerModels.value.length === 0) {
+      ElMessage.warning('上游未返回任何模型,请检查密钥权限或手动填写')
+    }
+  } catch {
+    // 错误提示由 client 拦截器统一弹出(含归类原因),此处不重复
+  } finally {
+    fetchingModels.value = false
+  }
+}
+
+function pickModel(row: { id: string }) {
+  modelForm.provider_model = row.id
+  pickerDialog.value = false
+}
+
 const upstreamForm = reactive<UpstreamRequest>({ base_url: '', api_key: '', weight: 1, enabled: true })
 
 async function load() {
@@ -219,6 +285,7 @@ async function load() {
 function openCreate() {
   editing.value = null
   Object.assign(modelForm, { name: '', provider: 'openai', provider_model: '', base_url: BUILTIN_BASE_URLS.openai, api_key: '', timeout: 60, max_retries: 2, retry_interval: 0, weight: 1, max_tokens: 0, enabled: true, tags: {} })
+  pickerModels.value = []
   modelDialog.value = true
 }
 
