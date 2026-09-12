@@ -75,6 +75,9 @@
             :loading="fetchingModels"
             :disabled="!canFetchModels"
             @click="openModelPicker">{{ fetchDisabledReason || '拉取清单' }}</el-button>
+          <el-text v-if="upstreamAddressChanged && !modelForm.api_key && editing" type="warning" size="small">
+            已切换上游地址,请先填写该地址的 API Key(否则拉到的还是旧地址的清单)
+          </el-text>
         </el-form-item>
         <el-form-item label="上游地址" required>
           <el-input v-model="modelForm.base_url"
@@ -224,12 +227,25 @@ function onProviderChange(p: string) {
 function onProtocolChange() {
   syncDefaultMaxTokens()
 }
+// 编辑态密钥不回显时走库中密钥,后端随之改用该模型自身的 base_url(见规格 §3.1)。
+// 表单地址被改过而密钥仍为空时,拉到的会是旧地址的清单——与其静默给出误导结果,
+// 不如提前禁用并说明。比较前去掉尾部斜杠,避免存量行与预设只差一个 "/" 时误判
+const upstreamAddressChanged = computed(() => {
+  if (!editing.value) return false
+  const norm = (u: string) => u.replace(/\/+$/, '')
+  return norm(modelForm.base_url) !== norm(editing.value.base_url || '')
+})
+
 // 拉取上游清单:按钮可用性与禁用原因。空串表示可用,非空即为按钮文案
 const fetchDisabledReason = computed(() => {
   if (isAnthropic.value) return 'Anthropic 协议不支持清单拉取'
   if (!modelForm.base_url) return '请先填写上游地址'
-  // 编辑态且密钥不回显时,走 model_id 取库中已存密钥
-  if (!modelForm.api_key && !editing.value) return '请先填写 API Key'
+  // 编辑态且密钥为空:走库中密钥,出网地址也是库中地址,
+  // 故改了表单地址就必须先补该地址的密钥,否则拉到的是旧地址的清单
+  if (!modelForm.api_key && editing.value) {
+    return upstreamAddressChanged.value ? '已切换上游地址,请先填写该地址的 API Key' : ''
+  }
+  if (!modelForm.api_key) return '请先填写 API Key'
   return ''
 })
 const canFetchModels = computed(() => fetchDisabledReason.value === '')
