@@ -56,6 +56,13 @@ type upstreamModelItem struct {
 	ID string `json:"id"`
 }
 
+// schemeAllowed 出网协议白名单:仅 http / https。file、ftp、gopher 等一律拒绝,
+// 避免管理面被当成任意协议的取数器
+func schemeAllowed(raw string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https")
+}
+
 // fetchUpstreamModels 代拉上游 /v1/models 并解析。
 // 成功返回 (models, 0, 0, "");失败返回 (nil, httpStatus, bizCode, message)。
 // data 为 null 与 data 缺失、非数组同样归为 bad_response;空数组则是合法空清单
@@ -81,9 +88,11 @@ func fetchUpstreamModels(baseURL, apiKey string) ([]upstreamModelItem, int, int,
 	case http.StatusNotFound:
 		return nil, http.StatusBadRequest, CodeUpstreamModelsUpstreamNotFound, "上游无此地址,请检查上游地址"
 	}
-	// 只认 200。3xx 里只有 301/302/303/307/308 会被 client 自动跟随,
-	// 300/304/305/306 会原样落到这里——若按 >=400 判,带合法清单体的 300 会被
-	// 当成成功收下,而本接口的全部价值就在精确归因,故非 200 一律归上游错误
+	// 只认 200。client 仅在带 Location 时自动跟随 301/302/303/307/308
+	// (net/http client.go:643-649:无 Location 的 3xx 原样返回),故本闸门覆盖的
+	// 不只是 300/304/305/306——无 Location 的重定向同样落在这里。
+	// 若按 >=400 判,带合法清单体的 300 会被当成成功收下,而本接口的全部价值
+	// 就在精确归因,故非 200 一律归上游错误
 	if resp.StatusCode != http.StatusOK {
 		return nil, http.StatusBadGateway, CodeUpstreamModelsUpstreamError,
 			fmt.Sprintf("上游返回 %d", resp.StatusCode)
@@ -139,7 +148,7 @@ func (s *AdminServer) listUpstreamModels(c *gin.Context) {
 		Error(c, http.StatusBadRequest, CodeUpstreamModelsMissingBaseURL, "缺少上游地址")
 		return
 	}
-	if u, err := url.Parse(baseURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+	if !schemeAllowed(baseURL) {
 		Error(c, http.StatusBadRequest, CodeUpstreamModelsBadScheme, "上游地址必须是 http 或 https")
 		return
 	}
@@ -169,6 +178,14 @@ func (s *AdminServer) listUpstreamModels(c *gin.Context) {
 		// 送往自己指定的主机(如切换预设改写 base_url 后点拉取)。
 		// 上方对调用方 base_url 的校验保持原样先跑:4601/4605 的契约对两种密钥
 		// 来源一致,不因本行改走库中地址而变化
+		// 库中地址也要过同一道白名单:该行可经 admin API 建出(binding 只要求非空),
+		// 漏检会把「地址写错」报成 4614「无法连接上游」。传输层固然会失败关闭,
+		// 但归类错误与本接口的精确归因相悖
+		if !schemeAllowed(cfg.BaseURL) {
+			Error(c, http.StatusBadRequest, CodeUpstreamModelsBadScheme,
+				"该模型配置的上游地址必须是 http 或 https")
+			return
+		}
 		baseURL = cfg.BaseURL
 	}
 

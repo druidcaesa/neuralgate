@@ -321,3 +321,26 @@ func TestUpstreamModelsUpstreamErrorPassesThrough(t *testing.T) {
 		t.Errorf("不得回显上游响应体原文: %q", resp.Message)
 	}
 }
+
+// TestUpstreamModelsStoredBaseURLBadSchemeRejected 库中地址协议非法时同样归 4605:
+// 显式白名单必须也跑在 cfg.BaseURL 上。只靠传输层兜底会把「地址写错」报成
+// 4614「无法连接上游」,而本接口的价值正是精确归因,归类错等于白归。
+// 调用方地址此处是合法字面量且不会被拨号(库中密钥路径不走它),故断言只针对归类
+func TestUpstreamModelsStoredBaseURLBadSchemeRejected(t *testing.T) {
+	svr, st := newUpstreamModelsServer(t)
+	if err := st.SaveModelConfig(&plugin.ModelConfig{
+		ID: "m-ftp", ModelName: "ftp-row", Provider: "openai", ProviderModel: "gpt-4o",
+		BaseURL: "ftp://example.invalid", APIKey: "sk-stored", Enabled: true,
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("SaveModelConfig: %v", err)
+	}
+
+	status, resp := postUpstreamModels(t, svr,
+		`{"base_url":"https://example.invalid","model_id":"m-ftp"}`)
+
+	if status != http.StatusBadRequest || resp.Code != CodeUpstreamModelsBadScheme {
+		t.Errorf("status=%d code=%d, want 400/%d (msg=%q)",
+			status, resp.Code, CodeUpstreamModelsBadScheme, resp.Message)
+	}
+}
