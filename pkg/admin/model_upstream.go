@@ -19,9 +19,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 // 上游模型清单拉取的业务码。与 HTTP status 值错开,理由同 CodeFeatureLocked:
@@ -108,4 +111,60 @@ func fetchUpstreamModels(baseURL, apiKey string) ([]upstreamModelItem, int, int,
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, 0, 0, ""
+}
+
+// upstreamModelsRequest 拉取清单请求体。
+// 密钥二选一:api_key 非空直接用(新建态表单里是明文);
+// 否则用 model_id 取库中已存密钥(编辑态密钥不回显)
+type upstreamModelsRequest struct {
+	ModelID string `json:"model_id"`
+	BaseURL string `json:"base_url"`
+	APIKey  string `json:"api_key"`
+}
+
+// listUpstreamModels POST /api/models/upstream-models:代拉上游模型清单。
+// 错误按原因归类返回,刻意不折叠成 502——本接口是管理面诊断入口,
+// 用户意图正是「为什么不行」,与代理面只关心成败的取舍不同
+func (s *AdminServer) listUpstreamModels(c *gin.Context) {
+	var req upstreamModelsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		Error(c, http.StatusBadRequest, 400, err.Error())
+		return
+	}
+	baseURL := strings.TrimSpace(req.BaseURL)
+	if baseURL == "" {
+		Error(c, http.StatusBadRequest, CodeUpstreamModelsMissingBaseURL, "缺少上游地址")
+		return
+	}
+	if u, err := url.Parse(baseURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		Error(c, http.StatusBadRequest, CodeUpstreamModelsBadScheme, "上游地址必须是 http 或 https")
+		return
+	}
+
+	apiKey := req.APIKey
+	if apiKey == "" {
+		if req.ModelID == "" {
+			Error(c, http.StatusBadRequest, CodeUpstreamModelsMissingAPIKey, "缺少 API Key")
+			return
+		}
+		cfg, err := s.storage.GetModelConfigByID(req.ModelID)
+		if err != nil {
+			Error(c, http.StatusNotFound, CodeUpstreamModelsModelNotFound, "模型配置不存在")
+			return
+		}
+		// 密钥不可解密时不发请求,避免用空 key 换回误导性的上游 401
+		if cfg.APIKeyUnreadable {
+			Error(c, http.StatusBadRequest, CodeUpstreamModelsKeyUnreadable,
+				"该模型密钥无法解密,请重新填写 API Key")
+			return
+		}
+		apiKey = cfg.APIKey
+	}
+
+	models, status, code, msg := fetchUpstreamModels(baseURL, apiKey)
+	if code != 0 {
+		Error(c, status, code, msg)
+		return
+	}
+	OK(c, gin.H{"models": models})
 }

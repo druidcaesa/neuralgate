@@ -62,6 +62,7 @@ func (s *AdminServer) registerRoutes(r *gin.Engine) {
 		authz.PUT("/models/:id", s.RequirePermission(plugin.PermModelWrite), s.updateModelConfig)
 		authz.DELETE("/models/:id", s.RequirePermission(plugin.PermModelWrite), s.deleteModelConfig)
 		authz.POST("/models/:id/test", s.RequirePermission(plugin.PermModelWrite), s.testModelConfig)
+		authz.POST("/models/upstream-models", s.RequirePermission(plugin.PermModelWrite), s.listUpstreamModels)
 
 		// 上游管理(负载均衡)
 		authz.POST("/models/:id/upstreams", s.RequirePermission(plugin.PermModelWrite), s.createUpstream)
